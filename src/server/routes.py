@@ -12,7 +12,7 @@ from src.server.progress import init_progress, get_progress, update_progress, co
 from src.utils.logger import log
 from src.utils.currency import calculate_budget_range, parse_rupiah
 from src.utils.eta import ETACalculator
-from src.scraper.engine import PlaywrightEngine
+from src.scraper.engine_selector import run_scraper_chain
 from src.ai.relevance import filter_relevance
 from src.ai.learning import save_feedback
 from src.ai.reset import reset_ai_memory
@@ -85,18 +85,11 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int):
     log(f"[{search_id}]", f"Starting job for '{req.query}' (Target: {req.target_count})", "INFO")
     eta_calc = ETACalculator()
     
-    # 1. Scrape raw products
-    engine = PlaywrightEngine(search_id)
-    try:
-        raw_products = await engine.scrape(req.query, raw_target, eta_calc)
-    except Exception as e:
-        fail_progress(search_id, str(e))
-        return
-    finally:
-        await engine.close()
+    # 1. Scrape raw products using Multi-Engine Selector
+    success, raw_products, error_msg = await run_scraper_chain(search_id, req.query, raw_target, eta_calc)
         
-    if not raw_products:
-        fail_progress(search_id, "Tidak ada produk ditemukan di halaman.")
+    if not success or not raw_products:
+        fail_progress(search_id, error_msg or "Tidak ada produk ditemukan di halaman.")
         return
 
     # 2. Deduplicate

@@ -4,3 +4,7 @@ playwright==1.44.0
 requests==2.32.3
 pydantic==2.7.2
 aiohttp
+beautifulsoup4
+undetected-chromedriver
+selenium
+httpx

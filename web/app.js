@@ -259,7 +259,18 @@ class ScraperApp {
     if (this.$('pm-valid')) this.$('pm-valid').textContent = p.valid ?? 0;
     if (this.$('pm-target')) this.$('pm-target').textContent = p.target ?? '—';
     if (this.$('pm-elapsed')) this.$('pm-elapsed').textContent = p.elapsed_seconds != null ? `${p.elapsed_seconds}s` : '—';
-    if (this.$('pm-eta')) this.$('pm-eta').textContent = p.eta_seconds != null && p.eta_seconds > 0 ? `${p.eta_seconds}s` : '—';
+    
+    const etaEl = this.$('pm-eta');
+    if (etaEl) {
+        if (p.eta_seconds === null || p.eta_seconds === undefined) {
+            etaEl.textContent = 'Calculating...';
+        } else {
+            etaEl.textContent = `${p.eta_seconds}s`;
+        }
+    }
+    
+    if (this.$('pm-engine')) this.$('pm-engine').textContent = p.engine || 'unknown';
+    if (this.$('pm-attempt')) this.$('pm-attempt').textContent = `${p.attempt || 1}/${p.max_attempts || 3}`;
 
     this.updateStagePipeline(p.stage, pct);
   }

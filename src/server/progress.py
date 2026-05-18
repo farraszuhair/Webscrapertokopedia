@@ -19,7 +19,10 @@ def init_progress(search_id: str, target: int, raw_target: int):
         "target": target,
         "raw_target": raw_target,
         "elapsed_seconds": 0,
-        "eta_seconds": 0,
+        "eta_seconds": None,
+        "engine": "unknown",
+        "attempt": 1,
+        "max_attempts": 3,
         "done": False,
         "error": None
     }

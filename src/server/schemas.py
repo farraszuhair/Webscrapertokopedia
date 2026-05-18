@@ -28,6 +28,9 @@ class ProgressResponse(BaseModel):
     target: int
     raw_target: int
     elapsed_seconds: int
-    eta_seconds: int
+    eta_seconds: Optional[int] = None
+    engine: str = "unknown"
+    attempt: int = 1
+    max_attempts: int = 3
     done: bool
     error: Optional[str] = None

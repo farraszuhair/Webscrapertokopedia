@@ -14,13 +14,13 @@ class ETACalculator:
         self.history = deque(maxlen=smoothing_window)
         self.last_pct = 0
     
-    def get_eta(self, current_pct: int) -> int:
+    def get_eta(self, current_pct: int) -> int | None:
         """
         Calculates smoothed ETA in seconds.
-        Returns 0 if percentage is 0 or 100.
+        Returns None if percentage is 0 or 100 (unmeasurable/done).
         """
         if current_pct <= 0 or current_pct >= 100:
-            return 0
+            return None
             
         elapsed = time.time() - self.start_time
         
