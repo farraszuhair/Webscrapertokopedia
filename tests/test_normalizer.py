@@ -1,41 +1,51 @@
-from src.scraper.normalizer import normalize_products_with_report
+"""
+test_normalizer.py - Normalizer keeps raw products even with missing optional fields.
+"""
+import pytest
+from src.scraper.normalizer import normalize_product, normalize_products
 
 
-def test_raw_product_with_title_and_url_is_kept():
-    report = normalize_products_with_report(
-        [{"title": "ASUS TUF Gaming F15 RTX 3050 Laptop", "url": "https://tokopedia.test/store/tuf"}],
-        "puppeteer",
-    )
+class TestNormalizerKeepsWeakProducts:
+    def test_keeps_product_missing_shop(self):
+        raw = {"title": "ASUS TUF Gaming F15", "price_raw": "Rp12.000.000", "url": "https://tokopedia.com/x/y"}
+        result = normalize_product(raw)
+        assert result is not None
+        assert result["title"] == "ASUS TUF Gaming F15"
+        assert result["shop"] == ""  # missing is OK
 
-    assert report.input_count == 1
-    assert report.output_count == 1
-    assert report.dropped_count == 0
+    def test_keeps_product_missing_rating(self):
+        raw = {"title": "Legion 5 Pro", "price_raw": "Rp15.000.000", "url": "https://tokopedia.com/a/b"}
+        result = normalize_product(raw)
+        assert result is not None
+        assert result["rating"] == ""
 
+    def test_keeps_product_missing_image(self):
+        raw = {"title": "ROG Strix", "price_raw": "Rp20.000.000", "url": "https://tokopedia.com/c/d"}
+        result = normalize_product(raw)
+        assert result is not None
+        assert result["image"] == ""
 
-def test_missing_shop_location_image_does_not_drop_product():
-    report = normalize_products_with_report(
-        [{"title": "Lenovo LOQ 15IRX9 Gaming Laptop", "url": "https://tokopedia.test/store/loq"}],
-        "rollback",
-    )
+    def test_drops_product_missing_title(self):
+        raw = {"price_raw": "Rp5.000.000", "url": "https://tokopedia.com/x/y"}
+        result = normalize_product(raw)
+        assert result is None
 
-    product = report.output[0]
-    assert product["shop"] == ""
-    assert product["location"] == ""
-    assert product["image"] == ""
+    def test_drops_product_missing_url_and_price(self):
+        raw = {"title": "Some product"}
+        result = normalize_product(raw)
+        assert result is None
 
+    def test_keeps_product_with_price_but_no_url(self):
+        """Product with price but no URL is kept - URL is not strictly required."""
+        raw = {"title": "Laptop Gaming", "price_raw": "Rp8.000.000"}
+        result = normalize_product(raw)
+        assert result is not None
 
-def test_missing_price_does_not_drop_raw_product():
-    report = normalize_products_with_report(
-        [{"title": "Acer Nitro V15 RTX 4050", "url": "https://tokopedia.test/store/nitro"}],
-        "puppeteer",
-    )
-
-    assert report.output_count == 1
-    assert report.output[0]["price_value"] is None
-
-
-def test_missing_title_is_dropped_with_reason():
-    report = normalize_products_with_report([{"url": "https://tokopedia.test/store/no-title"}], "rollback")
-
-    assert report.output_count == 0
-    assert report.drop_reasons["missing_title"] == 1
+    def test_batch_normalize_keeps_partial(self):
+        products = [
+            {"title": "OK Product", "price_raw": "Rp5.000.000", "url": "https://tokopedia.com/ok"},
+            {"price_raw": "no title should drop"},
+        ]
+        result = normalize_products(products)
+        assert len(result) == 1
+        assert result[0]["title"] == "OK Product"

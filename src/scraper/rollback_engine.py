@@ -1,12 +1,16 @@
 """
 rollback_engine.py - Selenium rollback scraper.
 
-Uses Selenium Manager first, webdriver-manager second, and returns the same
-schema as Puppeteer.
+Key fixes:
+1. Preflight check FIRST - detects Chrome error pages before extraction.
+2. --disable-http2 via selenium_driver.py to reduce ERR_HTTP2_PROTOCOL_ERROR.
+3. If opened_real_page=false -> returns False with exact error_type. No fake "selector failed".
+4. No category filtering. Returns ALL raw products. Qwen filters later.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import time
 from pathlib import Path
@@ -14,13 +18,138 @@ from typing import Any
 
 from src.scraper.normalizer import normalize_products
 from src.scraper.selenium_driver import create_chrome_driver, safe_quit_driver
-from src.scraper.url_builder import build_tokopedia_search_urls_for_variant
+from src.scraper.url_builder import build_tokopedia_search_url
 from src.server.progress import update_progress
-from src.utils.debug import get_debug_dir, save_debug_state_sync, save_text_debug, save_zero_raw_debug
+from src.utils.debug import get_debug_dir, save_json_debug
 from src.utils.logger import log
 
 
 DEBUG_DIR = Path("data/debug")
+
+# Chrome error strings to detect on loaded page (same as preflight.py)
+_ERROR_SIGNALS = [
+    "err_http2_protocol_error",
+    "err_connection_reset",
+    "err_connection_refused",
+    "err_connection_timed_out",
+    "err_name_not_resolved",
+    "this site can",
+    "situs ini tidak dapat",
+    "dns_probe_finished",
+]
+
+_ERROR_KEYS = {
+    "err_http2_protocol_error": "http2_protocol_error",
+    "err_connection_reset": "connection_reset",
+    "err_connection_refused": "connection_refused",
+    "err_connection_timed_out": "connection_timed_out",
+    "err_name_not_resolved": "name_not_resolved",
+    "this site can": "site_unreachable",
+    "situs ini tidak dapat": "site_unreachable_id",
+    "dns_probe_finished": "dns_error",
+}
+
+
+def _detect_page_health_selenium(driver) -> dict[str, Any]:
+    """
+    Check if driver is showing a real Tokopedia page or a Chrome error page.
+    Returns { opened_real_page, error_type, page_title, body_sample, current_url }.
+    """
+    try:
+        current_url = driver.current_url or ""
+        title = driver.title or ""
+        body_text = driver.execute_script(
+            "return document.body ? (document.body.innerText || '').slice(0, 1000) : '';"
+        ) or ""
+    except Exception as exc:
+        return {
+            "opened_real_page": False,
+            "error_type": "driver_error",
+            "page_title": "",
+            "body_sample": "",
+            "current_url": "",
+            "nav_error": str(exc),
+        }
+
+    combined = f"{title} {body_text} {current_url}".lower()
+
+    # Check for known error patterns
+    error_type = None
+    for signal, key in _ERROR_KEYS.items():
+        if signal in combined:
+            error_type = key
+            break
+
+    # about:blank = navigation never happened
+    if error_type is None and current_url.strip().lower() in ("about:blank", "chrome://newtab/", ""):
+        error_type = "blank_page"
+
+    # Must have Tokopedia signal to be a real page
+    is_real = "tokopedia" in combined or "toped" in combined
+    if error_type is None and not is_real:
+        error_type = "unknown_non_tokopedia_page"
+
+    opened_real_page = (error_type is None) and is_real
+    return {
+        "opened_real_page": opened_real_page,
+        "error_type": error_type,
+        "page_title": title,
+        "body_sample": body_text[:500],
+        "current_url": current_url,
+    }
+
+
+def _save_engine_error_debug(
+    search_id: str,
+    query: str,
+    urls_tried: list[str],
+    health: dict[str, Any],
+    errors: list[str],
+    driver=None,
+) -> str:
+    """Save data/debug/<search_id>/rollback_engine_error.json."""
+    payload = {
+        "engine": "rollback",
+        "query": query,
+        "urls_tried": urls_tried,
+        "opened_real_page": health.get("opened_real_page", False),
+        "error_type": health.get("error_type", "unknown"),
+        "page_title": health.get("page_title", ""),
+        "body_text_sample": health.get("body_sample", ""),
+        "current_url": health.get("current_url", ""),
+        "selector_counts": {},
+        "errors": errors,
+        "recommendation": (
+            "Browser opened error page. Not a selector problem. "
+            "Check network/proxy/HTTP2 support."
+            if not health.get("opened_real_page")
+            else "Page opened but no products extracted. Check selectors."
+        ),
+    }
+
+    if driver and health.get("opened_real_page"):
+        try:
+            payload["selector_counts"] = driver.execute_script(
+                """return {
+                  master_product_card: document.querySelectorAll("[data-testid='master-product-card']").length,
+                  product_testid: document.querySelectorAll("[data-testid*='product']").length,
+                  tokopedia_anchors: document.querySelectorAll("a[href*='tokopedia.com']").length,
+                  img_count: document.querySelectorAll('img').length
+                };"""
+            ) or {}
+        except Exception:
+            pass
+
+        try:
+            debug_dir = get_debug_dir(search_id)
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            ss_path = debug_dir / "rollback_engine_error_screenshot.png"
+            driver.save_screenshot(str(ss_path))
+            payload["screenshot_saved"] = ss_path.exists()
+        except Exception:
+            pass
+
+    return save_json_debug(search_id, "rollback_engine_error.json", payload) or ""
 
 
 class RollbackEngine:
@@ -71,74 +200,118 @@ class RollbackEngine:
             elapsed_seconds=eta_calc.get_elapsed(),
         )
 
-        driver, error_msg = create_chrome_driver(self.search_id, DEBUG_DIR / self.search_id)
+        debug_subdir = DEBUG_DIR / self.search_id
+        driver, error_msg = create_chrome_driver(self.search_id, debug_subdir)
         if not driver:
             return False, [], f"Chrome driver bootstrap failed: {error_msg}"
 
         products: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
         urls_tried: list[str] = []
-        selector_probes: list[dict[str, Any]] = []
         errors: list[str] = []
-        pages_loaded = 0
+        preflight_health: dict[str, Any] = {}
 
         try:
             for variant_index, variant in enumerate(query_variants):
                 if len(products) >= raw_target:
                     break
 
-                for url in build_tokopedia_search_urls_for_variant(variant, min_price, max_price):
-                    if len(products) >= raw_target:
-                        break
-                    urls_tried.append(url)
-                    update_progress(
-                        self.search_id,
-                        active_engine=self.name,
-                        stage="rollback_opening",
-                        percent=min(70, 52 + variant_index),
-                        message=f"Rollback/Selenium scraping {variant}",
-                        elapsed_seconds=eta_calc.get_elapsed(),
-                    )
+                # Rule: simple URL first, no pmin/pmax.
+                url = build_tokopedia_search_url(variant)
+                urls_tried.append(url)
 
-                    try:
-                        driver.get(url)
-                        WebDriverWait(driver, 12).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-                        pages_loaded += 1
-                        self._scroll_and_extract(driver, raw_target, products, seen_urls, eta_calc, variant)
-                        selector_probes.append(self._selector_probe(driver))
-                    except Exception as variant_exc:
-                        error = f"{url}: {variant_exc}"
-                        errors.append(error)
-                        log(f"[{self.search_id}]", f"[ROLLBACK] Query failed {variant}: {variant_exc}", "WARN")
+                update_progress(
+                    self.search_id,
+                    active_engine=self.name,
+                    stage="rollback_opening",
+                    percent=min(70, 52 + variant_index),
+                    message=f"Rollback/Selenium opening {variant}",
+                    elapsed_seconds=eta_calc.get_elapsed(),
+                )
+
+                try:
+                    driver.get(url)
+                    WebDriverWait(driver, 12).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                    time.sleep(1.0)
+
+                    # PREFLIGHT CHECK: is this a real Tokopedia page?
+                    health = _detect_page_health_selenium(driver)
+                    preflight_health = health
+
+                    if not health["opened_real_page"]:
+                        error_type = health["error_type"]
+                        msg = (
+                            f"Browser opened Chrome error page ({error_type}), "
+                            f"not Tokopedia. Extraction impossible."
+                        )
+                        errors.append(f"{url}: {msg}")
+                        log(f"[{self.search_id}]", f"[ROLLBACK] PREFLIGHT FAIL: {msg}", "WARN")
+
+                        # Save diagnostic immediately so user sees what happened
+                        _save_engine_error_debug(
+                            self.search_id, query, urls_tried, health, errors, driver
+                        )
+                        # Continue to next variant - different query = different URL = maybe works
                         continue
 
-            normalized = normalize_products(products, self.name)
-            if normalized:
-                log(f"[{self.search_id}]", f"[ROLLBACK] Extracted {len(normalized)} products", "OK")
-                return True, products, ""
+                    # Real page confirmed. Extract raw products.
+                    self._scroll_and_extract(driver, raw_target, products, seen_urls, eta_calc, variant)
 
-            debug_path = self._save_zero_raw_debug(driver, query, query_variants, urls_tried, pages_loaded, selector_probes, errors)
-            error_msg = "Rollback/Selenium tidak menemukan produk."
-            if debug_path:
-                error_msg += f" Debug: {debug_path}"
+                except Exception as variant_exc:
+                    error = f"{url}: {variant_exc}"
+                    errors.append(error)
+                    log(f"[{self.search_id}]", f"[ROLLBACK] Query failed {variant}: {variant_exc}", "WARN")
+                    continue
+
+            if products:
+                normalized = normalize_products(products, self.name)
+                if normalized:
+                    log(f"[{self.search_id}]", f"[ROLLBACK] Extracted {len(normalized)} products", "OK")
+                    return True, products, ""
+
+            # No products - save debug with preflight context
+            _save_engine_error_debug(
+                self.search_id, query, urls_tried, preflight_health or {}, errors, driver
+            )
+
+            # Build a specific error message based on what actually happened
+            if preflight_health and not preflight_health.get("opened_real_page"):
+                error_type = preflight_health.get("error_type", "unknown")
+                error_msg = (
+                    f"Browser opened Chrome error page: {error_type}. "
+                    f"opened_real_page=false. See data/debug/{self.search_id}/rollback_engine_error.json"
+                )
+            else:
+                error_msg = (
+                    f"Rollback/Selenium opened Tokopedia but found 0 products. "
+                    f"See data/debug/{self.search_id}/rollback_engine_error.json"
+                )
             return False, [], error_msg
 
         except Exception as exc:
             error = str(exc)
             log(f"[{self.search_id}]", f"[ROLLBACK] Error: {error}", "ERROR")
-            save_debug_state_sync(self.search_id, driver, error)
+            _save_engine_error_debug(self.search_id, query, urls_tried, {}, [error], driver)
             return False, [], f"Rollback/Selenium error: {error}"
         finally:
             safe_quit_driver(driver)
 
-    def _scroll_and_extract(self, driver, raw_target: int, products: list[dict[str, Any]], seen_urls: set[str], eta_calc, variant: str) -> None:
-        """Scroll one query page and append unique product cards."""
+    def _scroll_and_extract(
+        self,
+        driver,
+        raw_target: int,
+        products: list[dict[str, Any]],
+        seen_urls: set[str],
+        eta_calc,
+        variant: str,
+    ) -> None:
+        """Scroll and collect raw product cards. No category filtering."""
         previous_height = 0
         stable_rounds = 0
 
         for round_index in range(7):
             driver.execute_script("window.scrollBy(0, Math.floor(window.innerHeight * 0.9));")
-            time.sleep(random.uniform(0.55, 0.9))
+            time.sleep(random.uniform(0.6, 1.0))
 
             for item in self._extract_cards(driver):
                 url_key = item.get("url") or ""
@@ -172,76 +345,8 @@ class RollbackEngine:
             if stable_rounds >= 2:
                 break
 
-    def _selector_probe(self, driver) -> dict[str, Any]:
-        """Collect DOM counts used to debug zero extraction."""
-        try:
-            return driver.execute_script(
-                """
-                const count = (selector) => document.querySelectorAll(selector).length;
-                const bodyText = document.body ? (document.body.innerText || '') : '';
-                return {
-                  "[data-testid='master-product-card']": count("[data-testid='master-product-card']"),
-                  "[data-testid*='product']": count("[data-testid*='product']"),
-                  "a[href*='tokopedia.com']": count("a[href*='tokopedia.com']"),
-                  "img": count("img"),
-                  "body_text_length": bodyText.length,
-                  "body_text_sample": bodyText.slice(0, 1000)
-                };
-                """
-            ) or {}
-        except Exception:
-            return {}
-
-    def _save_zero_raw_debug(
-        self,
-        driver,
-        query: str,
-        query_variants: list[str],
-        urls_tried: list[str],
-        pages_loaded: int,
-        selector_probes: list[dict[str, Any]],
-        errors: list[str],
-    ) -> str:
-        """Save required Selenium zero-raw diagnostics. Never crash scrape."""
-        html_saved = False
-        screenshot_saved = False
-        current_url = ""
-        page_title = ""
-        body_text_sample = ""
-        try:
-            current_url = driver.current_url
-            page_title = driver.title
-            page_source = driver.page_source or ""
-            html_path = save_text_debug(self.search_id, "rollback_zero_raw_page.html", page_source)
-            html_saved = bool(html_path)
-            screenshot_path = get_debug_dir(self.search_id) / "rollback_zero_raw_screenshot.png"
-            screenshot_saved = bool(driver.save_screenshot(str(screenshot_path)))
-            body_text_sample = driver.execute_script("return document.body ? (document.body.innerText || '').slice(0, 1000) : '';") or ""
-        except Exception as exc:
-            errors.append(f"debug snapshot failed: {exc}")
-
-        return save_zero_raw_debug(
-            self.search_id,
-            self.name,
-            {
-                "engine": self.name,
-                "query": query,
-                "query_variants": query_variants,
-                "urls_tried": urls_tried,
-                "pages_loaded": pages_loaded,
-                "selector_results": selector_probes[-1] if selector_probes else {},
-                "html_saved": html_saved,
-                "screenshot_saved": screenshot_saved,
-                "console_logs": [],
-                "current_url": current_url,
-                "page_title": page_title,
-                "body_text_sample": body_text_sample,
-                "errors": errors,
-            },
-        )
-
     def _extract_cards(self, driver) -> list[dict[str, Any]]:
-        """Extract product cards in the browser so Selenium only makes one call."""
+        """Extract raw product cards. Returns ALL cards regardless of category."""
         return driver.execute_script(
             r"""
             const parseRupiah = (text) => {
@@ -263,21 +368,25 @@ class RollbackEngine:
               try {
                 const url = new URL(href, location.href);
                 if (!url.hostname.includes('tokopedia.com')) return false;
-                if (['/search', '/cart', '/help', '/discovery', '/official-store'].some(prefix => url.pathname.startsWith(prefix))) return false;
+                if (['/search', '/cart', '/help', '/discovery', '/official-store'].some(
+                  prefix => url.pathname.startsWith(prefix)
+                )) return false;
                 return url.pathname.split('/').filter(Boolean).length >= 2;
-              } catch (_) {
-                return false;
-              }
+              } catch (_) { return false; }
             };
-            const linesOf = (text) => String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+            const linesOf = (text) => String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
             const priceOf = (text) => {
               const match = String(text || '').match(/Rp\s*[\d.,]+(?:\s*(?:juta|jt|mio|rb|ribu|k))?/i);
               return match ? match[0].trim() : '';
             };
 
+            const seen = new Set();
             const results = [];
             const pushProduct = (item) => {
               if (!item || !item.title || (!item.url && !item.price_raw)) return;
+              const key = `${item.url}|${item.title}|${item.price_raw}`;
+              if (seen.has(key)) return;
+              seen.add(key);
               results.push(item);
             };
 
@@ -299,36 +408,39 @@ class RollbackEngine:
                   card.querySelector('[data-testid="spnSRPProdName"]') ||
                   card.querySelector('[data-testid*="ProdName"]') ||
                   card.querySelector('.prd_link-product-name');
-                const priceIndex = lines.findIndex((line) => line.includes(priceRaw));
+                const priceIndex = lines.findIndex(line => line.includes(priceRaw));
                 const imageNode = card.querySelector('img');
                 const title =
                   (selectorTitle && selectorTitle.textContent.trim()) ||
                   (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
                   (anchor ? anchor.getAttribute('title') : '') ||
                   (imageNode ? imageNode.getAttribute('alt') : '') ||
-                  lines.find((line) => !line.startsWith('Rp') && line.length > 4) ||
+                  lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                   '';
                 const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
+                const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
+                const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
                 pushProduct({
                   title,
                   price_raw: priceRaw,
                   price_value: parseRupiah(priceRaw),
                   shop: afterPrice[0] || '',
                   location: afterPrice[1] || '',
-                  rating: '',
-                  sold: '',
+                  rating: ratingMatch ? ratingMatch[1] : '',
+                  sold: soldMatch ? soldMatch[0] : '',
                   url: cleanUrl(anchor ? anchor.href : ''),
-                  image: imageNode ? (imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || '') : '',
+                  image: imageNode
+                    ? (imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || '')
+                    : '',
                   source_engine: 'rollback',
                 });
               }
             }
 
-            const anchors = Array.from(document.querySelectorAll('a[href*="tokopedia.com"]'));
-            for (const anchor of anchors) {
+            // Anchor-based fallback for non-standard card markup
+            for (const anchor of Array.from(document.querySelectorAll('a[href*="tokopedia.com"]'))) {
               const href = anchor.href || '';
               if (!isProductUrl(href)) continue;
-
               const card =
                 anchor.closest('[data-testid="master-product-card"]') ||
                 anchor.closest('div[data-testid*="product"]') ||
@@ -338,24 +450,21 @@ class RollbackEngine:
               const text = card.innerText || anchor.innerText || '';
               const priceRaw = priceOf(text);
               if (!priceRaw) continue;
-
               const lines = linesOf(text);
               const selectorTitle =
                 card.querySelector('[data-testid="spnSRPProdName"]') ||
                 card.querySelector('.prd_link-product-name');
-              const priceIndex = lines.findIndex((line) => line.includes(priceRaw));
+              const priceIndex = lines.findIndex(line => line.includes(priceRaw));
               const title =
                 (selectorTitle && selectorTitle.textContent.trim()) ||
                 (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
-                lines.find((line) => !line.startsWith('Rp') && line.length > 4) ||
+                lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                 'Produk Tokopedia';
-
               const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
               const imageNode = card.querySelector('img');
               const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
               const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
-
-              results.push({
+              pushProduct({
                 title,
                 price_raw: priceRaw,
                 price_value: parseRupiah(priceRaw),
@@ -364,7 +473,9 @@ class RollbackEngine:
                 rating: ratingMatch ? ratingMatch[1] : '',
                 sold: soldMatch ? soldMatch[0] : '',
                 url: cleanUrl(href),
-                image: imageNode ? (imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || '') : '',
+                image: imageNode
+                  ? (imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || '')
+                  : '',
                 source_engine: 'rollback',
               });
             }

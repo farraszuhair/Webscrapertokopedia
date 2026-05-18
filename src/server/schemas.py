@@ -1,9 +1,11 @@
 """
 schemas.py - API request and response models.
+
+FeedbackRequest updated to support multi-category correction and ai_decision.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -12,7 +14,7 @@ EngineMode = Literal["auto", "puppeteer", "rollback", "compare"]
 
 
 class SearchRequest(BaseModel):
-    """Accept both old frontend keys and the requested API keys."""
+    """Accept both old frontend keys and new API keys."""
     model_config = ConfigDict(populate_by_name=True)
 
     query: str
@@ -24,10 +26,17 @@ class SearchRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
+    """
+    Multi-category feedback request.
+    Supports Benar/Salah/Relevan/Tidak Relevan/Ajarkan AI flows.
+    """
     query: str
     product: Dict[str, Any]
-    feedback: str
-    reason: Optional[str] = ""
+    ai_decision: Optional[Dict[str, Any]] = None   # what Qwen said originally
+    correction: str                                  # "should_include", "should_exclude", "benar", etc.
+    categories: Optional[List[str]] = None           # multi-select category tags
+    note: Optional[str] = ""                         # user note from popup
+    search_id: Optional[str] = None                  # for debug artifact
 
 
 class ProgressResponse(BaseModel):

@@ -786,48 +786,105 @@ html, body {
 }
 
 .product-footer {
-  padding: 10px 14px 14px;
+  padding: 8px 14px 14px;
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Feedback button base */
+.btn-feedback {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all var(--trans);
+  border: 1px solid transparent;
+  white-space: nowrap;
 }
 
 .btn-benar {
-  flex: 1;
   background: rgba(34,197,94,.1);
-  border: 1px solid rgba(34,197,94,.3);
+  border-color: rgba(34,197,94,.3);
   color: var(--green);
-  border-radius: 6px;
-  padding: 7px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all var(--trans);
 }
-
 .btn-benar:hover { background: rgba(34,197,94,.2); }
 
-.btn-benar.marked {
-  background: var(--green);
-  color: #000;
-  border-color: var(--green);
-}
-
 .btn-salah {
-  flex: 1;
   background: rgba(239,68,68,.1);
-  border: 1px solid rgba(239,68,68,.3);
+  border-color: rgba(239,68,68,.3);
   color: var(--red);
-  border-radius: 6px;
-  padding: 7px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all var(--trans);
+}
+.btn-salah:hover { background: rgba(239,68,68,.2); }
+
+.btn-relevan {
+  background: rgba(59,130,246,.1);
+  border-color: rgba(59,130,246,.3);
+  color: var(--accent);
+}
+.btn-relevan:hover { background: rgba(59,130,246,.2); }
+
+.btn-tidak-relevan {
+  background: rgba(245,158,11,.1);
+  border-color: rgba(245,158,11,.3);
+  color: var(--amber);
+}
+.btn-tidak-relevan:hover { background: rgba(245,158,11,.2); }
+
+.btn-ajarkan {
+  background: rgba(99,102,241,.1);
+  border-color: rgba(99,102,241,.3);
+  color: var(--accent-2);
+}
+.btn-ajarkan:hover { background: rgba(99,102,241,.2); }
+
+/* Product card after feedback sent */
+.product-card.feedback-sent {
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px rgba(34,197,94,.2);
 }
 
-.btn-salah:hover { background: rgba(239,68,68,.2); }
+/* AI score + categories on card */
+.ai-score {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  background: rgba(34,197,94,.1);
+  border: 1px solid rgba(34,197,94,.2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-top: 4px;
+}
+
+.ai-reason {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.ai-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.cat-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-2);
+  background: rgba(99,102,241,.1);
+  border: 1px solid rgba(99,102,241,.2);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
 
 .results-footer {
   text-align: center;
@@ -843,29 +900,40 @@ html, body {
 
 /* ── MODAL ─────────────────────────────────────── */
 
-.modal-overlay {
+/* Modal wrapper: hidden by default */
+.modal {
+  display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.7);
-  display: flex;
+  z-index: 1000;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
   padding: 16px;
 }
 
-.modal-overlay.hidden { display: none !important; }
+.modal:not(.hidden) { display: flex; }
 
-.modal {
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.7);
+  backdrop-filter: blur(4px);
+}
+
+.modal-box {
+  position: relative;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   width: 100%;
-  max-width: 500px;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
   box-shadow: 0 16px 48px rgba(0,0,0,.6);
-  overflow: hidden;
+  z-index: 1;
 }
+
+body.modal-open { overflow: hidden; }
 
 .modal-header {
   display: flex;
@@ -875,12 +943,9 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
-.modal-header h3 {
-  font-size: 16px;
-  font-weight: 700;
-}
+.modal-header h3 { font-size: 16px; font-weight: 700; }
 
-.modal-close-btn {
+.modal-close {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -890,65 +955,103 @@ html, body {
   border-radius: 6px;
   transition: all var(--trans);
 }
+.modal-close:hover { background: var(--bg-card); color: var(--text); }
 
-.modal-close-btn:hover { background: var(--bg-card); color: var(--text); }
-
-.modal-body {
-  padding: 20px;
-}
-
-.modal-product-info {
+.modal-product {
+  margin: 16px 20px 0;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 12px 14px;
-  margin-bottom: 18px;
+  padding: 10px 14px;
   font-size: 13px;
   color: var(--text-muted);
+  line-height: 1.4;
 }
 
-.modal-product-info strong {
-  display: block;
-  color: var(--text);
-  font-size: 14px;
-  margin-bottom: 4px;
+.modal-label {
+  padding: 14px 20px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
 }
 
-.reasons-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* Category checkboxes grid */
+.modal-cats {
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 12px;
 }
 
-.reason-item {
+.cat-checkbox {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text);
-  padding: 8px 12px;
+  padding: 7px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   transition: all var(--trans);
+  user-select: none;
 }
 
-.reason-item:hover { border-color: var(--accent); background: rgba(59,130,246,.05); }
+.cat-checkbox:hover { border-color: var(--accent); background: rgba(59,130,246,.05); }
 
-.reason-item input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+.cat-checkbox input[type="checkbox"] {
+  width: 15px; height: 15px;
   accent-color: var(--accent);
   flex-shrink: 0;
 }
 
-.modal-footer {
+.modal-note-wrap {
+  padding: 0 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modal-note-wrap label { font-size: 12px; color: var(--text-muted); }
+
+.modal-note-wrap input {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color var(--trans);
+}
+
+.modal-note-wrap input:focus { border-color: var(--accent); }
+
+.modal-actions {
   display: flex;
   gap: 10px;
-  justify-content: flex-end;
-  padding: 16px 20px;
+  padding: 12px 20px 20px;
   border-top: 1px solid var(--border);
 }
+
+/* Compare card diagnostics */
+.compare-engine { font-size: 14px; text-transform: capitalize; margin-bottom: 6px; }
+.compare-ok  { color: var(--green); font-size: 12px; font-weight: 600; }
+.compare-fail { color: var(--red); font-size: 12px; font-weight: 600; }
+.compare-warn { color: var(--amber); font-size: 12px; font-weight: 600; }
+.compare-stats { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
+.compare-stats span { font-size: 12px; color: var(--text-muted); }
+.compare-stats b { color: var(--text); }
+.compare-error { font-size: 11px; color: var(--red); margin-top: 6px; line-height: 1.4; }
+.compare-debug { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.compare-selected { border-color: var(--accent) !important; background: rgba(59,130,246,.08) !important; }
+.compare-use-btn { margin-top: 8px; width: 100%; }
 
 /* ── RESPONSIVE ─────────────────────────────────── */
 

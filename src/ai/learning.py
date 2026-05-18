@@ -1,93 +1,134 @@
 """
-learning.py - Memory system for Qwen AI filtering.
-Stores feedback, updates positive/negative patterns based on user feedback.
+learning.py - Save and retrieve user feedback for Qwen learning.
+
+Feedback payload from frontend:
+{
+  "query": "laptop gaming",
+  "product": {...},
+  "ai_decision": {...},
+  "correction": "should_exclude",
+  "categories": ["mouse", "not_laptop", "should_exclude"],
+  "note": "This is a mouse, not a laptop."
+}
+
+Saved to:
+  data/ai_memory/feedback.jsonl     - all feedback
+  data/ai_memory/examples.jsonl     - examples used for Qwen prompts
+  data/ai_memory/category_rules.json - evolving category rules
+
+Reset via POST /api/ai/reset (clears these files, not the Ollama model).
 """
+from __future__ import annotations
+
 import json
-import os
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+from src.ai.memory_store import (
+    CATEGORY_RULES_FILE,
+    EXAMPLES_FILE,
+    FEEDBACK_FILE,
+    append_jsonl,
+    ensure_memory_dir,
+    load_category_rules,
+    read_jsonl,
+    save_category_rules,
+)
 from src.utils.logger import log
 
-MEMORY_DIR = Path(__file__).parent.parent.parent / "data" / "ai_memory"
-FEEDBACK_FILE = MEMORY_DIR / "feedback.jsonl"
-PATTERNS_FILE = MEMORY_DIR / "patterns.json"
 
-def init_memory():
-    """Ensures memory directories and files exist."""
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    
-    if not PATTERNS_FILE.exists():
-        # Base patterns
-        base_patterns = {
-            "synonyms": {
-                "laptop gaming": ["gaming laptop", "rog", "legion", "nitro", "victus", "tuf", "predator", "msi", "loq"]
-            },
-            "hard_rejects": ["bag", "tas", "keyboard", "mouse", "charger", "adaptor", "ram", "ssd", "lcd", "screen"]
-        }
-        with open(PATTERNS_FILE, "w") as f:
-            json.dump(base_patterns, f, indent=2)
-            
-    if not FEEDBACK_FILE.exists():
-        FEEDBACK_FILE.touch()
-
-def load_patterns() -> dict:
-    """Loads learned patterns for AI context."""
-    init_memory()
-    try:
-        with open(PATTERNS_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_feedback(query: str, product: dict, feedback: str, reason: str):
+def save_feedback(
+    query: str,
+    product: dict[str, Any],
+    ai_decision: dict[str, Any],
+    correction: str,
+    categories: list[str],
+    note: str = "",
+) -> None:
     """
-    Saves user feedback to JSONL and updates patterns if necessary.
-    Feedback types: 'correct', 'wrong', 'irrelevant', 'should_include', 'should_exclude'
+    Save full feedback record to feedback.jsonl and examples.jsonl.
+    Also update category_rules.json when user teaches AI about a category.
     """
-    init_memory()
-    
-    entry = {
+    ensure_memory_dir()
+
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "query": query,
         "product_title": product.get("title", ""),
-        "feedback": feedback,
-        "reason": reason
+        "product_url": product.get("url", ""),
+        "product_price": product.get("price_raw", ""),
+        "ai_was_relevant": (ai_decision or {}).get("relevant"),
+        "ai_confidence": (ai_decision or {}).get("confidence"),
+        "ai_reason": (ai_decision or {}).get("reason", ""),
+        "correction": correction,
+        "categories": categories or [],
+        "note": note,
     }
-    
-    # Save to append log
-    with open(FEEDBACK_FILE, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-        
-    # Update patterns based on feedback
-    patterns = load_patterns()
-    synonyms = patterns.get("synonyms", {})
-    query_lower = query.lower()
-    
-    if query_lower not in synonyms:
-        synonyms[query_lower] = []
-        
-    title = product.get("title", "").lower()
-    
-    # Simple learning: if user says "should_include" for a broad query,
-    # extract the first significant word (brand) and add to synonyms if not present.
-    # A real supercomputer AI would ask Qwen to extract the synonym, but for speed,
-    # we just pass the feedback logs to the prompt later.
-    
-    # We will let Qwen read the recent feedback logs directly as few-shot examples!
-    log("AI_LEARN", f"Saved feedback '{feedback}' for product: {title}", "OK")
 
-def get_recent_feedback(query: str, limit: int = 5) -> list:
-    """Gets recent feedback specifically for this query to feed to AI prompt."""
-    init_memory()
-    results = []
-    try:
-        with open(FEEDBACK_FILE, "r") as f:
-            lines = f.readlines()
-            for line in reversed(lines):
-                if not line.strip(): continue
-                data = json.loads(line)
-                if data.get("query", "").lower() == query.lower():
-                    results.append(data)
-                if len(results) >= limit:
-                    break
-    except:
-        pass
-    return results
+    append_jsonl(FEEDBACK_FILE, record)
+
+    # Save to examples.jsonl so Qwen prompts can reference these as few-shot examples
+    example = {
+        "query": query,
+        "title": record["product_title"],
+        "price": record["product_price"],
+        "label": _label_from_correction(correction, categories),
+        "categories": categories,
+        "reason": note or correction,
+    }
+    append_jsonl(EXAMPLES_FILE, example)
+
+    # Update category_rules.json for systematic patterns
+    _update_category_rules(query, product, correction, categories)
+
+    log("AI_LEARN", f"Saved feedback '{correction}' categories={categories} for: {record['product_title'][:60]}", "OK")
+
+
+def _label_from_correction(correction: str, categories: list[str]) -> str:
+    """Normalize correction to a simple label for examples."""
+    if correction in ("should_include", "benar", "relevan"):
+        return "relevant"
+    if correction in ("should_exclude", "salah", "tidak_relevan"):
+        return "not_relevant"
+    return correction
+
+
+def _update_category_rules(
+    query: str,
+    product: dict[str, Any],
+    correction: str,
+    categories: list[str],
+) -> None:
+    """Add a category rule when user explicitly teaches the AI."""
+    rules_data = load_category_rules()
+    rules = rules_data.get("rules", [])
+
+    for cat in (categories or []):
+        rule = {
+            "query": query,
+            "category": cat,
+            "correction": correction,
+            "title_example": product.get("title", "")[:80],
+            "action": "exclude" if correction in ("should_exclude", "salah", "tidak_relevan") else "include",
+        }
+        rules.append(rule)
+
+    rules_data["rules"] = rules[-500:]  # keep last 500 rules
+    save_category_rules(rules_data)
+
+
+def get_recent_feedback(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Get recent feedback for a specific query to inject as few-shot examples into Qwen prompts."""
+    all_feedback = read_jsonl(FEEDBACK_FILE)
+    q_lower = query.lower()
+    relevant = [r for r in all_feedback if r.get("query", "").lower() == q_lower]
+    return relevant[-limit:]
+
+
+def get_recent_examples(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Get confirmed examples for few-shot prompting."""
+    all_examples = read_jsonl(EXAMPLES_FILE)
+    q_lower = query.lower()
+    relevant = [e for e in all_examples if e.get("query", "").lower() == q_lower]
+    return relevant[-limit:]
