@@ -399,7 +399,11 @@ class ScraperApp {
         <div class="product-body">
           <div class="product-title">${this.esc(title)}</div>
           <div class="product-price">${this.esc(price)}</div>
-          ${product.shop ? `<div class="product-shop">${this.esc(product.shop)}</div>` : ''}
+          <div class="product-stats">
+            ${product.rating ? `<span class="product-rating">⭐ ${this.esc(product.rating)}</span>` : ''}
+            ${product.sold ? `<span class="product-sold">${this.esc(product.sold)}</span>` : ''}
+          </div>
+          ${product.shop ? `<div class="product-shop">🏢 ${this.esc(product.shop)}</div>` : ''}
           ${product.location ? `<div class="product-location">📍 ${this.esc(product.location)}</div>` : ''}
           ${product.source_engine ? `<div class="product-source">${this.esc(product.source_engine)}</div>` : ''}
           ${confidence}${aiCategories}${aiReason}
@@ -444,18 +448,23 @@ class ScraperApp {
       <div class="modal-overlay" id="modal-overlay"></div>
       <div class="modal-box" role="dialog" aria-modal="true" aria-label="Feedback untuk AI">
         <div class="modal-header">
-          <h3>🧠 Ajarkan AI</h3>
+          <h3 id="modal-dynamic-title">🧠 Ajarkan AI</h3>
           <button class="modal-close" id="modal-close" aria-label="Tutup">✕</button>
         </div>
         <div class="modal-product" id="modal-product-info"></div>
-        <p class="modal-label">Pilih kategori yang tepat (bisa lebih dari satu):</p>
+        <p class="modal-label" id="modal-dynamic-label">Pilih kategori yang tepat (bisa lebih dari satu):</p>
         <div class="modal-cats" id="modal-cats"></div>
         <div class="modal-note-wrap">
           <label for="modal-note">Catatan (opsional):</label>
-          <input type="text" id="modal-note" placeholder="Contoh: Ini mouse, bukan laptop" maxlength="200">
+          <input type="text" id="modal-note" placeholder="Jelaskan kenapa AI salah..." maxlength="200">
+        </div>
+        <div class="modal-corrected-label" id="modal-corrected-label-wrap" style="display:none; margin-top: 15px;">
+          <p class="modal-label">Koreksi Label:</p>
+          <label><input type="radio" name="corrected_label" value="relevan"> Relevan</label>
+          <label style="margin-left:10px;"><input type="radio" name="corrected_label" value="tidak_relevan"> Tidak relevan</label>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" id="modal-submit">Simpan Feedback</button>
+          <button class="btn btn-primary" id="modal-submit">Kirim feedback</button>
           <button class="btn btn-ghost" id="modal-cancel">Batal</button>
         </div>
       </div>
@@ -488,6 +497,20 @@ class ScraperApp {
     this._modalPid = productId;
     this._modalCorrection = correction === 'ajarkan' ? 'should_exclude' : correction;
 
+    const titleEl = this._modal.querySelector('#modal-dynamic-title');
+    const labelWrap = this._modal.querySelector('#modal-corrected-label-wrap');
+    const questionEl = this._modal.querySelector('#modal-dynamic-label');
+    
+    if (correction === 'should_exclude') {
+        titleEl.textContent = 'Ini salah kenapa?';
+        questionEl.textContent = 'Kenapa hasil ini salah?';
+        labelWrap.style.display = 'block';
+    } else {
+        titleEl.textContent = '🧠 Ajarkan AI';
+        questionEl.textContent = 'Pilih kategori yang tepat (bisa lebih dari satu):';
+        labelWrap.style.display = 'none';
+    }
+
     // Show product title in modal
     const info = this._modal.querySelector('#modal-product-info');
     if (info) {
@@ -496,6 +519,7 @@ class ScraperApp {
 
     // Reset checkboxes and note
     this._modal.querySelectorAll('input[name="cat"]').forEach((cb) => { cb.checked = false; });
+    this._modal.querySelectorAll('input[name="corrected_label"]').forEach((rb) => { rb.checked = false; });
     const note = this._modal.querySelector('#modal-note');
     if (note) note.value = '';
 
@@ -515,8 +539,15 @@ class ScraperApp {
     const selected = Array.from(this._modal.querySelectorAll('input[name="cat"]:checked'))
       .map((cb) => cb.value);
     const note = this._modal.querySelector('#modal-note')?.value.trim() || '';
+    const correctedLabelRb = this._modal.querySelector('input[name="corrected_label"]:checked');
+    const correctedLabel = correctedLabelRb ? correctedLabelRb.value : null;
 
-    this._submitFeedback(this._modalPid, this._modalCorrection, selected, note);
+    let finalCorrection = this._modalCorrection;
+    if (correctedLabel) {
+        finalCorrection = correctedLabel;
+    }
+
+    this._submitFeedback(this._modalPid, finalCorrection, selected, note);
     this._closeFeedbackModal();
   }
 
@@ -525,17 +556,17 @@ class ScraperApp {
     if (!product) return;
 
     const payload = {
-      query: this.state.query,
-      product,
-      ai_decision: {
-        relevant: product.ai_decision,
-        confidence: product.relevance_score,
-        reason: product.ai_reason,
-      },
-      correction,
-      categories: categories || [],
-      note: note || '',
-      search_id: this.state.searchId,
+      search_id: this.state.searchId || "unknown",
+      product_id: productId || "unknown",
+      product_title: product.title || "",
+      user_action: correction === "should_exclude" ? "salah" : correction === "should_include" ? "benar" : correction,
+      selected_reasons: categories || [],
+      custom_reason: note || "",
+      corrected_label: correction === "relevan" || correction === "should_include" ? "relevan" : "tidak_relevan",
+      ai_label: product.ai_decision ? "relevan" : "tidak_relevan",
+      ai_confidence: product.relevance_score || 0,
+      query: this.state.query || "",
+      timestamp: new Date().toISOString()
     };
 
     try {

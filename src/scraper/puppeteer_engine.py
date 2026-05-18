@@ -80,6 +80,7 @@ class PuppeteerEngine:
                 str(max_price or ""),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=1024 * 1024 * 10,
             )
             stderr_task = asyncio.create_task(self._drain_stderr(process, stderr_lines))
 

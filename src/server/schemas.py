@@ -26,17 +26,17 @@ class SearchRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    """
-    Multi-category feedback request.
-    Supports Benar/Salah/Relevan/Tidak Relevan/Ajarkan AI flows.
-    """
+    search_id: str
+    product_id: str
+    product_title: str
+    user_action: str
+    selected_reasons: List[str]
+    custom_reason: str
+    corrected_label: str
+    ai_label: str
+    ai_confidence: float
     query: str
-    product: Dict[str, Any]
-    ai_decision: Optional[Dict[str, Any]] = None   # what Qwen said originally
-    correction: str                                  # "should_include", "should_exclude", "benar", etc.
-    categories: Optional[List[str]] = None           # multi-select category tags
-    note: Optional[str] = ""                         # user note from popup
-    search_id: Optional[str] = None                  # for debug artifact
+    timestamp: str
 
 
 class ProgressResponse(BaseModel):

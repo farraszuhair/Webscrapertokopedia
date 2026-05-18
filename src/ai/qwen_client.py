@@ -26,10 +26,12 @@ import httpx
 
 from src.utils.logger import log
 
-OLLAMA_BASE = "http://localhost:11434"
+import os
+
+OLLAMA_BASE = os.getenv("OLLAMA_URL", "http://localhost:11434").replace("/api/generate", "")
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE}/api/generate"
 OLLAMA_TAGS_URL = f"{OLLAMA_BASE}/api/tags"
-MODEL_NAME = "qwen2.5:14b"
+MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 
 # KEY FIX: 14B model cold start can take 60+ seconds.
 # 30s was guaranteed to timeout on first call.
@@ -88,7 +90,8 @@ async def ask_qwen(prompt: str, search_id: str | None = None) -> Optional[Dict[s
         # Keep context small - large context causes OOM which gives HTTP 500
         "options": {
             "num_ctx": 2048,
-            "temperature": 0.1,  # low temperature for consistent structured output
+            "temperature": 0,
+            "num_predict": 300,
         },
     }
 
@@ -127,6 +130,13 @@ async def ask_qwen(prompt: str, search_id: str | None = None) -> Optional[Dict[s
 
             # Parse the inner model output as JSON
             try:
+                # Try to extract JSON between { and }
+                import re
+                match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if match:
+                    parsed = json.loads(match.group(0))
+                    if isinstance(parsed, dict):
+                        return parsed
                 parsed = json.loads(response_text)
                 if not isinstance(parsed, dict):
                     log("QWEN", f"Qwen returned non-dict JSON: {type(parsed)}", "WARN")

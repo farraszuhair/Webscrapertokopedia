@@ -85,20 +85,17 @@ async def handle_feedback(req: FeedbackRequest):
     try:
         save_feedback(
             query=req.query,
-            product=req.product,
-            ai_decision=req.ai_decision or {},
-            correction=req.correction,
-            categories=req.categories or [],
-            note=req.note or "",
+            product_id=req.product_id,
+            product_title=req.product_title,
+            user_action=req.user_action,
+            selected_reasons=req.selected_reasons,
+            custom_reason=req.custom_reason,
+            corrected_label=req.corrected_label,
+            ai_label=req.ai_label,
+            ai_confidence=req.ai_confidence,
         )
         if req.search_id:
-            save_json_debug(req.search_id, "feedback_saved.json", {
-                "query": req.query,
-                "product_title": req.product.get("title", ""),
-                "correction": req.correction,
-                "categories": req.categories,
-                "note": req.note,
-            })
+            save_json_debug(req.search_id, "feedback_saved.json", req.model_dump())
         return {"success": True, "message": "Feedback saved."}
     except Exception as exc:
         log("API", f"Feedback save error: {exc}", "ERROR")
@@ -211,10 +208,11 @@ async def _filter_pipeline(
     error = ""
     qwen_warning = ""
 
-    if qwen_status in ("failed", "unavailable"):
-        # Qwen failed but we still have products via fallback - show warning, not error
+    if qwen_status == "unavailable":
+        qwen_warning = "AI filter skipped because model unavailable. Run: ollama pull qwen2.5:3b"
+    elif qwen_status == "failed":
         qwen_warning = (
-            "Qwen gagal atau tidak tersedia. "
+            "Qwen gagal. "
             "Produk ditampilkan berdasarkan fallback scoring (raw/budget tetap ditampilkan)."
         )
 

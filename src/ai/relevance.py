@@ -29,7 +29,7 @@ import re
 from typing import Any, Dict, List, Tuple
 
 from src.ai.learning import get_recent_examples, get_recent_feedback
-from src.ai.qwen_client import ask_qwen, check_ollama_health
+from src.ai.qwen_client import ask_qwen, check_ollama_health, check_model_loaded
 from src.utils.logger import log
 
 
@@ -138,6 +138,65 @@ def _fallback_score(query: str, product: dict[str, Any]) -> dict[str, Any]:
         "reason": "Fallback: no strong signal, kept by default (fail-open)",
     }
 
+def build_ai_batches(products, batch_size=25, max_prompt_chars=12000):
+    batches = []
+    current_batch = []
+    current_chars = 0
+    import json
+    for i, p in enumerate(products):
+        # Only keep compact fields for the prompt
+        compact = json.dumps({"index": i, "title": p.get("title", "")[:180], "price": p.get("price_raw", "")})
+        if current_batch and (len(current_batch) >= batch_size or current_chars + len(compact) > max_prompt_chars):
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+        current_batch.append((i, p, compact))
+        current_chars += len(compact)
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+def _build_batch_prompt(query, batch_compacts, examples, feedback):
+    few_shot = ""
+    if examples:
+        few_shot = "\nUser feedback examples:\n"
+        for ex in examples[-3:]:
+            few_shot += f'- "{ex.get("title", "")}" -> {ex.get("label", "unknown")} | reason={ex.get("reason", "")}\n'
+
+    feedback_ctx = ""
+    if feedback:
+        feedback_ctx = "\nRecent corrections:\n"
+        for fb in feedback[-2:]:
+            feedback_ctx += f'- "{fb.get("product_title", "")}" was marked "{fb.get("correction", "")}"\n'
+            
+    products_json = "[\n" + ",\n".join(c for _, _, c in batch_compacts) + "\n]"
+
+    prompt = f"""You are an e-commerce product relevance validator for Tokopedia.
+
+User searched: "{query}"
+
+{few_shot}{feedback_ctx}
+Rules:
+- Accept gaming laptops of any brand (ROG, Legion, ASUS, MSI, Acer, HP Omen, Lenovo, etc.)
+- Reject accessories (mouse, keyboard, charger, cooler, RAM, SSD, headset, bag, laptop stand, stickers, spare parts) unless specifically searched for
+- A product with GPU model (RTX, GTX) and "laptop" in title is almost certainly relevant for "laptop gaming"
+- Use semantic relevance, not exact keyword only.
+
+Products to evaluate:
+{products_json}
+
+Respond ONLY in strict JSON using this exact schema:
+{{
+  "valid_indexes": [0, 1, 2],
+  "rejected": [
+    {{
+      "index": 3,
+      "reason": "short reason why not relevant"
+    }}
+  ]
+}}"""
+    return prompt
+
 
 async def filter_relevance(
     query: str,
@@ -173,83 +232,111 @@ async def filter_relevance(
     # One quick probe before sending potentially 50+ Qwen requests.
     # If Ollama is down, skip the 120s * N timeouts immediately.
     ollama_alive = await check_ollama_health()
-    if not ollama_alive:
-        log("AI", "Ollama not reachable - using fallback for all products", "WARN")
+    model_loaded = await check_model_loaded() if ollama_alive else False
+    if not ollama_alive or not model_loaded:
+        log("AI", "Ollama or model not available - using fallback for all products", "WARN")
         result = _apply_fallback_all(query, products, "fallback_ollama_unavailable")
         _save_qwen_filter_debug(search_id, query, products, result, "unavailable", 0, 0)
         return result, "unavailable"
 
-    # ── Per-product Qwen calls ───────────────────────────────────────────────
+    # ── Batch Qwen calls ───────────────────────────────────────────────
     examples = get_recent_examples(query)
     feedback_items = get_recent_feedback(query)
-    log("AI", f"Qwen filter: {len(products)} products, examples={len(examples)}, feedback={len(feedback_items)}", "INFO")
+    
+    batches = build_ai_batches(products, batch_size=25, max_prompt_chars=12000)
+    log("AI", f"Qwen filter: {len(products)} products, {len(batches)} batches, examples={len(examples)}, feedback={len(feedback_items)}", "INFO")
 
     valid: list[dict[str, Any]] = []
     qwen_debug: list[dict[str, Any]] = []
-    consecutive_failures = 0
     qwen_ok_count = 0
     qwen_fail_count = 0
-    switched_to_fallback = False
+    
+    # Needs progress update support, but relevance.py doesn't have eta_calc directly.
+    # The routes.py handles progress, we can just rely on standard logging here, 
+    # and maybe pass a callback if needed. For now, just batch process.
+    from src.server.progress import update_progress
+    
+    for batch_idx, batch in enumerate(batches):
+        batch_current = batch_idx + 1
+        batch_total = len(batches)
+        
+        # update progress for this batch
+        if search_id:
+            base_prog = 75
+            span = 17
+            progress_pct = base_prog + span * (batch_current / max(1, batch_total))
+            update_progress(
+                search_id,
+                stage="ai_filtering",
+                percent=int(progress_pct),
+                message=f"AI filtering batch {batch_current}/{batch_total}",
+                found=len(products)
+            )
+            
+        prompt = _build_batch_prompt(query, batch, examples, feedback_items)
+        ai_response = await ask_qwen(prompt, search_id)
 
-    for product in products:
-        decision: dict[str, Any]
+        # Parse response
+        valid_indexes = []
+        rejected_map = {}
+        batch_success = False
 
-        if switched_to_fallback:
-            # Qwen gave too many consecutive failures - stop trying, use fallback for rest
-            decision = _fallback_score(query, product)
-            decision["source"] = "fallback_qwen_consecutive_fail"
+        if ai_response and isinstance(ai_response, dict) and "valid_indexes" in ai_response:
+            valid_indexes = ai_response.get("valid_indexes", [])
+            rejected_items = ai_response.get("rejected", [])
+            for r in rejected_items:
+                if isinstance(r, dict) and "index" in r:
+                    rejected_map[r["index"]] = r.get("reason", "rejected")
+            qwen_ok_count += len(batch)
+            batch_success = True
         else:
-            prompt = _build_qwen_prompt(query, product, examples, feedback_items)
-            ai_response = await ask_qwen(prompt, search_id)
+            qwen_fail_count += len(batch)
+            log("AI", f"Batch {batch_current} failed, using fallback", "WARN")
 
-            if ai_response and isinstance(ai_response, dict) and "relevant" in ai_response:
-                # Qwen responded correctly
-                decision = ai_response
-                decision["source"] = "qwen"
-                cats = decision.get("categories")
-                if isinstance(cats, str):
-                    decision["categories"] = [cats]
-                elif not isinstance(cats, list):
-                    decision["categories"] = []
-                consecutive_failures = 0
-                qwen_ok_count += 1
+        for idx, p, _ in batch:
+            if batch_success:
+                is_valid = idx in valid_indexes
+                reason = "valid" if is_valid else rejected_map.get(idx, "rejected")
+                decision = {
+                    "relevant": is_valid,
+                    "confidence": 0.9 if is_valid else 0.1,
+                    "categories": ["gaming_laptop" if is_valid else "other"],
+                    "reason": reason,
+                    "source": "qwen"
+                }
             else:
-                # Qwen failed (500, timeout, bad JSON)
-                qwen_fail_count += 1
-                consecutive_failures += 1
-                decision = _fallback_score(query, product)
+                decision = _fallback_score(query, p)
                 decision["source"] = "fallback_qwen_failed"
 
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                    log("AI", f"Qwen failed {consecutive_failures} times in a row. Switching all remaining to fallback.", "WARN")
-                    switched_to_fallback = True
+            p["relevance_score"] = float(decision.get("confidence", FALLBACK_SCORE))
+            p["ai_decision"] = decision.get("relevant", True)
+            p["ai_reason"] = decision.get("reason", "")
+            p["ai_categories"] = decision.get("categories", [])
+            p["ai_source"] = decision.get("source", "unknown")
 
-        # Attach decision metadata to product
-        product["relevance_score"] = float(decision.get("confidence", FALLBACK_SCORE))
-        product["ai_decision"] = decision.get("relevant", True)
-        product["ai_reason"] = decision.get("reason", "")
-        product["ai_categories"] = decision.get("categories", [])
-        product["ai_source"] = decision.get("source", "unknown")
-
-        kept = decision.get("relevant", True) and product["relevance_score"] >= RELEVANCE_THRESHOLD
-        qwen_debug.append({
-            "title": product.get("title", "")[:80],
-            "decision": decision,
-            "kept": kept,
-        })
-
-        if kept:
-            valid.append(product)
-        else:
-            log("AI", f"[REJECT] {product.get('title', '')[:50]} score={product['relevance_score']:.2f}", "INFO")
+            kept = decision.get("relevant", True) and p["relevance_score"] >= RELEVANCE_THRESHOLD
+            qwen_debug.append({
+                "title": p.get("title", "")[:80],
+                "decision": decision,
+                "kept": kept,
+            })
+            if kept:
+                valid.append(p)
+                
+        if search_id:
+            update_progress(
+                search_id,
+                stage="ai_filtering",
+                message=f"AI filtering batch {batch_current}/{batch_total} done",
+            )
 
     # Determine overall qwen_status
     if qwen_ok_count > 0 and qwen_fail_count == 0:
         qwen_status = "ok"
     elif qwen_ok_count > 0 and qwen_fail_count > 0:
-        qwen_status = "partial"  # some worked, some failed
+        qwen_status = "partial"
     else:
-        qwen_status = "failed"  # everything failed, all fallback
+        qwen_status = "failed"
 
     _save_qwen_filter_debug(search_id, query, products, valid, qwen_status, qwen_ok_count, qwen_fail_count, qwen_debug)
     log("AI", f"filter_relevance: {len(products)} in, {len(valid)} kept, qwen_status={qwen_status}", "OK")

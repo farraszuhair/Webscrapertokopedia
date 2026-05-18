@@ -40,11 +40,14 @@ from src.utils.logger import log
 
 def save_feedback(
     query: str,
-    product: dict[str, Any],
-    ai_decision: dict[str, Any],
-    correction: str,
-    categories: list[str],
-    note: str = "",
+    product_id: str,
+    product_title: str,
+    user_action: str,
+    selected_reasons: list[str],
+    custom_reason: str,
+    corrected_label: str,
+    ai_label: str,
+    ai_confidence: float,
 ) -> None:
     """
     Save full feedback record to feedback.jsonl and examples.jsonl.
@@ -55,15 +58,14 @@ def save_feedback(
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "query": query,
-        "product_title": product.get("title", ""),
-        "product_url": product.get("url", ""),
-        "product_price": product.get("price_raw", ""),
-        "ai_was_relevant": (ai_decision or {}).get("relevant"),
-        "ai_confidence": (ai_decision or {}).get("confidence"),
-        "ai_reason": (ai_decision or {}).get("reason", ""),
-        "correction": correction,
-        "categories": categories or [],
-        "note": note,
+        "product_id": product_id,
+        "product_title": product_title,
+        "ai_label": ai_label,
+        "ai_confidence": ai_confidence,
+        "user_action": user_action,
+        "selected_reasons": selected_reasons,
+        "custom_reason": custom_reason,
+        "corrected_label": corrected_label,
     }
 
     append_jsonl(FEEDBACK_FILE, record)
@@ -72,17 +74,16 @@ def save_feedback(
     example = {
         "query": query,
         "title": record["product_title"],
-        "price": record["product_price"],
-        "label": _label_from_correction(correction, categories),
-        "categories": categories,
-        "reason": note or correction,
+        "label": corrected_label,
+        "categories": selected_reasons,
+        "reason": custom_reason or user_action,
     }
     append_jsonl(EXAMPLES_FILE, example)
 
     # Update category_rules.json for systematic patterns
-    _update_category_rules(query, product, correction, categories)
+    _update_category_rules(query, product_title, user_action, selected_reasons)
 
-    log("AI_LEARN", f"Saved feedback '{correction}' categories={categories} for: {record['product_title'][:60]}", "OK")
+    log("AI_LEARN", f"Saved feedback '{user_action}' categories={selected_reasons} for: {product_title[:60]}", "OK")
 
 
 def _label_from_correction(correction: str, categories: list[str]) -> str:
@@ -96,8 +97,8 @@ def _label_from_correction(correction: str, categories: list[str]) -> str:
 
 def _update_category_rules(
     query: str,
-    product: dict[str, Any],
-    correction: str,
+    product_title: str,
+    user_action: str,
     categories: list[str],
 ) -> None:
     """Add a category rule when user explicitly teaches the AI."""
@@ -108,9 +109,9 @@ def _update_category_rules(
         rule = {
             "query": query,
             "category": cat,
-            "correction": correction,
-            "title_example": product.get("title", "")[:80],
-            "action": "exclude" if correction in ("should_exclude", "salah", "tidak_relevan") else "include",
+            "correction": user_action,
+            "title_example": product_title[:80],
+            "action": "exclude" if user_action in ("should_exclude", "salah", "tidak_relevan") else "include",
         }
         rules.append(rule)
 

@@ -142,6 +142,11 @@ async function extractProducts(page, knownKeys, sourceQuery) {
         .map((line) => line.trim())
         .filter(Boolean);
 
+    const truncateText = (value, maxLen) => {
+      const str = String(value || '').replace(/\s+/g, ' ').trim();
+      return str.length > maxLen ? str.slice(0, maxLen) + '...' : str;
+    };
+
     const priceFromText = (text) => {
       const match = String(text || '').match(/Rp\s*[\d.,]+(?:\s*(?:juta|jt|mio|rb|ribu|k))?/i);
       return match ? match[0].trim() : '';
@@ -196,16 +201,16 @@ async function extractProducts(page, knownKeys, sourceQuery) {
       // Keep product even if shop/rating is empty. Normalizer handles missing fields.
       if (!title || (!url && !priceRaw)) return null;
       return {
-        title,
+        title: truncateText(title, 180),
         price_raw: priceRaw,
-        shop: afterPrice[0] || '',
-        location: afterPrice[1] || '',
-        rating,
-        sold,
-        url,
-        image: imageNode
+        shop: truncateText(afterPrice[0], 80),
+        location: truncateText(afterPrice[1], 80),
+        rating: truncateText(rating, 10),
+        sold: truncateText(sold, 30),
+        url: truncateText(url, 500),
+        image: truncateText(imageNode
           ? imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || ''
-          : '',
+          : '', 500),
         source_engine: 'puppeteer',
       };
     };

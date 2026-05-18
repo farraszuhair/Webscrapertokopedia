@@ -10,7 +10,7 @@ class ETACalculator:
         Initializes ETA calculator.
         smoothing_window: Number of recent samples to average for smoothing ETA.
         """
-        self.start_time = time.time()
+        self.start_time = time.perf_counter()
         self.history = deque(maxlen=smoothing_window)
         self.last_pct = 0
     
@@ -22,7 +22,7 @@ class ETACalculator:
         if current_pct <= 0 or current_pct >= 100:
             return None
             
-        elapsed = time.time() - self.start_time
+        elapsed = time.perf_counter() - self.start_time
         
         # Estimate total time based on current progress
         # If we did X% in Y seconds, 100% takes (Y / (X/100)) seconds
@@ -39,4 +39,4 @@ class ETACalculator:
 
     def get_elapsed(self) -> int:
         """Returns elapsed time in seconds."""
-        return int(time.time() - self.start_time)
+        return int(time.perf_counter() - self.start_time)

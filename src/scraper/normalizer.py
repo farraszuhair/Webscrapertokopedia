@@ -106,17 +106,53 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         price_text = format_rupiah(parsed_price)
 
     engine = source_engine or _first_text(raw, ("source_engine", "source", "engine")) or "unknown"
+    
+    # Parse rating to float if possible
+    rating_text = _first_text(raw, ("rating", "rating_toko", "rating_text"))
+    rating_val = None
+    try:
+        rating_val = float(rating_text.replace(',', '.'))
+    except ValueError:
+        pass
+
+    # Parse sold count to int if possible
+    sold_text = _first_text(raw, ("sold", "terjual", "sold_text"))
+    sold_count = None
+    sold_lower = sold_text.lower()
+    match = re.search(r'(\d+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta)?', sold_lower)
+    if match:
+        num_str = match.group(1).replace(',', '.')
+        try:
+            num = float(num_str)
+            unit = match.group(2)
+            if unit in ('rb', 'ribu', 'k'):
+                num *= 1000
+            elif unit in ('jt', 'juta'):
+                num *= 1000000
+            sold_count = int(num)
+        except ValueError:
+            pass
+
     normalized = {
         "id": raw.get("id") or _product_id(title, url, parsed_price),
         "title": title,
-        "price_raw": price_text,
-        "price_value": parsed_price,
-        "shop": _first_text(raw, ("shop", "toko", "nama_toko", "store")),
-        "location": _first_text(raw, ("location", "lokasi")),
-        "rating": _first_text(raw, ("rating", "rating_toko", "rating_text")),
-        "sold": _first_text(raw, ("sold", "terjual", "sold_text")),
-        "url": url,
-        "image": _first_text(raw, ("image", "image_url", "url_gambar", "thumbnail")),
+        "price": parsed_price,
+        "price_text": price_text,
+        "price_raw": price_text, # backward compat
+        "price_value": parsed_price, # backward compat
+        "shop_name": _first_text(raw, ("shop", "toko", "nama_toko", "store", "shop_name")),
+        "shop": _first_text(raw, ("shop", "toko", "nama_toko", "store", "shop_name")), # backward compat
+        "shop_location": _first_text(raw, ("location", "lokasi", "shop_location")),
+        "location": _first_text(raw, ("location", "lokasi", "shop_location")), # backward compat
+        "rating": rating_val if rating_val is not None else rating_text,
+        "rating_text": rating_text,
+        "sold_count": sold_count,
+        "sold_text": sold_text,
+        "sold": sold_text, # backward compat
+        "product_url": url,
+        "url": url, # backward compat
+        "image_url": _first_text(raw, ("image", "image_url", "url_gambar", "thumbnail")),
+        "image": _first_text(raw, ("image", "image_url", "url_gambar", "thumbnail")), # backward compat
         "source_engine": engine,
         "source_query": _first_text(raw, ("source_query", "query_variant")),
         "category_decision": raw.get("category_decision", ""),
