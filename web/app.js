@@ -278,38 +278,75 @@ class ScraperApp {
   stageLabel(stage) {
     const labels = {
       queued: 'Menunggu Giliran',
-      init: '🚀 Persiapan',
-      launching_browser: '🚀 Membuka Browser...',
-      opening_tokopedia: '🌐 Membuka Tokopedia...',
-      retrying_navigation: '🔄 Mencoba Ulang...',
-      scrolling: '📜 Scroll Halaman...',
+      engine_selecting: '🚀 Memilih Engine...',
+      puppeteer_starting: '🚀 Membuka Browser (Puppeteer)...',
+      puppeteer_opening: '🌐 Membuka Tokopedia...',
+      puppeteer_scrolling: '📜 Scroll Halaman...',
+      puppeteer_extracting: '📦 Ekstrak Produk...',
+      switching_to_rollback: '⚠️ Pindah ke Fallback Scraper...',
+      rollback_starting: '🚀 Mulai Fallback Scraper...',
+      rollback_extracting: '📜 Scroll & Ekstrak...',
       deduplicating: '🧹 Menghapus Duplikat...',
-      filtering_budget: '💰 Memfilter Budget...',
+      budget_filtering: '💰 Memfilter Budget...',
       ai_filtering: '🤖 Validasi AI...',
       finalizing: '✨ Finalisasi Hasil...',
       done: '✅ Selesai!',
       failed: '❌ Gagal',
+      cancelled: '🛑 Dibatalkan'
     };
     return labels[stage] || stage || 'Processing...';
   }
 
   updateStagePipeline(currentStage, pct) {
-    const order = ['init', 'launching_browser', 'opening_tokopedia', 'scrolling', 'ai_filtering', 'finalizing'];
-    const currentIdx = order.indexOf(currentStage);
+    const order = [
+        'engine_selecting', 
+        'puppeteer_opening', 
+        'rollback_starting', 
+        'budget_filtering', 
+        'ai_filtering', 
+        'finalizing'
+    ];
+    
+    // Map intermediate states to the main UI states
+    const stageMap = {
+        'queued': -1,
+        'engine_selecting': 0,
+        'puppeteer_starting': 1,
+        'puppeteer_opening': 1,
+        'puppeteer_scrolling': 1,
+        'puppeteer_extracting': 1,
+        'switching_to_rollback': 2,
+        'rollback_starting': 2,
+        'rollback_extracting': 2,
+        'deduplicating': 3,
+        'budget_filtering': 3,
+        'ai_filtering': 4,
+        'finalizing': 5,
+        'done': 6
+    };
 
-    order.forEach((s, i) => {
+    const currentIdx = stageMap[currentStage] !== undefined ? stageMap[currentStage] : 0;
+    
+    // The HTML has elements like stage-init, stage-opening, etc.
+    // Let's map our index to those DOM ids:
+    const domOrder = ['init', 'opening', 'scrolling', 'extracting', 'filtering', 'ai_validation', 'finalizing'];
+    // For simplicity, we just fill them up progressively based on percentage
+    
+    domOrder.forEach((s, i) => {
       const el = this.$(`stage-${s}`);
       if (!el) return;
       el.classList.remove('active', 'done');
-      if (i < currentIdx) {
-        el.classList.add('done');
-      } else if (i === currentIdx) {
-        el.classList.add('active');
+      if (pct >= 100 || (pct > (i * (100 / domOrder.length)))) {
+        if (pct < 100 && pct < ((i + 1) * (100 / domOrder.length))) {
+            el.classList.add('active');
+        } else {
+            el.classList.add('done');
+        }
       }
     });
 
     if (pct >= 100) {
-      order.forEach((s) => this.$(`stage-${s}`)?.classList.add('done'));
+      domOrder.forEach((s) => this.$(`stage-${s}`)?.classList.add('done'));
       this.$(`stage-finalizing`)?.classList.remove('active');
     }
   }

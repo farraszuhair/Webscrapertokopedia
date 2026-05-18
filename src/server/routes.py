@@ -16,23 +16,24 @@ from src.scraper.engine_selector import run_scraper_chain
 from src.ai.relevance import filter_relevance
 from src.ai.learning import save_feedback
 from src.ai.reset import reset_ai_memory
+from src.server.lifecycle import register_task, unregister_task
 
 router = APIRouter()
 
-# Store final results here so frontend can poll them if needed
-# In a real app, this goes to DB. For now, memory is fine.
 _results_store: Dict[str, Dict[str, Any]] = {}
 
 @router.post("/api/search")
-async def start_search(req: SearchRequest, background_tasks: BackgroundTasks):
+async def start_search(req: SearchRequest):
     search_id = str(uuid.uuid4())
-    raw_target = max(100, req.target_count * 4) # Overfetch heavily for AI filtering
+    raw_target = max(100, req.target_count * 4) 
     
-    # Init progress
+    # Check if budget is provided and parsed correctly
+    # If the user sends 10.000.000 as string, it should be caught, but schemas.py likely handles int/string
+    
     init_progress(search_id, req.target_count, raw_target)
     
-    # Start background job
-    background_tasks.add_task(run_scrape_job, search_id, req, raw_target)
+    task = asyncio.create_task(run_scrape_job_wrapper(search_id, req, raw_target))
+    register_task(search_id, task)
     
     return {"success": True, "search_id": search_id}
 
@@ -66,26 +67,33 @@ async def handle_ai_reset():
         return {"success": True, "message": "AI memory reset successfully."}
     raise HTTPException(status_code=500, detail="Failed to reset memory.")
 
-# ---------------------------------------------------------
-# BACKGROUND WORKER
-# ---------------------------------------------------------
 
 def deduplicate_products(products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Deduplicates by URL and Name."""
     seen_urls = set()
     deduped = []
     for p in products:
-        url = p.get("link", "")
+        url = p.get("link", p.get("url", ""))
         if url and url not in seen_urls:
             seen_urls.add(url)
+            # Normalize to link for frontend
+            p["link"] = url
             deduped.append(p)
     return deduped
+
+async def run_scrape_job_wrapper(search_id: str, req: SearchRequest, raw_target: int):
+    try:
+        await run_scrape_job(search_id, req, raw_target)
+    except asyncio.CancelledError:
+        log(f"[{search_id}]", "Scrape job cancelled (Server shutting down).", "WARN")
+        fail_progress(search_id, "Server shutting down, scrape cancelled")
+    finally:
+        unregister_task(search_id)
 
 async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int):
     log(f"[{search_id}]", f"Starting job for '{req.query}' (Target: {req.target_count})", "INFO")
     eta_calc = ETACalculator()
     
-    # 1. Scrape raw products using Multi-Engine Selector
+    # 1. Scrape raw products
     success, raw_products, error_msg = await run_scraper_chain(search_id, req.query, raw_target, eta_calc)
         
     if not success or not raw_products:
@@ -93,16 +101,19 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int):
         return
 
     # 2. Deduplicate
-    update_progress(search_id, stage="deduplicating", message="Menghapus duplikat...")
+    update_progress(search_id, stage="deduplicating", percent=70, message="Menghapus duplikat...", elapsed_seconds=eta_calc.get_elapsed())
     deduped = deduplicate_products(raw_products)
     
     # 3. Parse prices and filter budget
-    update_progress(search_id, stage="filtering_budget", message="Memfilter harga...")
+    update_progress(search_id, stage="budget_filtering", percent=78, message="Memfilter harga...", elapsed_seconds=eta_calc.get_elapsed())
     budget_valid = []
+    
     min_b, max_b = calculate_budget_range(req.budget, req.tolerance)
     
     for p in deduped:
-        price_val = parse_rupiah(p.get("price_text", ""))
+        price_val = p.get("price_val")
+        if not price_val:
+            price_val = parse_rupiah(p.get("price_text", ""))
         p["price_val"] = price_val
         
         if req.budget and req.budget > 0:
@@ -116,7 +127,7 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int):
         return
         
     # 4. AI Relevance Filtering
-    update_progress(search_id, stage="ai_filtering", message="Validasi relevansi (AI)...", percent=80)
+    update_progress(search_id, stage="ai_filtering", message="Validasi relevansi (AI)...", percent=85, elapsed_seconds=eta_calc.get_elapsed())
     ai_valid = await filter_relevance(req.query, budget_valid, req.use_ai)
     
     if not ai_valid:
@@ -124,13 +135,11 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int):
         return
         
     # 5. Finalize
-    update_progress(search_id, stage="finalizing", message="Menyiapkan hasil...", percent=95)
+    update_progress(search_id, stage="finalizing", message="Menyiapkan hasil...", percent=95, elapsed_seconds=eta_calc.get_elapsed())
     
-    # Sort by relevance and then by price
     ai_valid.sort(key=lambda x: (-x.get("relevance_score", 0), x.get("price_val", 0)))
     final_list = ai_valid[:req.target_count]
     
-    # Store result
     _results_store[search_id] = {
         "success": True,
         "search_id": search_id,
@@ -146,6 +155,5 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int):
         } if req.budget else None
     }
     
-    # Done
     complete_progress(search_id)
     log(f"[{search_id}]", f"Job complete. Returned {len(final_list)} products.", "OK")

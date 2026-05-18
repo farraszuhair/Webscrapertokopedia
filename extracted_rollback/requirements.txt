@@ -1,0 +1,45 @@
+# requirements.txt
+# MarketSpy AI — Ollama Edition
+# Penulisan Ilmiah - Prodi Informatika Gunadarma 2025
+
+# Web Framework
+flask==3.0.3
+
+# Browser Automation (headless scraping - JS rendering + UC Chrome bypass)
+undetected-chromedriver==3.5.4
+selenium==4.15.2
+webdriver-manager==4.0.1
+
+# HTTP Client — dipakai buat call Ollama REST API
+httpx==0.27.0
+requests==2.33.1
+
+# Utilities
+python-dotenv==1.0.1
+
+# Testing
+pytest==7.4.0
+pytest-asyncio==0.21.1
+
+# ---------------------------------------------------------
+# TIDAK PERLU lagi (dihapus dari versi sebelumnya):
+#   anthropic   → diganti Ollama local LLM
+# ---------------------------------------------------------
+#
+# SETUP OLLAMA (install di luar pip, di OS):
+#   Linux/Mac:  curl -fsSL https://ollama.ai/install.sh | sh
+#   Windows:    download installer dari https://ollama.com/download
+#
+# PULL MODEL (pilih salah satu):
+#   ollama pull llama3.2    ← RECOMMENDED (balance speed/quality)
+#   ollama pull mistral     ← bagus buat structured JSON output
+#   ollama pull gemma3      ← lebih ringan, RAM < 8GB
+#   ollama pull phi3        ← paling ringan, RAM < 4GB
+#
+# JALANKAN OLLAMA:
+#   ollama serve            ← harus running saat app dijalankan
+#
+# KONFIGURASI (opsional, di .env):
+#   OLLAMA_MODEL=llama3.2
+#   OLLAMA_URL=http://localhost:11434/api/generate
+# ---------------------------------------------------------

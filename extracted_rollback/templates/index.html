@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarketSpy AI - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: { colors: { darkbg: '#0F1115', cardbg: '#1A1D24', neon: '#00FF9D', purpleai: '#7B61FF' } }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0F1115; color: white; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        .progress-bar { transition: width 0.5s ease; }
+        .progress-glow { animation: progressPulse 1.2s infinite linear; background-size: 200% 100%; background-image: linear-gradient(90deg, #7B61FF 0%, #00FF9D 50%, #7B61FF 100%); }
+        @keyframes progressPulse {
+            0% { background-position: 0% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .product-card { transition: all 0.3s ease; }
+        .product-card:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(123,97,255,0.2); border-color: #7B61FF; }
+        .fade-out { opacity: 0; transform: scale(0.9); pointer-events: none; }
+        .skeleton { background: linear-gradient(90deg, #1f2430 25%, #2a3040 50%, #1f2430 75%); background-size: 200% 100%; animation: skeleton 1.3s infinite; }
+        @keyframes skeleton { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        .scan-box {
+            border: 2px solid #99C3FF;
+            box-shadow: 0 0 18px rgba(153, 195, 255, 0.45);
+            background: rgba(153, 195, 255, 0.08);
+            animation: pulse-scan 1.4s infinite;
+        }
+        .ai-scan {
+            background: #2196f3;
+            color: white;
+            padding: 4px 8px;
+            font-size: 12px;
+            border-radius: 6px;
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 5;
+        }
+        @keyframes pulse-scan {
+            0% { box-shadow: 0 0 8px rgba(153, 195, 255, 0.2); }
+            50% { box-shadow: 0 0 18px rgba(153, 195, 255, 0.65); }
+            100% { box-shadow: 0 0 8px rgba(153, 195, 255, 0.2); }
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0F1115; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+    </style>
+</head>
+<body class="min-h-screen p-8 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz48L3N2Zz4=')]">
+
+    <div class="max-w-7xl mx-auto">
+        <div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-neon to-purpleai">MarketSpy AI</h1>
+                <p class="text-gray-400 text-sm mt-1">Ollama Edition - Universitas Gunadarma</p>
+            </div>
+            <div class="flex w-full md:w-1/2 gap-2 items-end">
+                <div class="w-40">
+                    <label class="text-xs text-gray-400 block mb-1">Marketplace</label>
+                    <div class="w-full px-3 py-3 rounded-lg bg-cardbg border border-gray-700 text-white">Tokopedia</div>
+                </div>
+                <div class="w-44">
+                    <label class="text-xs text-gray-400 block mb-1">Jumlah Data di-Scrape</label>
+                    <input type="number" id="scrapeTargetInput" min="10" max="200" value="40" class="w-full px-3 py-3 rounded-lg bg-cardbg border border-gray-700 text-white focus:outline-none focus:border-neon">
+                </div>
+                <input type="text" id="searchInput" placeholder="Cari barang (ex: RTX 5060)..." class="flex-1 px-4 py-3 rounded-lg bg-cardbg border border-gray-700 text-white focus:outline-none focus:border-purpleai">
+                <button onclick="startSearch()" class="px-6 py-3 bg-purpleai hover:bg-purple-600 rounded-lg font-bold transition">Cari</button>
+            </div>
+        </div>
+
+        <div class="mb-6 bg-cardbg p-4 rounded-xl border border-gray-800">
+            <div class="flex flex-col md:flex-row gap-4 items-end">
+                <div class="flex-1">
+                    <label class="text-sm text-gray-400 block mb-2">💰 Budget (Opsional)</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="budgetInput" placeholder="Rp 6.000.000" class="flex-1 px-4 py-2 rounded-lg bg-darkbg border border-gray-700 text-white focus:outline-none focus:border-neon">
+                        <div class="flex items-center px-3 py-2 rounded-lg bg-darkbg border border-gray-700 text-white text-sm">
+                            <span class="mr-2">±</span>
+                            <input type="number" id="budgetTolerance" min="0" max="100" value="10" class="w-16 bg-transparent focus:outline-none">
+                            <span>%</span>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="clearBudget()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition text-white">Hapus Budget</button>
+            </div>
+        </div>
+
+        <div id="progressContainer" class="hidden mb-6 bg-cardbg p-6 rounded-xl border border-gray-800 shadow-xl shadow-purpleai/10">
+            <div class="flex justify-between text-sm mb-3 text-neon font-mono uppercase font-bold">
+                <span id="statusText">MENGHUBUNGKAN...</span>
+                <span id="percentageText">0%</span>
+            </div>
+            <div class="w-full bg-gray-800 rounded-full h-3 mb-4 shadow-inner">
+                <div id="progressBar" class="progress-glow h-3 rounded-full progress-bar shadow-[0_0_10px_rgba(0,255,157,0.5)]" style="width: 0%"></div>
+            </div>
+            <div id="progressDetail" class="text-xs text-gray-300 mb-3">Progress: menunggu data...</div>
+            <div id="ai-box" class="mb-3 rounded-lg p-3 bg-[#e3f2fd] border-l-4 border-[#2196f3] text-[#0f172a]">
+                <h3 class="font-semibold text-sm">AI Crosscheck</h3>
+                <p id="ai-status" class="text-xs">Menunggu analisis...</p>
+            </div>
+            
+            <div id="monitorContainer" class="bg-black/80 p-4 rounded-lg border border-gray-700 font-mono text-xs h-32 overflow-y-auto">
+                <div id="monitorLogs" class="flex flex-col gap-1 text-gray-400"></div>
+            </div>
+            <div id="scrapingVisualBox" class="scan-box mt-4 p-3 rounded-lg hidden">
+                <div class="text-sm text-blue-200 font-semibold">AI Scraping Scanner Aktif</div>
+                <div class="text-xs text-blue-100/90">Kotak ini menandakan proses scrape sedang jalan (mirip highlight biru yang kamu kirim).</div>
+            </div>
+            <div class="mt-4 flex justify-end">
+                <button id="cancelBtn" onclick="cancelSearch()" class="hidden px-4 py-2 bg-red-900/40 border border-red-600/60 hover:bg-red-800/60 rounded-lg text-sm text-red-200 transition">
+                    Cancel Scraping
+                </button>
+            </div>
+        </div>
+
+        <div id="warningsContainer" class="hidden mb-6 bg-yellow-900/20 border border-yellow-600/50 p-4 rounded-xl">
+            <div class="flex items-start gap-3"><span class="text-xl">⚠️</span>
+                <div><h3 class="text-yellow-300 font-bold mb-2">Peringatan AI Learning</h3><ul id="warningsList" class="text-yellow-200 text-sm space-y-1"></ul></div>
+            </div>
+        </div>
+        <div id="budgetInfoContainer" class="hidden mb-6 bg-green-900/20 border border-green-600/50 p-4 rounded-xl">
+            <div class="flex items-start gap-3"><span class="text-xl">💚</span>
+                <div><h3 class="text-green-300 font-bold mb-2" id="budgetInfoTitle">Budget Information</h3><p id="budgetInfoText" class="text-green-200 text-sm"></p></div>
+            </div>
+        </div>
+
+        <div id="filterContainer" class="hidden flex gap-3 mb-6 overflow-x-auto pb-2">
+            <button id="btn-value" onclick="sortData('value', this)" class="px-4 py-2 bg-purpleai rounded-lg text-sm font-bold shadow-[0_0_15px_rgba(123,97,255,0.4)] transition-all text-white whitespace-nowrap">⚡ Best Value</button>
+            <button id="btn-trust" onclick="sortData('trust', this)" class="px-4 py-2 bg-cardbg border border-gray-700 hover:border-gray-500 rounded-lg text-sm transition-all text-white whitespace-nowrap">🛡️ Most Trusted</button>
+            <button id="btn-price" onclick="sortData('price', this)" class="px-4 py-2 bg-cardbg border border-gray-700 hover:border-gray-500 rounded-lg text-sm transition-all text-white whitespace-nowrap">💰 Termurah</button>
+            <button id="btn-rating" onclick="sortData('rating', this)" class="px-4 py-2 bg-cardbg border border-gray-700 hover:border-gray-500 rounded-lg text-sm transition-all text-white whitespace-nowrap">⭐ Rating Tertinggi</button>
+            <div class="ml-auto text-gray-400 text-sm self-center whitespace-nowrap"><span id="productCount">0</span> produk dianalisis</div>
+        </div>
+
+        <div id="productsGrid" class="grid gap-6" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));"></div>
+    </div>
+
+<script>
+    let currentProducts = [];
+    let bannedItems = JSON.parse(localStorage.getItem('bannedItems')) || [];
+    let currentSearchId = null;
+    let currentAbortController = null;
+    let progressMeta = { target_count: 0, scraped_count: 0, analyzed_count: 0, final_count: 0 };
+    let progressPollTimer = null;
+    let displayProgress = 0;
+    let targetProgress = 0;
+    let progressAnimTimer = null;
+
+    function formatRupiahInput(value) {
+        const numeric = (value || '').replace(/[^\d]/g, '');
+        if (!numeric) return '';
+        return `Rp ${parseInt(numeric, 10).toLocaleString('id-ID')}`;
+    }
+
+    function parseRupiahToInt(value) {
+        const numeric = (value || '').replace(/[^\d]/g, '');
+        return numeric ? parseInt(numeric, 10) : null;
+    }
+
+    function clearBudget() {
+        document.getElementById('budgetInput').value = '';
+        document.getElementById('budgetTolerance').value = 10;
+    }
+
+    function setProgressTarget(target, statusTextValue) {
+        targetProgress = Math.max(0, Math.min(100, Number(target) || 0));
+        if (statusTextValue) {
+            document.getElementById('statusText').innerText = statusTextValue;
+        }
+        if (progressAnimTimer) return;
+        progressAnimTimer = setInterval(() => {
+            if (displayProgress >= targetProgress) {
+                clearInterval(progressAnimTimer);
+                progressAnimTimer = null;
+                return;
+            }
+            const delta = targetProgress - displayProgress;
+            displayProgress += Math.max(1, Math.min(4, Math.ceil(delta / 3)));
+            displayProgress = Math.min(displayProgress, targetProgress);
+            document.getElementById('progressBar').style.width = `${displayProgress}%`;
+            document.getElementById('percentageText').innerText = `${Math.floor(displayProgress)}%`;
+        }, 120); // 100-300ms jump smoothing
+    }
+
+    async function startSearch() {
+        const keyword = document.getElementById('searchInput').value;
+        if (!keyword) return alert('Masukkan kata kunci dulu bro!');
+
+        // UI Reset
+        document.getElementById('productsGrid').innerHTML = '';
+        renderSkeleton(8);
+        document.getElementById('monitorLogs').innerHTML = '';
+        document.getElementById('filterContainer').classList.add('hidden');
+        document.getElementById('warningsContainer').classList.add('hidden');
+        document.getElementById('budgetInfoContainer').classList.add('hidden');
+        document.getElementById('progressContainer').classList.remove('hidden');
+        document.getElementById('scrapingVisualBox').classList.remove('hidden');
+        document.getElementById('cancelBtn').classList.remove('hidden');
+        document.getElementById('ai-status').innerText = 'AI Scanning...';
+        console.info('[UI] render loading');
+        displayProgress = 0;
+        targetProgress = 0;
+        setProgressTarget(0, 'Request started...');
+
+        const progressBar = document.getElementById('progressBar');
+        const percentageText = document.getElementById('percentageText');
+        const statusText = document.getElementById('statusText');
+        const monitorLogs = document.getElementById('monitorLogs');
+        const monitorContainer = document.getElementById('monitorContainer');
+
+        const budgetValue = document.getElementById('budgetInput').value;
+        const budgetNum = parseRupiahToInt(budgetValue);
+        const budgetTol = parseFloat(document.getElementById('budgetTolerance').value || '10');
+        const scrapeTarget = parseInt(document.getElementById('scrapeTargetInput').value || '40', 10);
+        currentSearchId = crypto.randomUUID();
+        currentAbortController = new AbortController();
+        startProgressPolling();
+
+        try {
+            const response = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: currentAbortController.signal,
+                body: JSON.stringify({ 
+                    keyword: keyword,
+                    query: keyword,
+                    banned_items: bannedItems, 
+                    budget: budgetNum, 
+                    budget_tolerance: budgetTol,
+                    scrape_target: Math.max(10, Math.min(scrapeTarget, 200)),
+                    search_id: currentSearchId
+                })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.message || "Gagal menghubungi server");
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            let streamBuffer = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                streamBuffer += decoder.decode(value, { stream: true });
+                const lines = streamBuffer.split('\n\n');
+                streamBuffer = lines.pop() || '';
+
+                for (let line of lines) {
+                    if (line.trim().startsWith('data:')) {
+                        try {
+                            const dataStr = line.replace(/^data:\s*/, '');
+                            const data = JSON.parse(dataStr);
+                            
+                            if (data.progress !== undefined) {
+                                setProgressTarget(data.progress, data.message || '');
+                            }
+                            if (data.target_count !== undefined) progressMeta.target_count = data.target_count;
+                            if (data.scraped_count !== undefined) progressMeta.scraped_count = data.scraped_count;
+                            if (data.analyzed_count !== undefined) progressMeta.analyzed_count = data.analyzed_count;
+                            if (data.final_count !== undefined) progressMeta.final_count = data.final_count;
+                            document.getElementById('progressDetail').textContent =
+                                `Scraped ${progressMeta.scraped_count || 0}/${progressMeta.target_count || '-'} | ` +
+                                `AI Crosscheck ${progressMeta.analyzed_count || 0} | Final ${progressMeta.final_count || 0}`;
+                            if (data.message) {
+                                statusText.innerText = data.message;
+                                if (String(data.message).toLowerCase().includes('ai analyzing')) {
+                                    document.getElementById('ai-status').innerText = 'AI sedang menganalisis...';
+                                }
+                                if (String(data.message).toLowerCase().includes('ai crosscheck selesai')) {
+                                    document.getElementById('ai-status').innerText = 'AI selesai ✔';
+                                }
+                                const logEntry = document.createElement('div');
+                                logEntry.innerHTML = `<span class="text-neon">[${new Date().toLocaleTimeString()}]</span> <span class="ml-2">${data.message}</span>`;
+                                monitorLogs.appendChild(logEntry);
+                                monitorContainer.scrollTop = monitorContainer.scrollHeight;
+                            }
+
+                            if (data.status === 'error') {
+                                alert("Error: " + data.message);
+                                document.getElementById('progressContainer').classList.add('hidden');
+                                document.getElementById('scrapingVisualBox').classList.add('hidden');
+                                document.getElementById('cancelBtn').classList.add('hidden');
+                                break;
+                            }
+
+                            if (data.status === 'cancelled') {
+                                alert(data.message || 'Proses dibatalkan');
+                                document.getElementById('progressContainer').classList.add('hidden');
+                                document.getElementById('scrapingVisualBox').classList.add('hidden');
+                                document.getElementById('cancelBtn').classList.add('hidden');
+                                return;
+                            }
+
+                            if (data.status === 'empty') {
+                                showPopup(data.message || 'Data tidak ditemukan', 'warning');
+                                document.getElementById('progressContainer').classList.add('hidden');
+                                document.getElementById('scrapingVisualBox').classList.add('hidden');
+                                document.getElementById('cancelBtn').classList.add('hidden');
+                                return;
+                            }
+
+                            if (data.status === 'partial' && Array.isArray(data.data)) {
+                                currentProducts = data.data;
+                                document.getElementById('filterContainer').classList.remove('hidden');
+                                document.getElementById('productCount').innerText = currentProducts.length;
+                                renderProducts();
+                                continue;
+                            }
+
+                            if (data.status === 'meta' && data.search_id) {
+                                currentSearchId = data.search_id;
+                            }
+
+                            if (data.status === 'success') {
+                                currentProducts = data.data;
+                                if (data.meta) {
+                                    progressMeta = { ...progressMeta, ...data.meta };
+                                    document.getElementById('progressDetail').textContent =
+                                        `Scraped ${progressMeta.scraped_count || 0}/${progressMeta.target_count || '-'} | ` +
+                                        `AI Crosscheck ${progressMeta.analyzed_count || 0} | Final ${progressMeta.final_count || 0}`;
+                                }
+                                
+                                if (data.warnings && data.warnings.length > 0) {
+                                    const wl = document.getElementById('warningsList');
+                                    wl.innerHTML = '';
+                                    data.warnings.forEach(w => { const li = document.createElement('li'); li.textContent = w; wl.appendChild(li); });
+                                    document.getElementById('warningsContainer').classList.remove('hidden');
+                                }
+                                
+                                if (data.budget_info) {
+                                    document.getElementById('budgetInfoTitle').textContent = `💚 ${data.budget_info.budget_status}`;
+                                    document.getElementById('budgetInfoText').textContent = `Budget: Rp ${data.budget_info.budget.toLocaleString('id-ID')} | Max Rentang: Rp ${data.budget_info.extended_budget.toLocaleString('id-ID')}`;
+                                    document.getElementById('budgetInfoContainer').classList.remove('hidden');
+                                }
+                                
+                                setTimeout(() => {
+                                    document.getElementById('progressContainer').classList.add('hidden');
+                                    document.getElementById('scrapingVisualBox').classList.add('hidden');
+                                    document.getElementById('cancelBtn').classList.add('hidden');
+                                    document.getElementById('filterContainer').classList.remove('hidden');
+                                    document.getElementById('productCount').innerText = currentProducts.length;
+                                    document.getElementById('btn-value').click(); 
+                                    stopProgressPolling();
+                                }, 1500);
+                            }
+                        } catch (e) {
+                            console.error("Gagal parsing JSON dari stream:", e, line);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                alert(error.message);
+            }
+            document.getElementById('progressContainer').classList.add('hidden');
+            document.getElementById('scrapingVisualBox').classList.add('hidden');
+            document.getElementById('cancelBtn').classList.add('hidden');
+            console.error(error);
+        } finally {
+            currentAbortController = null;
+            stopProgressPolling();
+        }
+
+    }
+
+    function startProgressPolling() {
+        stopProgressPolling();
+        progressPollTimer = setInterval(async () => {
+            if (!currentSearchId) return;
+            try {
+                const res = await fetch(`/api/progress?search_id=${encodeURIComponent(currentSearchId)}`);
+                if (!res.ok) return;
+                const p = await res.json();
+                if (typeof p.percent === 'number') {
+                    setProgressTarget(p.percent, p.stage || '');
+                }
+                if (p.stage) document.getElementById('statusText').innerText = p.stage;
+            } catch (_) {}
+        }, 1000);
+    }
+
+    function stopProgressPolling() {
+        if (progressPollTimer) {
+            clearInterval(progressPollTimer);
+            progressPollTimer = null;
+        }
+    }
+
+    function renderSkeleton(count) {
+        const grid = document.getElementById('productsGrid');
+        grid.innerHTML = '';
+        for (let i = 0; i < count; i++) {
+            const card = document.createElement('div');
+            card.className = "bg-cardbg rounded-xl overflow-hidden border border-gray-800";
+            card.innerHTML = `
+                <div class="h-40 skeleton"></div>
+                <div class="p-4 space-y-2">
+                    <div class="h-4 skeleton rounded"></div>
+                    <div class="h-4 skeleton rounded w-3/4"></div>
+                    <div class="h-3 skeleton rounded w-1/2"></div>
+                </div>
+            `;
+            grid.appendChild(card);
+        }
+    }
+
+    async function cancelSearch() {
+        if (!currentSearchId) return;
+        try {
+            await fetch('/api/search/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ search_id: currentSearchId })
+            });
+            if (currentAbortController) {
+                currentAbortController.abort();
+            }
+            alert('Proses scraping dibatalkan.');
+        } catch (_) {}
+        document.getElementById('progressContainer').classList.add('hidden');
+        document.getElementById('scrapingVisualBox').classList.add('hidden');
+        document.getElementById('cancelBtn').classList.add('hidden');
+    }
+
+    // --- SISANYA TETAP SAMA (Fungsi Sort & Render) ---
+    function sortData(type, btnElement) {
+        if (type === 'value') currentProducts.sort((a, b) => b.skor_value - a.skor_value);
+        if (type === 'trust') currentProducts.sort((a, b) => b.trust_score - a.trust_score);
+        if (type === 'price') currentProducts.sort((a, b) => a.harga - b.harga);
+        if (type === 'rating') currentProducts.sort((a, b) => b.rating_toko - a.rating_toko);
+        
+        if (btnElement) {
+            const buttons = document.getElementById('filterContainer').querySelectorAll('button');
+            buttons.forEach(btn => btn.className = "px-4 py-2 bg-cardbg border border-gray-700 hover:border-gray-500 rounded-lg text-sm transition-all text-white whitespace-nowrap");
+            btnElement.className = "px-4 py-2 bg-purpleai rounded-lg text-sm font-bold shadow-[0_0_15px_rgba(123,97,255,0.4)] transition-all text-white whitespace-nowrap";
+        }
+        renderProducts();
+    }
+
+    function renderProducts() {
+        const grid = document.getElementById('productsGrid');
+        grid.innerHTML = '';
+
+        currentProducts.forEach((p, index) => {
+            const card = document.createElement('div');
+            card.className = "product-card bg-cardbg rounded-xl overflow-hidden border border-gray-800 flex flex-col";
+            card.id = `card-${index}`;
+            
+            const trustColor = p.trust_score > 80 ? '#00FF9D' : (p.trust_score > 50 ? '#FFD700' : '#FF4757');
+            const valueColor = p.skor_value > 80 ? '#7B61FF' : (p.skor_value > 50 ? '#FFD700' : '#FF4757');
+            const safeName = p.nama_produk.replace(/'/g, "").replace(/"/g, "");
+            
+            let budgetStatus = ''; let budgetColor = '';
+            if (p.budget_info) {
+                if (p.budget_info.dalam_budget) { budgetStatus = `✓ Dalam Budget (${p.budget_info.difference_percent})`; budgetColor = 'text-green-400'; } 
+                else { budgetStatus = `⚠ Di atas Budget (+${p.budget_info.difference_percent})`; budgetColor = 'text-yellow-400'; }
+            }
+
+            card.innerHTML = `
+                <div class="relative h-48 bg-gray-800">
+                    <img src="${p.url_gambar}" loading="lazy" class="w-full h-full object-cover opacity-90" onerror="this.src='https://via.placeholder.com/300x200?text=No+Image'">
+                    <span class="absolute top-2 left-2 text-[10px] px-2 py-1 rounded bg-green-600/90 text-white font-bold">TOKOPEDIA</span>
+                    <span class="ai-scan">${(String(p.rekomendasi || '').includes('MENUNGGU') || String(p.trust_label || '').includes('Menunggu')) ? 'AI Scanning...' : 'AI Valid ✔'}</span>
+                </div>
+                <div class="p-5 flex flex-col flex-grow">
+                    <h3 class="text-white font-semibold text-sm leading-snug mb-3 line-clamp-2">${p.nama_produk}</h3>
+                    <div class="text-neon text-xl font-bold mb-2">${p.harga_display}</div>
+                    ${budgetStatus ? `<div class="text-xs ${budgetColor} mb-2 font-semibold">${budgetStatus}</div>` : ''}
+                    
+                    <div class="mb-4">
+                        <div class="flex justify-between text-xs text-gray-400 mb-2">
+                            <span>⭐ Rating: ${Number(p.rating_toko || 0).toFixed(1)}</span>
+                            <span>🛒 Terjual: ${p.terjual || '0'}</span>
+                        </div>
+                        <div class="flex justify-between text-xs text-gray-400 mb-1">
+                            <span>Trust (${p.trust_score})</span><span>Value (${p.skor_value})</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-1.5 mb-1"><div class="h-1.5 rounded-full" style="width: ${p.trust_score}%; background-color: ${trustColor}"></div></div>
+                        <div class="w-full bg-gray-800 rounded-full h-1.5"><div class="h-1.5 rounded-full" style="width: ${p.skor_value}%; background-color: ${valueColor}"></div></div>
+                    </div>
+                    <div class="text-gray-400 text-xs italic mb-4 flex-grow">🤖 "${p.catatan_ai}"</div>
+
+                    <div class="mb-3 flex items-center gap-2 p-3 bg-darkbg rounded-lg border border-gray-700">
+                        <input type="checkbox" id="verify-${index}" class="w-4 h-4 cursor-pointer rounded accent-neon">
+                        <label for="verify-${index}" class="flex-1 text-xs text-gray-300 cursor-pointer">✓ Analisis AI benar</label>
+                    </div>
+
+                    <div class="mt-auto flex flex-col gap-2">
+                        <a href="${p.url_produk}" target="_blank" class="text-center w-full px-4 py-2 bg-darkbg border border-gray-600 rounded-lg text-sm hover:border-gray-400 transition">Lihat Produk ↗</a>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="verifyProduct(${index})" class="relative z-10 flex-1 py-2 bg-green-900/30 text-green-400 border border-green-800/50 rounded-lg text-xs font-bold hover:bg-green-800/50 transition cursor-pointer">✓ Valid</button>
+                            <button type="button" onclick="buangProduk(${index}, '${safeName}')" class="relative z-10 flex-1 py-2 bg-red-900/30 text-red-400 border border-red-800/50 rounded-lg text-xs font-bold hover:bg-red-800/50 transition cursor-pointer">❌ Hapus</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+
+    async function verifyProduct(indexId) {
+        const product = currentProducts[indexId];
+        try {
+            const res = await fetch('/api/verify/product', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_name: product.nama_produk, product_url: product.url_produk, ai_analysis: { trust_score: product.trust_score, skor_value: product.skor_value, rekomendasi: product.rekomendasi }, user_note: 'Verified' })
+            });
+            const data = await res.json();
+            await fetch('/api/feedback/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_name: product.nama_produk, store: product.nama_toko, action: 'keep' })
+            });
+            if (data.status === 'new') {
+                showPopup('Produk baru disimpan ✅', 'success');
+            } else if (data.status === 'duplicate') {
+                showPopup('Produk sudah ada ⚠️', 'warning');
+            } else {
+                showPopup(data.message || 'Gagal verifikasi produk', 'warning');
+            }
+        } catch (e) {
+            showPopup('Gagal menghubungi server verifikasi', 'warning');
+        }
+    }
+
+    function showPopup(message, type) {
+        const el = document.createElement('div');
+        el.innerText = message;
+        el.style.position = 'fixed';
+        el.style.top = '20px';
+        el.style.right = '20px';
+        el.style.padding = '10px 20px';
+        el.style.borderRadius = '8px';
+        el.style.color = 'white';
+        el.style.zIndex = '9999';
+        el.style.fontWeight = '600';
+        el.style.background = (type === 'success') ? 'green' : 'orange';
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 3000);
+    }
+
+    async function buangProduk(indexId, namaProduk) {
+        const product = currentProducts[indexId];
+        const card = document.getElementById(`card-${indexId}`);
+        if (card) {
+            bannedItems.push(namaProduk); // soft-hide preference, not hard delete
+            localStorage.setItem('bannedItems', JSON.stringify(bannedItems));
+            await fetch('/api/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_name: product.nama_produk, store: product.nama_toko })
+            });
+            fetch('/api/feedback/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_name: product.nama_produk, store: product.nama_toko, action: 'delete' })
+            });
+            fetch('/api/feedback/mistake', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_name: product.nama_produk, product_url: product.url_produk, ai_analysis: { trust_score: product.trust_score, skor_value: product.skor_value, rekomendasi: product.rekomendasi }, feedback: "Tidak Sesuai", correction: {} })
+            });
+            currentProducts = currentProducts.filter((_, i) => i !== indexId);
+            renderProducts();
+            showUndoPopup(product, indexId);
+        }
+    }
+
+    function showUndoPopup(product, indexId) {
+        const el = document.createElement('div');
+        el.style.position = 'fixed';
+        el.style.bottom = '20px';
+        el.style.right = '20px';
+        el.style.padding = '10px 16px';
+        el.style.borderRadius = '10px';
+        el.style.color = 'white';
+        el.style.zIndex = '9999';
+        el.style.background = '#b91c1c';
+        el.innerHTML = `Produk disembunyikan ❌ <button id="undoBtn-${indexId}" style="margin-left:8px;padding:4px 8px;border-radius:6px;background:#111827;color:#fff">Undo</button>`;
+        document.body.appendChild(el);
+        document.getElementById(`undoBtn-${indexId}`).onclick = async () => {
+            await fetch('/api/delete/undo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_name: product.nama_produk, store: product.nama_toko })
+            });
+            await fetch('/api/feedback/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_name: product.nama_produk, store: product.nama_toko, action: 'undo_delete' })
+            });
+            bannedItems = bannedItems.filter(n => n !== product.nama_produk);
+            localStorage.setItem('bannedItems', JSON.stringify(bannedItems));
+            currentProducts.push(product);
+            renderProducts();
+            el.remove();
+        };
+        setTimeout(() => el.remove(), 5000);
+    }
+
+    document.getElementById('budgetInput').addEventListener('input', (e) => {
+        const cursorAtEnd = e.target.selectionStart === e.target.value.length;
+        e.target.value = formatRupiahInput(e.target.value);
+        if (cursorAtEnd) {
+            e.target.selectionStart = e.target.selectionEnd = e.target.value.length;
+        }
+    });
+</script>
+</body>
+</html>
