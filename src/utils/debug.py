@@ -79,6 +79,48 @@ def save_category_filter_debug(search_id: str, payload: dict[str, Any], engine_n
     log("DEBUG", f"Saved category filter debug to {output_path}", "OK")
     return str(output_path)
 
+def save_json_debug(search_id: str, filename: str, payload: dict[str, Any]) -> str:
+    """Write one JSON debug artifact. Never let debug output break scraping."""
+    try:
+        output_path = get_debug_dir(search_id) / filename
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        return str(output_path)
+    except Exception as exc:
+        log("DEBUG", f"Failed to write {filename}: {exc}", "ERROR")
+        return ""
+
+def save_text_debug(search_id: str, filename: str, content: str) -> str:
+    """Write one text artifact such as an HTML snapshot."""
+    try:
+        output_path = get_debug_dir(search_id) / filename
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content or "")
+        return str(output_path)
+    except Exception as exc:
+        log("DEBUG", f"Failed to write {filename}: {exc}", "ERROR")
+        return ""
+
+def save_zero_raw_debug(search_id: str, engine_name: str, payload: dict[str, Any]) -> str:
+    """Save required zero-raw engine diagnostics."""
+    defaults = {
+        "engine": engine_name,
+        "query": "",
+        "query_variants": [],
+        "urls_tried": [],
+        "pages_loaded": 0,
+        "selector_results": {},
+        "html_saved": False,
+        "screenshot_saved": False,
+        "console_logs": [],
+        "current_url": "",
+        "page_title": "",
+        "body_text_sample": "",
+        "errors": [],
+    }
+    defaults.update(payload or {})
+    return save_json_debug(search_id, f"{engine_name}_zero_raw_debug.json", defaults)
+
 def save_debug_state_sync(search_id: str, driver=None, error_msg: str = ""):
     """Synchronous version for Selenium driver."""
     from src.server.progress import get_progress

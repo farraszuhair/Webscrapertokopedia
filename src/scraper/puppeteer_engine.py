@@ -147,6 +147,8 @@ class PuppeteerEngine:
                     break
                 elif msg_type == "error":
                     last_error = payload.get("error") or "Unknown Puppeteer worker error"
+                elif msg_type == "debug":
+                    log(f"[{self.search_id}]", "[PUPPETEER] Worker saved zero-raw debug snapshot", "WARN")
 
             if process.returncode is None:
                 try:

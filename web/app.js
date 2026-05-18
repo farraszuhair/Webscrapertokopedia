@@ -330,16 +330,28 @@ class ScraperApp {
       const card = document.createElement('div');
       card.className = `compare-card ${item.engine === this.state.selectedEngine ? 'active' : ''}`;
       const canUse = (item.valid_after_ai || 0) > 0;
+      const rawCount = item.raw_count ?? item.raw_products_found ?? 0;
+      const debugFiles = item.debug_files || [
+        item.normalizer_debug_path,
+        item.category_debug_path,
+        item.budget_debug_path,
+      ].filter(Boolean);
+      const zeroRawMessage = rawCount === 0 ? '<small>No raw products extracted. Check selector/debug snapshot.</small>' : '';
+      const debugHtml = debugFiles.length
+        ? `<div class="debug-files">${debugFiles.map((file) => `<code>${this.esc(file)}</code>`).join('')}</div>`
+        : '';
       card.innerHTML = `
         <strong>${this.esc(item.engine)}</strong>
-        <span>Raw scraped: ${item.raw_products_found}</span>
+        <span>Raw scraped: ${rawCount}</span>
         <span>Laptop candidates: ${item.laptop_candidates || 0}</span>
         <span>Rejected accessories: ${item.rejected_accessories || 0}</span>
         <span>Budget valid: ${item.valid_after_budget}</span>
         <span>AI valid: ${item.valid_after_ai}</span>
         <span>Duration: ${item.duration}s</span>
         <span>Status: ${this.esc(item.status || (item.ok ? 'success' : 'fail'))}</span>
+        ${zeroRawMessage}
         ${item.error ? `<small>${this.esc(item.error)}</small>` : ''}
+        ${debugHtml}
         <button class="compare-use" ${canUse ? '' : 'disabled'}>${item.engine === 'puppeteer' ? 'Use Puppeteer Results' : 'Use Rollback Results'}</button>
       `;
       card.querySelector('.compare-use')?.addEventListener('click', () => this.selectComparisonEngine(item.engine));

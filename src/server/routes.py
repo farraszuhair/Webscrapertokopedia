@@ -17,7 +17,7 @@ from src.scraper.budget_filter import FilterResult, filter_by_budget
 from src.scraper.category_filter import CategoryFilterResult, filter_laptop_candidates
 from src.scraper.dedupe import deduplicate_products
 from src.scraper.engine_selector import EngineRunResult, run_scraper_engines
-from src.scraper.normalizer import normalize_products
+from src.scraper.normalizer import normalize_products_with_report
 from src.server.lifecycle import register_task, unregister_task
 from src.server.progress import complete_progress, fail_progress, get_progress, init_progress, update_progress
 from src.server.schemas import FeedbackRequest, ProgressResponse, SearchRequest
@@ -175,7 +175,9 @@ async def _filter_pipeline(
 ) -> dict[str, Any]:
     """Run normalize, category filter, budget filter, and AI filter."""
     engine = engine_name or "selected"
-    normalized = normalize_products(raw_products, engine_name)
+    raw_count = len(raw_products or [])
+    normalizer = normalize_products_with_report(raw_products, engine, search_id)
+    normalized = normalizer.output
     deduped = deduplicate_products(normalized)
     budget_value = parse_rupiah(req.budget)
     min_price, max_price = calculate_budget_range(budget_value, req.tolerance)
@@ -226,23 +228,25 @@ async def _filter_pipeline(
     if not category_result.candidates:
         return {
             "raw_products": raw_products,
+            "normalizer": normalizer,
             "deduped": deduped,
             "category": category_result,
             "budget": filter_result,
             "ai_valid": [],
             "final": [],
-            "error": _category_failure_message(len(deduped), category_result),
+            "error": _category_failure_message(raw_count, category_result),
         }
 
     if not filter_result.kept:
         return {
             "raw_products": raw_products,
+            "normalizer": normalizer,
             "deduped": deduped,
             "category": category_result,
             "budget": filter_result,
             "ai_valid": [],
             "final": [],
-            "error": _budget_failure_message(len(deduped), category_result, filter_result),
+            "error": _budget_failure_message(raw_count, category_result, filter_result),
         }
 
     update_progress(
@@ -260,6 +264,7 @@ async def _filter_pipeline(
 
     return {
         "raw_products": raw_products,
+        "normalizer": normalizer,
         "deduped": deduped,
         "category": category_result,
         "budget": filter_result,
@@ -274,10 +279,13 @@ def _engine_run_payload(run: EngineRunResult) -> dict[str, Any]:
     return {
         "engine": run.engine,
         "ok": run.ok,
+        "raw_count": run.raw_products_found,
         "raw_products_found": run.raw_products_found,
+        "duration_seconds": round(run.duration_seconds, 2),
         "duration": round(run.duration_seconds, 2),
         "status": "success" if run.ok else "fail",
         "error": run.error,
+        "debug_files": [path for path in run.debug_files if path],
     }
 
 
@@ -289,13 +297,19 @@ async def _finish_compare(search_id: str, req: SearchRequest, selection, eta_cal
         if not run.ok:
             comparison.append({
                 **_engine_run_payload(run),
+                "candidate_count": 0,
                 "laptop_candidates": 0,
                 "rejected_accessories": 0,
+                "budget_valid_count": 0,
                 "valid_after_budget": 0,
+                "ai_valid_count": 0,
                 "valid_after_ai": 0,
                 "data": [],
+                "products": [],
                 "category_debug_path": None,
                 "budget_debug_path": None,
+                "normalizer_debug_path": None,
+                "debug_files": [path for path in run.debug_files if path],
             })
             continue
 
@@ -312,21 +326,34 @@ async def _finish_compare(search_id: str, req: SearchRequest, selection, eta_cal
         filtered = await _filter_pipeline(search_id, req, run.products, eta_calc, run.engine, compare_mode=True)
         category_result: CategoryFilterResult = filtered["category"]
         budget_result: FilterResult = filtered["budget"]
+        normalizer = filtered["normalizer"]
         error = run.error or filtered["error"]
         data = filtered["final"]
+        debug_files = [
+            *(run.debug_files or []),
+            normalizer.debug_path,
+            category_result.debug_path,
+            budget_result.debug_path,
+        ]
 
         comparison.append({
             **_engine_run_payload(run),
+            "candidate_count": category_result.candidate_count,
             "laptop_candidates": category_result.candidate_count,
             "rejected_accessories": category_result.rejected_accessory_count,
+            "budget_valid_count": len(budget_result.kept),
             "valid_after_budget": len(budget_result.kept),
+            "ai_valid_count": len(filtered["ai_valid"]),
             "valid_after_ai": len(filtered["ai_valid"]),
             "data": data,
+            "products": data,
             "error": "" if data else error,
+            "normalizer_debug_path": normalizer.debug_path,
             "category_debug_path": category_result.debug_path,
             "budget_debug_path": budget_result.debug_path,
             "category_reasons": category_result.reasons,
             "budget_reasons": budget_result.reasons,
+            "debug_files": [path for path in debug_files if path],
         })
 
     selected = max(

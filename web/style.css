@@ -645,6 +645,19 @@ html, body {
   font-size: 12px;
 }
 
+.debug-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.debug-files code {
+  color: var(--amber);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .compare-use {
   margin-top: 8px;
   border: 1px solid var(--accent);

@@ -18,8 +18,16 @@ from src.scraper.normalizer import normalize_products
 from src.scraper.puppeteer_engine import PuppeteerEngine
 from src.scraper.query_expander import budget_url_range, expand_query_variants
 from src.scraper.rollback_engine import RollbackEngine
+from src.scraper.url_builder import build_tokopedia_search_urls_for_variant
 from src.server.progress import update_progress
+from src.utils.debug import get_debug_dir, save_zero_raw_debug
 from src.utils.logger import log
+
+
+def _existing_zero_raw_debug(search_id: str, engine_name: str) -> str:
+    """Return engine zero-raw debug file if the engine already wrote it."""
+    path = get_debug_dir(search_id) / f"{engine_name}_zero_raw_debug.json"
+    return str(path) if path.exists() else ""
 
 
 @dataclass
@@ -29,6 +37,9 @@ class EngineRunResult:
     products: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
     duration_seconds: float = 0.0
+    query_variants: list[str] = field(default_factory=list)
+    urls_tried: list[str] = field(default_factory=list)
+    debug_files: list[str] = field(default_factory=list)
 
     @property
     def raw_products_found(self) -> int:
@@ -36,7 +47,8 @@ class EngineRunResult:
 
     def laptop_candidate_count(self, query: str) -> int:
         """Count category candidates without mutating the stored raw result."""
-        return filter_laptop_candidates(self.products, query).candidate_count
+        normalized = normalize_products(self.products, self.engine)
+        return filter_laptop_candidates(normalized, query).candidate_count
 
 
 @dataclass
@@ -68,10 +80,18 @@ async def run_engine(
     budget: Any = None,
     tolerance: Any = 20,
 ) -> EngineRunResult:
-    """Run one engine and normalize its output schema."""
+    """Run one engine and return raw extracted products."""
     started = time.perf_counter()
     variants = expand_query_variants(query)
     min_price, max_price = budget_url_range(budget, tolerance)
+    urls_to_try: list[str] = []
+    log(f"[{search_id}]", f"[QUERY] variants={len(variants)}", "INFO")
+    for index, variant in enumerate(variants, start=1):
+        log(f"[{search_id}]", f"[QUERY] variant[{index}]={variant}", "INFO")
+        for url in build_tokopedia_search_urls_for_variant(variant, min_price, max_price):
+            urls_to_try.append(url)
+            log(f"[{search_id}]", f"[QUERY] url={url}", "INFO")
+
     update_progress(
         search_id,
         active_engine=engine_name,
@@ -90,21 +110,42 @@ async def run_engine(
             min_price=min_price,
             max_price=max_price,
         )
-        normalized = normalize_products(products, engine_name)
         duration = time.perf_counter() - started
 
-        if success and normalized:
-            log(f"[{search_id}]", f"[ENGINE] {engine_name} found {len(normalized)} products", "OK")
-            return EngineRunResult(engine_name, True, normalized, "", duration)
+        if success and products:
+            log(f"[{search_id}]", f"[ENGINE] {engine_name} raw products={len(products)}", "OK")
+            return EngineRunResult(engine_name, True, products, "", duration, variants, urls_to_try)
 
         final_error = error or f"{engine_name} tidak menemukan produk."
+        debug_path = _existing_zero_raw_debug(search_id, engine_name) or save_zero_raw_debug(
+            search_id,
+            engine_name,
+            {
+                "engine": engine_name,
+                "query": query,
+                "query_variants": variants,
+                "urls_tried": urls_to_try,
+                "errors": [final_error],
+            },
+        )
         log(f"[{search_id}]", f"[ENGINE] {engine_name} failed: {final_error}", "WARN")
-        return EngineRunResult(engine_name, False, normalized, final_error, duration)
+        return EngineRunResult(engine_name, False, products or [], final_error, duration, variants, urls_to_try, [debug_path] if debug_path else [])
     except Exception as exc:
         duration = time.perf_counter() - started
         error = f"{engine_name} unhandled exception: {exc}"
+        debug_path = save_zero_raw_debug(
+            search_id,
+            engine_name,
+            {
+                "engine": engine_name,
+                "query": query,
+                "query_variants": variants,
+                "urls_tried": urls_to_try,
+                "errors": [error],
+            },
+        )
         log(f"[{search_id}]", f"[ENGINE] {error}", "ERROR")
-        return EngineRunResult(engine_name, False, [], error, duration)
+        return EngineRunResult(engine_name, False, [], error, duration, variants, urls_to_try, [debug_path] if debug_path else [])
 
 
 async def run_scraper_engines(

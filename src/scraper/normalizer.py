@@ -1,17 +1,48 @@
 """
-normalizer.py - Converts every scraper output into one product schema.
+normalizer.py - Convert scraper output into one product schema.
 
-Old engines used mixed names like harga, price_val, price_text, link, and url.
-Budget and AI filters now read one schema, while compatibility aliases remain
-for the existing frontend and AI code.
+Raw extraction should be counted before normalization. This module keeps weak
+but usable raw products and reports every drop reason for diagnostics.
 """
 from __future__ import annotations
 
 import hashlib
 import re
+from collections import Counter
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from src.utils.currency import format_rupiah, parse_rupiah
+from src.utils.debug import save_json_debug
+
+
+@dataclass
+class NormalizerReport:
+    engine: str
+    input_count: int
+    output: list[dict[str, Any]] = field(default_factory=list)
+    drop_reasons: dict[str, int] = field(default_factory=dict)
+    dropped_samples: list[dict[str, Any]] = field(default_factory=list)
+    debug_path: str | None = None
+
+    @property
+    def output_count(self) -> int:
+        return len(self.output)
+
+    @property
+    def dropped_count(self) -> int:
+        return self.input_count - len(self.output)
+
+    def debug_payload(self) -> dict[str, Any]:
+        """Return compact JSON diagnostic for normalizer behavior."""
+        return {
+            "engine": self.engine,
+            "input_count": self.input_count,
+            "output_count": self.output_count,
+            "dropped_count": self.dropped_count,
+            "drop_reasons": self.drop_reasons,
+            "dropped_samples": self.dropped_samples[:30],
+        }
 
 
 def _first_text(data: dict[str, Any], keys: Iterable[str]) -> str:
@@ -48,24 +79,24 @@ def _product_id(title: str, url: str, price_value: int | None) -> str:
     return hashlib.sha1(raw).hexdigest()[:16]
 
 
-def normalize_product(raw: dict[str, Any], source_engine: str | None = None) -> dict[str, Any] | None:
-    """Normalize one raw product. Return None only when the card has no identity."""
+def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | None = None) -> tuple[dict[str, Any] | None, str | None]:
+    """Normalize one product and return a drop reason when unusable."""
     if not isinstance(raw, dict):
-        return None
+        return None, "not_dict"
 
     title = _first_text(raw, ("title", "nama", "nama_produk", "name", "product_name"))
-    url = _clean_url(_first_text(raw, ("url", "link", "href", "url_produk", "product_url")))
-    if not title and not url:
-        return None
     if not title:
-        title = "Produk Tokopedia"
+        return None, "missing_title"
 
+    url = _clean_url(_first_text(raw, ("url", "link", "href", "url_produk", "product_url")))
     price_raw = _first_value(
         raw,
         ("price_raw", "price_text", "harga_display", "price_display", "price", "harga"),
     )
-    price_value = _first_value(raw, ("price_value", "price_val", "harga_value", "harga"))
+    if not url and price_raw in (None, ""):
+        return None, "missing_url_and_price"
 
+    price_value = _first_value(raw, ("price_value", "price_val", "harga_value", "harga"))
     parsed_price = parse_rupiah(price_value)
     if parsed_price is None:
         parsed_price = parse_rupiah(price_raw)
@@ -75,7 +106,6 @@ def normalize_product(raw: dict[str, Any], source_engine: str | None = None) -> 
         price_text = format_rupiah(parsed_price)
 
     engine = source_engine or _first_text(raw, ("source_engine", "source", "engine")) or "unknown"
-
     normalized = {
         "id": raw.get("id") or _product_id(title, url, parsed_price),
         "title": title,
@@ -96,19 +126,56 @@ def normalize_product(raw: dict[str, Any], source_engine: str | None = None) -> 
         "ai_reason": raw.get("ai_reason", ""),
     }
 
-    # Compatibility aliases for old frontend/AI code. Old logic trash. Replaced.
+    # Compatibility aliases for old frontend/AI code. Old logic bad. Replaced.
     normalized["link"] = normalized["url"]
     normalized["price_text"] = normalized["price_raw"]
     normalized["price_val"] = normalized["price_value"]
     normalized["source"] = normalized["source_engine"]
-    return normalized
+    return normalized, None
+
+
+def normalize_product(raw: dict[str, Any], source_engine: str | None = None) -> dict[str, Any] | None:
+    """Normalize one raw product. Missing shop/location/image is allowed."""
+    product, _ = _normalize_product_with_reason(raw, source_engine)
+    return product
+
+
+def normalize_products_with_report(
+    products: Iterable[dict[str, Any]],
+    source_engine: str | None = None,
+    search_id: str | None = None,
+) -> NormalizerReport:
+    """Normalize a batch and optionally write normalizer_debug_<engine>.json."""
+    raw_products = list(products or [])
+    engine = source_engine or "unknown"
+    output: list[dict[str, Any]] = []
+    drop_reasons: Counter[str] = Counter()
+    dropped_samples: list[dict[str, Any]] = []
+
+    for item in raw_products:
+        product, reason = _normalize_product_with_reason(item, source_engine)
+        if product:
+            output.append(product)
+            continue
+        drop_reasons[reason or "unknown"] += 1
+        dropped_samples.append({
+            "reason": reason or "unknown",
+            "raw": item if isinstance(item, dict) else str(item),
+        })
+
+    report = NormalizerReport(
+        engine=engine,
+        input_count=len(raw_products),
+        output=output,
+        drop_reasons=dict(drop_reasons),
+        dropped_samples=dropped_samples,
+    )
+
+    if search_id:
+        report.debug_path = save_json_debug(search_id, f"normalizer_debug_{engine}.json", report.debug_payload())
+    return report
 
 
 def normalize_products(products: Iterable[dict[str, Any]], source_engine: str | None = None) -> list[dict[str, Any]]:
-    """Normalize a batch and drop only completely broken product records."""
-    normalized: list[dict[str, Any]] = []
-    for item in products or []:
-        product = normalize_product(item, source_engine)
-        if product:
-            normalized.append(product)
-    return normalized
+    """Backward-compatible normalizer returning only product list."""
+    return normalize_products_with_report(products, source_engine).output
