@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+*.log
+.env
+debug/scraper/*
+!debug/scraper/.gitkeep
+dist/
+build/
+.DS_Store
+*.swp
+*.swo
+~*

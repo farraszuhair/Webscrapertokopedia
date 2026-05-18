@@ -1,0 +1,3 @@
+Page.goto: net::ERR_CONNECTION_RESET at https://www.tokopedia.com/search?q=laptop%20gaming
+Call log:
+navigating to "https://www.tokopedia.com/search?q=laptop%20gaming", waiting until "domcontentloaded"
