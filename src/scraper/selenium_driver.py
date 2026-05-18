@@ -20,7 +20,7 @@ def create_chrome_driver(search_id: str, debug_dir: Path) -> Tuple[Optional[webd
     options = Options()
     
     # Headless config
-    headless_env = os.environ.get("SCRAPER_HEADLESS", "false").lower()
+    headless_env = os.environ.get("SCRAPER_HEADLESS", "true").lower()
     is_headless = headless_env == "true"
     
     if is_headless:
@@ -34,6 +34,11 @@ def create_chrome_driver(search_id: str, debug_dir: Path) -> Tuple[Optional[webd
     options.add_argument("--start-maximized")
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--disable-extensions")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--lang=id-ID")
+    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    options.page_load_strategy = "eager"
     
     # Anti-bot
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -84,7 +89,7 @@ def create_chrome_driver(search_id: str, debug_dir: Path) -> Tuple[Optional[webd
         
     # Both failed, write debug artifact
     error_msg = "\n\n".join(error_logs)
-    log(f"[{search_id}]", "[SELENIUM] Driver Chrome otomatis gagal dibuat. Hapus chromedriver.exe lama atau update Chrome/Selenium.", "ERROR")
+    log(f"[{search_id}]", "[SELENIUM] Driver Chrome otomatis gagal dibuat. Update Chrome/Selenium atau cek network webdriver-manager.", "ERROR")
     
     # Write artifact
     try:

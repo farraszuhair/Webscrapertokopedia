@@ -1,10 +1,10 @@
 {
   "name": "rb-c1",
   "version": "1.0.0",
-  "description": "A Python application that scrapes product data from Tokopedia marketplace and analyzes it using local Ollama LLM.",
-  "main": "index.js",
+  "description": "Tokopedia scraper Puppeteer worker dependencies.",
+  "main": "src/scraper/puppeteer_worker.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "puppeteer:check": "node src/scraper/puppeteer_worker.js --query \"laptop gaming\" --target 5"
   },
   "keywords": [],
   "author": "",

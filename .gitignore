@@ -1,7 +1,15 @@
 node_modules/
 .venv/
+__pycache__/
+*.pyc
 *.log
 .env
+data/debug/*
+!data/debug/.gitkeep
+data/results/*
+!data/results/.gitkeep
+data/ai_memory/*
+!data/ai_memory/.gitkeep
 debug/scraper/*
 !debug/scraper/.gitkeep
 dist/

@@ -1,7 +1,4 @@
-// =====================================================
-// FRONTEND APP (Python API Compatible)
-// Features: Real progress polling, ETA, AI Feedback
-// =====================================================
+// Frontend controller for search, progress polling, comparison, and feedback.
 
 class ScraperApp {
   constructor() {
@@ -9,34 +6,28 @@ class ScraperApp {
       products: [],
       query: null,
       searchId: null,
-      budgetInfo: null,
       pollTimer: null,
-      selectedProduct: null,
+      comparison: [],
+      selectedEngine: null,
     };
 
     this.$ = (id) => document.getElementById(id);
     this.panels = ['search-panel', 'progress-panel', 'error-panel', 'results-panel'];
-
     this.init();
   }
 
-  // ── INIT ──────────────────────────────────────
-
-  async init() {
+  init() {
     this.bindBudgetFormat();
     this.bindBudgetInfo();
     this.bindEnter();
     this.bindResetAI();
   }
 
-  // ── SECTION HELPERS ───────────────────────────
-
   show(panelId) {
     this.panels.forEach((id) => {
       const el = this.$(id);
-      if (el) {
-        id === panelId ? el.classList.remove('hidden') : el.classList.add('hidden');
-      }
+      if (!el) return;
+      el.classList.toggle('hidden', id !== panelId);
     });
   }
 
@@ -47,113 +38,95 @@ class ScraperApp {
     el.className = `status-badge ${cls}`;
   }
 
-  // ── BUDGET FORMATTING ─────────────────────────
-
   bindBudgetFormat() {
     const input = this.$('budget');
     if (!input) return;
 
     input.addEventListener('input', () => {
       const raw = input.value.replace(/[^\d]/g, '');
-      if (!raw) {
-        input.value = '';
-        return;
-      }
-      const formatted = parseInt(raw, 10).toLocaleString('id-ID');
-      input.value = formatted;
+      input.value = raw ? Number.parseInt(raw, 10).toLocaleString('id-ID') : '';
+      this.updateBudgetInfo();
     });
 
-    input.addEventListener('keydown', (e) => {
+    input.addEventListener('keydown', (event) => {
       const allowed = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Home', 'End'];
-      if (allowed.includes(e.key)) return;
-      if (!/^\d$/.test(e.key)) e.preventDefault();
+      if (allowed.includes(event.key)) return;
+      if (!/^\d$/.test(event.key)) event.preventDefault();
     });
+  }
+
+  getBudgetText() {
+    const text = this.$('budget')?.value.trim() || '';
+    return text || null;
   }
 
   parseBudgetInput() {
-    const val = this.$('budget')?.value || '';
-    if (!val.trim()) return null;
-    const num = parseInt(val.replace(/\./g, ''), 10);
-    return isNaN(num) || num <= 0 ? null : num;
+    const text = this.getBudgetText();
+    if (!text) return null;
+    const number = Number.parseInt(text.replace(/\./g, ''), 10);
+    return Number.isFinite(number) && number > 0 ? number : null;
   }
 
-  formatRp(num) {
-    if (!num || typeof num !== 'number') return '—';
-    return 'Rp' + num.toLocaleString('id-ID');
+  formatRp(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return 'Rp0';
+    return 'Rp' + number.toLocaleString('id-ID');
   }
-
-  // ── BUDGET INFO BOX ───────────────────────────
 
   bindBudgetInfo() {
-    const budgetInput = this.$('budget');
-    const tolInput = this.$('tolerance');
-    if (!budgetInput || !tolInput) return;
-
-    const update = () => this.updateBudgetInfo();
-    budgetInput.addEventListener('input', update);
-    tolInput.addEventListener('input', update);
+    this.$('tolerance')?.addEventListener('input', () => this.updateBudgetInfo());
   }
 
   updateBudgetInfo() {
     const budget = this.parseBudgetInput();
-    const tol = Math.max(0, Math.min(parseFloat(this.$('tolerance')?.value) || 20, 100));
-    const infoEl = this.$('budget-info');
+    const tolerance = Math.max(0, Math.min(Number.parseFloat(this.$('tolerance')?.value || '20'), 100));
+    const info = this.$('budget-info');
 
-    if (!budget || !infoEl) {
-      infoEl?.classList.add('hidden');
+    if (!budget || !info) {
+      info?.classList.add('hidden');
       return;
     }
 
-    const frac = tol / 100;
-    const min = Math.round(budget * (1 - frac));
-    const max = Math.round(budget * (1 + frac));
-
+    const min = Math.round(budget * (1 - tolerance / 100));
+    const max = Math.round(budget * (1 + tolerance / 100));
     this.$('bi-budget').textContent = this.formatRp(budget);
-    this.$('bi-tolerance').textContent = `±${tol}%`;
+    this.$('bi-tolerance').textContent = `${tolerance}%`;
     this.$('bi-range').textContent = `${this.formatRp(min)} - ${this.formatRp(max)}`;
-    infoEl.classList.remove('hidden');
+    info.classList.remove('hidden');
   }
-
-  // ── BIND ENTER ────────────────────────────────
 
   bindEnter() {
-    this.$('query')?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.startSearch();
+    this.$('query')?.addEventListener('keypress', (event) => {
+      if (event.key === 'Enter') this.startSearch();
     });
   }
-  
-  // ── RESET AI ──────────────────────────────────
-  bindResetAI() {
-    const btn = this.$('reset-ai-btn'); // Assuming there is or will be a button for this
-    if(btn) {
-      btn.addEventListener('click', async () => {
-         if(!confirm("Yakin ingin mereset memori AI? AI akan melupakan semua yang sudah dipelajari.")) return;
-         try {
-             btn.disabled = true;
-             const res = await fetch('/api/ai/reset', { method: 'POST' });
-             const data = await res.json();
-             if(data.success) {
-                 alert("Memori AI berhasil direset.");
-             } else {
-                 alert("Gagal mereset AI.");
-             }
-         } catch(e) {
-             alert("Error: " + e.message);
-         } finally {
-             btn.disabled = false;
-         }
-      });
-    }
-  }
 
-  // ── START SEARCH ─────────────────────────────
+  bindResetAI() {
+    const btn = this.$('reset-ai-btn');
+    if (!btn) return;
+
+    btn.addEventListener('click', async () => {
+      if (!confirm('Reset memori AI?')) return;
+      try {
+        btn.disabled = true;
+        const res = await fetch('/api/ai/reset', { method: 'POST' });
+        const data = await res.json();
+        alert(data.success ? 'Memori AI berhasil direset.' : 'Gagal mereset AI.');
+      } catch (error) {
+        alert('Error: ' + error.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 
   async startSearch() {
     const query = this.$('query')?.value.trim();
-    const targetCount = parseInt(this.$('target_count')?.value || '25');
-    const budget = this.parseBudgetInput();
-    const tolerance = parseFloat(this.$('tolerance')?.value || '20');
-    const useAI = this.$('use_ai')?.checked ?? true;
+    const target = Number.parseInt(this.$('target_count')?.value || '25', 10);
+    const tolerance = Number.parseFloat(this.$('tolerance')?.value || '20');
+    const ai = this.$('use_ai')?.checked ?? true;
+    const engineMode = this.$('engine_mode')?.value || 'auto';
+    const budget = this.getBudgetText();
 
     if (!query) {
       alert('Query tidak boleh kosong');
@@ -161,20 +134,29 @@ class ScraperApp {
     }
 
     this.state.query = query;
-    this.state.budgetInfo = budget ? { budget, tolerance } : null;
-
+    this.state.comparison = [];
+    this.state.selectedEngine = null;
     this.show('progress-panel');
     this.setStatus('Running', 'status-running');
     this.resetProgress();
 
     try {
-      const res = await fetch('/api/search', {
+      const response = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, target_count: targetCount, budget, tolerance, use_ai: useAI }),
+        body: JSON.stringify({
+          query,
+          target,
+          target_count: target,
+          budget,
+          tolerance,
+          ai,
+          use_ai: ai,
+          engine_mode: engineMode,
+        }),
       });
 
-      const data = await res.json();
+      const data = await response.json();
       if (!data.success) {
         this.showError(data.error || 'Gagal memulai scraping');
         return;
@@ -182,13 +164,10 @@ class ScraperApp {
 
       this.state.searchId = data.search_id;
       this.startPolling();
-
-    } catch (err) {
-      this.showError('Gagal terhubung ke server: ' + err.message);
+    } catch (error) {
+      this.showError('Gagal terhubung ke server: ' + error.message);
     }
   }
-
-  // ── PROGRESS POLLING ─────────────────────────
 
   startPolling() {
     this.stopPolling();
@@ -196,249 +175,240 @@ class ScraperApp {
   }
 
   stopPolling() {
-    if (this.state.pollTimer) {
-      clearInterval(this.state.pollTimer);
-      this.state.pollTimer = null;
-    }
+    if (!this.state.pollTimer) return;
+    clearInterval(this.state.pollTimer);
+    this.state.pollTimer = null;
   }
 
   async fetchProgress() {
     if (!this.state.searchId) return;
-    
+
     try {
-      const res = await fetch(`/api/progress/${this.state.searchId}`);
-      if (!res.ok) return;
-      
-      const data = await res.json();
-      this.renderProgress(data);
-      
-      if (data.done) {
+      const response = await fetch(`/api/progress/${this.state.searchId}`);
+      if (!response.ok) return;
+      const progress = await response.json();
+      this.renderProgress(progress);
+
+      if (progress.done) {
         this.stopPolling();
-        if (data.error) {
-            this.showError(data.error);
-        } else {
-            this.fetchResults();
-        }
+        progress.error ? this.showError(progress.error) : this.fetchResults();
       }
-    } catch (_) {}
+    } catch (_) {
+      // Polling errors are transient while the server is busy.
+    }
   }
-  
+
   async fetchResults() {
-      try {
-          const res = await fetch(`/api/result/${this.state.searchId}`);
-          if (!res.ok) throw new Error("Gagal mengambil hasil final.");
-          const data = await res.json();
-          this.state.products = data.data || [];
-          setTimeout(() => this.showResults(data), 500);
-      } catch (err) {
-          this.showError(err.message);
-      }
+    try {
+      const response = await fetch(`/api/result/${this.state.searchId}`);
+      if (!response.ok) throw new Error('Gagal mengambil hasil final.');
+      const data = await response.json();
+      this.showResults(data);
+    } catch (error) {
+      this.showError(error.message);
+    }
   }
 
   resetProgress() {
-    this.renderProgress({ percent: 0, stage: 'init', message: 'Memulai...', found: 0, valid: 0, target: 0, elapsed_seconds: 0, eta_seconds: null });
-    document.querySelectorAll('.stage-item').forEach((el) => {
-      el.classList.remove('active', 'done');
+    this.renderProgress({
+      percent: 0,
+      stage: 'queued',
+      message: 'Memulai...',
+      found: 0,
+      valid: 0,
+      target: 0,
+      elapsed_seconds: 0,
+      eta_seconds: null,
+      engine_mode: this.$('engine_mode')?.value || 'auto',
+      active_engine: 'none',
+      attempt: 1,
+      max_attempts: 1,
     });
+    document.querySelectorAll('.stage-item').forEach((el) => el.classList.remove('active', 'done'));
   }
 
-  renderProgress(p) {
-    const pct = Math.max(0, Math.min(100, p.percent || 0));
-
-    const pctEl = this.$('progress-pct');
-    const barEl = this.$('progress-bar');
-    const stageEl = this.$('progress-stage-label');
-    const msgEl = this.$('progress-message');
-
-    if (pctEl) pctEl.textContent = `${pct}%`;
-    if (barEl) barEl.style.width = `${pct}%`;
-    if (stageEl) stageEl.textContent = this.stageLabel(p.stage);
-    if (msgEl) msgEl.textContent = p.message || '';
-
-    if (this.$('pm-found')) this.$('pm-found').textContent = p.found ?? 0;
-    if (this.$('pm-valid')) this.$('pm-valid').textContent = p.valid ?? 0;
-    if (this.$('pm-target')) this.$('pm-target').textContent = p.target ?? '—';
-    if (this.$('pm-elapsed')) this.$('pm-elapsed').textContent = p.elapsed_seconds != null ? `${p.elapsed_seconds}s` : '—';
-    
-    const etaEl = this.$('pm-eta');
-    if (etaEl) {
-        if (p.eta_seconds === null || p.eta_seconds === undefined) {
-            etaEl.textContent = 'Calculating...';
-        } else {
-            etaEl.textContent = `${p.eta_seconds}s`;
-        }
-    }
-    
-    if (this.$('pm-engine')) this.$('pm-engine').textContent = p.engine || 'unknown';
-    if (this.$('pm-attempt')) this.$('pm-attempt').textContent = `${p.attempt || 1}/${p.max_attempts || 3}`;
-
-    this.updateStagePipeline(p.stage, pct);
+  renderProgress(progress) {
+    const pct = Math.max(0, Math.min(100, progress.percent || 0));
+    this.$('progress-pct').textContent = `${pct}%`;
+    this.$('progress-bar').style.width = `${pct}%`;
+    this.$('progress-stage-label').textContent = this.stageLabel(progress.stage);
+    this.$('progress-message').textContent = progress.message || '';
+    this.$('pm-found').textContent = progress.found ?? 0;
+    this.$('pm-valid').textContent = progress.valid ?? 0;
+    this.$('pm-target').textContent = progress.target ?? '-';
+    this.$('pm-elapsed').textContent = progress.elapsed_seconds != null ? `${progress.elapsed_seconds}s` : '-';
+    this.$('pm-eta').textContent = progress.eta_label || 'Calculating...';
+    this.$('pm-engine').textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || progress.engine || 'none'}`;
+    this.$('pm-attempt').textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
+    this.updateStagePipeline(progress.stage, pct);
   }
 
   stageLabel(stage) {
     const labels = {
-      queued: 'Menunggu Giliran',
-      engine_selecting: '🚀 Memilih Engine...',
-      puppeteer_starting: '🚀 Membuka Browser (Puppeteer)...',
-      puppeteer_opening: '🌐 Membuka Tokopedia...',
-      puppeteer_scrolling: '📜 Scroll Halaman...',
-      puppeteer_extracting: '📦 Ekstrak Produk...',
-      switching_to_rollback: '⚠️ Pindah ke Fallback Scraper...',
-      rollback_starting: '🚀 Mulai Fallback Scraper...',
-      rollback_extracting: '📜 Scroll & Ekstrak...',
-      deduplicating: '🧹 Menghapus Duplikat...',
-      budget_filtering: '💰 Memfilter Budget...',
-      ai_filtering: '🤖 Validasi AI...',
-      finalizing: '✨ Finalisasi Hasil...',
-      done: '✅ Selesai!',
-      failed: '❌ Gagal',
-      cancelled: '🛑 Dibatalkan'
+      queued: 'Menunggu giliran',
+      engine_selecting: 'Memilih engine',
+      puppeteer_starting: 'Puppeteer starting',
+      puppeteer_opening: 'Puppeteer opening',
+      puppeteer_scrolling: 'Puppeteer scrolling',
+      puppeteer_extracting: 'Puppeteer extracting',
+      puppeteer_retry: 'Puppeteer retry',
+      switching_to_rollback: 'Pindah ke Rollback/Selenium',
+      rollback_browser_starting: 'Selenium starting',
+      rollback_opening: 'Selenium opening',
+      rollback_extracting: 'Selenium extracting',
+      compare_filtering: 'Compare filtering',
+      deduplicating: 'Deduplicating',
+      budget_filtering: 'Budget filtering',
+      ai_filtering: 'AI filtering',
+      finalizing: 'Finalizing',
+      done: 'Selesai',
+      failed: 'Gagal',
+      cancelled: 'Dibatalkan',
     };
-    return labels[stage] || stage || 'Processing...';
+    return labels[stage] || stage || 'Processing';
   }
 
   updateStagePipeline(currentStage, pct) {
-    const order = [
-        'engine_selecting', 
-        'puppeteer_opening', 
-        'rollback_starting', 
-        'budget_filtering', 
-        'ai_filtering', 
-        'finalizing'
-    ];
-    
-    // Map intermediate states to the main UI states
-    const stageMap = {
-        'queued': -1,
-        'engine_selecting': 0,
-        'puppeteer_starting': 1,
-        'puppeteer_opening': 1,
-        'puppeteer_scrolling': 1,
-        'puppeteer_extracting': 1,
-        'switching_to_rollback': 2,
-        'rollback_starting': 2,
-        'rollback_extracting': 2,
-        'deduplicating': 3,
-        'budget_filtering': 3,
-        'ai_filtering': 4,
-        'finalizing': 5,
-        'done': 6
-    };
-
-    const currentIdx = stageMap[currentStage] !== undefined ? stageMap[currentStage] : 0;
-    
-    // The HTML has elements like stage-init, stage-opening, etc.
-    // Let's map our index to those DOM ids:
     const domOrder = ['init', 'opening', 'scrolling', 'extracting', 'filtering', 'ai_validation', 'finalizing'];
-    // For simplicity, we just fill them up progressively based on percentage
-    
-    domOrder.forEach((s, i) => {
-      const el = this.$(`stage-${s}`);
+    domOrder.forEach((name, index) => {
+      const el = this.$(`stage-${name}`);
       if (!el) return;
       el.classList.remove('active', 'done');
-      if (pct >= 100 || (pct > (i * (100 / domOrder.length)))) {
-        if (pct < 100 && pct < ((i + 1) * (100 / domOrder.length))) {
-            el.classList.add('active');
-        } else {
-            el.classList.add('done');
-        }
-      }
+      const threshold = index * (100 / domOrder.length);
+      const nextThreshold = (index + 1) * (100 / domOrder.length);
+      if (pct >= 100 || pct >= nextThreshold) el.classList.add('done');
+      else if (pct >= threshold) el.classList.add('active');
     });
-
-    if (pct >= 100) {
-      domOrder.forEach((s) => this.$(`stage-${s}`)?.classList.add('done'));
-      this.$(`stage-finalizing`)?.classList.remove('active');
-    }
   }
-
-  // ── SHOW RESULTS ─────────────────────────────
 
   showResults(data) {
     this.setStatus('Done', 'status-done');
     this.show('results-panel');
+    this.state.comparison = data.comparison || [];
+    this.state.selectedEngine = data.selected_engine || null;
+    this.state.products = data.data || [];
 
-    const count = this.$('r-count');
-    const target = this.$('r-target');
-    if (count) count.textContent = data.count ?? 0;
-    if (target) target.textContent = data.requested_count ?? '—';
+    this.$('r-target').textContent = data.requested_count ?? '-';
+    this.renderBudgetBar(data.budget_info);
+    this.renderComparison();
+    this.updateResultCount();
+    this.renderProducts();
+  }
 
-    // Budget bar
-    const budgetBar = this.$('r-budget-bar');
-    const budgetText = this.$('r-budget-text');
-    if (data.budget_info && budgetBar && budgetText) {
-      const bi = data.budget_info;
-      const min = this.formatRp(bi.min);
-      const max = this.formatRp(bi.max);
-      budgetText.textContent = `Budget: ${this.formatRp(bi.budget)} · Toleransi ±${bi.tolerance}% · Range: ${min} - ${max}`;
-      budgetBar.classList.remove('hidden');
-    } else {
-      budgetBar?.classList.add('hidden');
+  renderBudgetBar(budgetInfo) {
+    const bar = this.$('r-budget-bar');
+    const text = this.$('r-budget-text');
+    if (!budgetInfo || !bar || !text) {
+      bar?.classList.add('hidden');
+      return;
+    }
+    text.textContent =
+      `Budget ${this.formatRp(budgetInfo.budget)} | ` +
+      `Range ${this.formatRp(budgetInfo.min)} - ${this.formatRp(budgetInfo.max)} | ` +
+      `Tolerance ${budgetInfo.tolerance}%`;
+    bar.classList.remove('hidden');
+  }
+
+  renderComparison() {
+    const panel = this.$('comparison-panel');
+    const grid = this.$('comparison-grid');
+    if (!panel || !grid) return;
+
+    if (!this.state.comparison.length) {
+      panel.classList.add('hidden');
+      grid.innerHTML = '';
+      return;
     }
 
+    panel.classList.remove('hidden');
+    grid.innerHTML = '';
+
+    for (const item of this.state.comparison) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = `compare-card ${item.engine === this.state.selectedEngine ? 'active' : ''}`;
+      card.onclick = () => this.selectComparisonEngine(item.engine);
+      card.innerHTML = `
+        <strong>${this.esc(item.engine)}</strong>
+        <span>Raw: ${item.raw_products_found}</span>
+        <span>Budget: ${item.valid_after_budget}</span>
+        <span>AI: ${item.valid_after_ai}</span>
+        <span>Duration: ${item.duration}s</span>
+        ${item.error ? `<small>${this.esc(item.error)}</small>` : ''}
+      `;
+      grid.appendChild(card);
+    }
+  }
+
+  selectComparisonEngine(engine) {
+    const item = this.state.comparison.find((entry) => entry.engine === engine);
+    if (!item) return;
+    this.state.selectedEngine = engine;
+    this.state.products = item.data || [];
+    this.renderComparison();
+    this.updateResultCount();
     this.renderProducts();
+  }
+
+  updateResultCount() {
+    this.$('r-count').textContent = this.state.products.length;
   }
 
   renderProducts() {
     const grid = this.$('products-grid');
-    if (!grid) return;
     grid.innerHTML = '';
 
     if (!this.state.products.length) {
-      grid.innerHTML = '<p class="no-results">Tidak ada produk ditemukan.</p>';
+      grid.innerHTML = '<p class="no-results">Tidak ada produk valid untuk pilihan ini.</p>';
       return;
     }
 
-    for (const p of this.state.products) {
-      grid.appendChild(this.createCard(p));
+    for (const product of this.state.products) {
+      grid.appendChild(this.createCard(product));
     }
   }
 
-  createCard(p) {
+  createCard(product) {
     const card = document.createElement('div');
     card.className = 'product-card';
-    card.dataset.id = p.id;
+    card.dataset.id = product.id || '';
 
-    const imgHtml = p.image
-      ? `<img src="${this.esc(p.image)}" alt="${this.esc(p.title)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'product-img-placeholder\\'>📦</div>'">`
-      : '<div class="product-img-placeholder">📦</div>';
-
-    const aiInfo = p.relevance_score != null ? `<div class="product-ai">AI Score: ${p.relevance_score.toFixed(2)}<br><i>${this.esc(p.ai_reason)}</i></div>` : '';
+    const title = product.title || 'Produk Tokopedia';
+    const url = product.url || product.link || '#';
+    const price = product.price_raw || product.price_text || '-';
+    const imageHtml = product.image
+      ? `<img src="${this.esc(product.image)}" alt="${this.esc(title)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'product-img-placeholder\\'>No image</div>'">`
+      : '<div class="product-img-placeholder">No image</div>';
+    const aiInfo =
+      product.relevance_score != null
+        ? `<div class="product-ai">AI Score: ${Number(product.relevance_score).toFixed(2)}<br><i>${this.esc(product.ai_reason || '')}</i></div>`
+        : '';
 
     card.innerHTML = `
-      <a href="${this.esc(p.link)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">
-        <div class="product-img">${imgHtml}</div>
+      <a href="${this.esc(url)}" target="_blank" rel="noopener" class="product-link">
+        <div class="product-img">${imageHtml}</div>
         <div class="product-body">
-          <div class="product-title">${this.esc(p.title)}</div>
-          <div class="product-price">${this.esc(p.price_text || '—')}</div>
-          ${p.shop ? `<div class="product-shop">🏪 ${this.esc(p.shop)}</div>` : ''}
-          ${p.location ? `<div class="product-location">📍 ${this.esc(p.location)}</div>` : ''}
+          <div class="product-title">${this.esc(title)}</div>
+          <div class="product-price">${this.esc(price)}</div>
+          ${product.shop ? `<div class="product-shop">${this.esc(product.shop)}</div>` : ''}
+          ${product.location ? `<div class="product-location">${this.esc(product.location)}</div>` : ''}
+          ${product.source_engine ? `<div class="product-source">${this.esc(product.source_engine)}</div>` : ''}
           ${aiInfo}
         </div>
       </a>
       <div class="product-footer">
-        <button class="btn-benar" onclick="event.stopPropagation();app.sendFeedback('${p.id}', 'should_include')">✓ Benar</button>
-        <button class="btn-salah" onclick="event.stopPropagation();app.sendFeedback('${p.id}', 'should_exclude')">✗ Salah</button>
+        <button class="btn-benar" onclick="event.stopPropagation();app.sendFeedback('${this.esc(product.id || '')}', 'should_include')">Benar</button>
+        <button class="btn-salah" onclick="event.stopPropagation();app.sendFeedback('${this.esc(product.id || '')}', 'should_exclude')">Salah</button>
       </div>
     `;
-
     return card;
   }
-
-  esc(str) {
-    if (!str) return '';
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
-  }
-
-  // ── ERROR ────────────────────────────────────
 
   showError(message) {
     this.stopPolling();
     this.setStatus('Error', 'status-error');
     this.show('error-panel');
-    const el = this.$('error-msg');
-    if (el) el.textContent = message;
+    this.$('error-msg').textContent = message;
   }
 
   retry() {
@@ -452,40 +422,32 @@ class ScraperApp {
     this.show('search-panel');
   }
 
-  // ── FEEDBACK ─────────────────────────────────
-
   async sendFeedback(productId, feedbackType) {
-    const p = this.state.products.find((x) => x.id === productId);
-    if (!p) return;
+    const product = this.state.products.find((item) => item.id === productId);
+    if (!product) return;
 
-    const reason = prompt(`Alasan mengapa produk ini ${feedbackType === 'should_include' ? 'benar' : 'salah'}?`);
-    if (reason === null) return; // cancelled
+    const reason = prompt(`Alasan produk ini ${feedbackType === 'should_include' ? 'benar' : 'salah'}?`);
+    if (reason === null) return;
 
     try {
-      const res = await fetch('/api/feedback', {
+      const response = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: this.state.query, product: p, feedback: feedbackType, reason: reason }),
+        body: JSON.stringify({ query: this.state.query, product, feedback: feedbackType, reason }),
       });
-
-      const data = await res.json();
-      if (data.success) {
-        alert("Feedback tersimpan. AI akan belajar dari ini.");
-        const card = document.querySelector(`[data-id="${p.id}"]`);
-        if (card) {
-          card.style.opacity = '0.6';
-          card.style.filter = feedbackType === 'should_include' ? 'sepia(1) hue-rotate(90deg)' : 'grayscale(0.7)';
-        }
-      } else {
-        alert('Gagal menyimpan feedback: ' + (data.detail || 'Unknown error'));
-      }
-    } catch (err) {
-      alert('Error: ' + err.message);
+      const data = await response.json();
+      alert(data.success ? 'Feedback tersimpan.' : 'Gagal menyimpan feedback.');
+    } catch (error) {
+      alert('Error: ' + error.message);
     }
   }
-}
 
-// ── INIT ──────────────────────────────────────────
+  esc(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
+  }
+}
 
 let app;
 document.addEventListener('DOMContentLoaded', () => {

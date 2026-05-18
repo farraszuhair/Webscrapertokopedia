@@ -3,23 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tokopedia Scraper — AI Powered</title>
-  <meta name="description" content="Scraper produk Tokopedia berbasis Puppeteer dengan AI validation Qwen 2.5">
+  <title>Tokopedia Scraper</title>
+  <meta name="description" content="Tokopedia scraper with Puppeteer, Selenium rollback, budget debug, and Qwen validation.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="app">
-
-    <!-- HEADER -->
     <header class="header">
       <div class="header-inner">
         <div class="logo">
-          <span class="logo-icon">🕷️</span>
+          <span class="logo-icon">TS</span>
           <div>
             <h1>Tokopedia Scraper</h1>
-            <p>Puppeteer + Qwen AI · Real-time results</p>
+            <p>Puppeteer + Rollback/Selenium + Qwen</p>
           </div>
         </div>
         <div id="status-badge" class="status-badge status-idle">Idle</div>
@@ -27,110 +25,79 @@
     </header>
 
     <main class="main">
-
-      <!-- ═══════════════════════════════════════ -->
-      <!-- SEARCH PANEL                           -->
-      <!-- ═══════════════════════════════════════ -->
       <section id="search-panel" class="panel search-panel">
-        <h2 class="panel-title">🔍 Pencarian Produk</h2>
+        <h2 class="panel-title">Pencarian Produk</h2>
 
         <div class="form-group">
           <label for="query">Produk yang dicari <span class="required">*</span></label>
-          <input
-            type="text"
-            id="query"
-            placeholder="Contoh: laptop gaming"
-            value="laptop gaming"
-            autocomplete="off"
-          >
+          <input type="text" id="query" placeholder="Contoh: laptop gaming" value="laptop gaming" autocomplete="off">
         </div>
 
         <div class="form-row">
           <div class="form-group">
             <label for="target_count">Jumlah target <span class="required">*</span></label>
-            <input
-              type="number"
-              id="target_count"
-              placeholder="25"
-              value="25"
-              min="1"
-              max="100"
-            >
+            <input type="number" id="target_count" value="25" min="1" max="100">
           </div>
 
           <div class="form-group">
             <label for="tolerance">Toleransi budget (%)</label>
-            <input
-              type="number"
-              id="tolerance"
-              placeholder="20"
-              value="20"
-              min="0"
-              max="100"
-            >
+            <input type="number" id="tolerance" value="20" min="0" max="100">
           </div>
         </div>
 
-        <!-- Budget field — text input, formatted as Indonesian -->
         <div class="form-group">
-          <label for="budget">Budget (Rp) — kosongkan jika tidak ada budget</label>
+          <label for="engine_mode">Engine Mode</label>
+          <select id="engine_mode">
+            <option value="auto">Auto</option>
+            <option value="puppeteer">Puppeteer only</option>
+            <option value="rollback">Rollback/Selenium only</option>
+            <option value="compare">Compare both</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="budget">Budget (Rp) - kosongkan jika tidak ada budget</label>
           <div class="budget-input-wrap">
             <span class="budget-prefix">Rp</span>
-            <input
-              type="text"
-              id="budget"
-              placeholder="2.000.000"
-              autocomplete="off"
-              inputmode="numeric"
-            >
+            <input type="text" id="budget" placeholder="10.000.000" autocomplete="off" inputmode="numeric">
           </div>
         </div>
 
-        <!-- Budget info display -->
         <div id="budget-info" class="budget-info hidden">
           <div class="budget-info-row">
             <span class="bi-label">Budget:</span>
-            <span id="bi-budget" class="bi-value">—</span>
+            <span id="bi-budget" class="bi-value">-</span>
           </div>
           <div class="budget-info-row">
             <span class="bi-label">Toleransi:</span>
-            <span id="bi-tolerance" class="bi-value">—</span>
+            <span id="bi-tolerance" class="bi-value">-</span>
           </div>
           <div class="budget-info-row">
             <span class="bi-label">Range:</span>
-            <span id="bi-range" class="bi-value bi-range">—</span>
+            <span id="bi-range" class="bi-value bi-range">-</span>
           </div>
         </div>
 
         <div class="form-group checkbox-group">
           <label class="checkbox-label">
             <input type="checkbox" id="use_ai" checked>
-            <span class="checkmark"></span>
             <span>Gunakan Qwen AI Validator</span>
-            <small>(nonaktifkan jika Ollama tidak running)</small>
+            <small>(matikan jika Ollama tidak running)</small>
           </label>
         </div>
 
-        <div class="form-actions" style="display: flex; gap: 10px;">
-          <button id="search-btn" class="btn btn-primary btn-large" style="flex: 1;" onclick="app.startSearch()">
-            <span class="btn-icon">🚀</span>
-            Mulai Scraping
-          </button>
-          <button id="reset-ai-btn" class="btn btn-ghost" title="Reset Memori AI">
-            Reset AI
-          </button>
+        <div class="form-actions">
+          <button id="search-btn" class="btn btn-primary btn-large" onclick="app.startSearch()">Mulai Scraping</button>
+          <button id="reset-ai-btn" class="btn btn-ghost" type="button">Reset AI</button>
         </div>
       </section>
 
-      <!-- ═══════════════════════════════════════ -->
-      <!-- PROGRESS PANEL                         -->
-      <!-- ═══════════════════════════════════════ -->
       <section id="progress-panel" class="panel progress-panel hidden">
-        <h2 class="panel-title">⏳ Scraping Berlangsung...</h2>
+        <h2 class="panel-title">Scraping Berlangsung</h2>
 
         <div class="progress-header">
           <div class="progress-pct" id="progress-pct">0%</div>
-          <div class="progress-stage-label" id="progress-stage-label">Initializing...</div>
+          <div class="progress-stage-label" id="progress-stage-label">Initializing</div>
         </div>
 
         <div class="progress-track">
@@ -148,7 +115,7 @@
           </div>
           <div class="meta-item">
             <span class="meta-label">Target</span>
-            <span class="meta-val" id="pm-target">—</span>
+            <span class="meta-val" id="pm-target">-</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Elapsed</span>
@@ -156,134 +123,70 @@
           </div>
           <div class="meta-item">
             <span class="meta-label">ETA</span>
-            <span class="meta-val" id="pm-eta">—</span>
+            <span class="meta-val" id="pm-eta">Calculating...</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Engine</span>
-            <span class="meta-val" id="pm-engine">—</span>
+            <span class="meta-val" id="pm-engine">-</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Attempt</span>
-            <span class="meta-val" id="pm-attempt">1/3</span>
+            <span class="meta-val" id="pm-attempt">1/1</span>
           </div>
         </div>
 
         <div class="progress-message" id="progress-message">Memulai...</div>
 
-        <!-- Stage pipeline -->
         <div class="stage-pipeline">
-          <div class="stage-item" id="stage-init">
-            <div class="stage-dot"></div>
-            <span>Init</span>
-          </div>
+          <div class="stage-item" id="stage-init"><div class="stage-dot"></div><span>Init</span></div>
           <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-opening">
-            <div class="stage-dot"></div>
-            <span>Open</span>
-          </div>
+          <div class="stage-item" id="stage-opening"><div class="stage-dot"></div><span>Open</span></div>
           <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-scrolling">
-            <div class="stage-dot"></div>
-            <span>Scroll</span>
-          </div>
+          <div class="stage-item" id="stage-scrolling"><div class="stage-dot"></div><span>Scroll</span></div>
           <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-extracting">
-            <div class="stage-dot"></div>
-            <span>Extract</span>
-          </div>
+          <div class="stage-item" id="stage-extracting"><div class="stage-dot"></div><span>Extract</span></div>
           <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-filtering">
-            <div class="stage-dot"></div>
-            <span>Filter</span>
-          </div>
+          <div class="stage-item" id="stage-filtering"><div class="stage-dot"></div><span>Filter</span></div>
           <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-ai_validation">
-            <div class="stage-dot"></div>
-            <span>AI</span>
-          </div>
+          <div class="stage-item" id="stage-ai_validation"><div class="stage-dot"></div><span>AI</span></div>
           <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-finalizing">
-            <div class="stage-dot"></div>
-            <span>Done</span>
-          </div>
+          <div class="stage-item" id="stage-finalizing"><div class="stage-dot"></div><span>Done</span></div>
         </div>
       </section>
 
-      <!-- ═══════════════════════════════════════ -->
-      <!-- ERROR PANEL                            -->
-      <!-- ═══════════════════════════════════════ -->
       <section id="error-panel" class="panel error-panel hidden">
-        <div class="error-icon">❌</div>
         <h2>Terjadi Kesalahan</h2>
         <p id="error-msg" class="error-msg"></p>
         <div class="error-actions">
-          <button class="btn btn-primary" onclick="app.retry()">↻ Coba Lagi</button>
-          <button class="btn btn-ghost" onclick="app.reset()">← Kembali</button>
+          <button class="btn btn-primary" onclick="app.retry()">Coba Lagi</button>
+          <button class="btn btn-ghost" onclick="app.reset()">Kembali</button>
         </div>
       </section>
 
-      <!-- ═══════════════════════════════════════ -->
-      <!-- RESULTS PANEL                          -->
-      <!-- ═══════════════════════════════════════ -->
       <section id="results-panel" class="panel results-panel hidden">
         <div class="results-header">
-          <h2 class="panel-title">📦 Hasil Scraping</h2>
+          <h2 class="panel-title">Hasil Scraping</h2>
           <div class="results-meta">
-            <span class="results-count">
-              <span id="r-count">0</span> dari <span id="r-target">0</span> produk
-            </span>
-            <span id="r-ai-badge" class="badge badge-ai hidden">AI ✓</span>
-            <span id="r-fallback-badge" class="badge badge-fallback hidden">Rule-based</span>
-            <span id="r-partial-badge" class="badge badge-partial hidden">Partial</span>
+            <span class="results-count"><span id="r-count">0</span> dari <span id="r-target">0</span> produk</span>
           </div>
         </div>
 
-        <!-- Budget info in results -->
         <div id="r-budget-bar" class="r-budget-bar hidden">
           <span id="r-budget-text"></span>
         </div>
 
-        <div id="products-grid" class="products-grid">
-          <!-- cards rendered here -->
+        <div id="comparison-panel" class="comparison-panel hidden">
+          <h3>Engine Comparison</h3>
+          <div id="comparison-grid" class="comparison-grid"></div>
         </div>
+
+        <div id="products-grid" class="products-grid"></div>
 
         <div class="results-footer">
-          <button class="btn btn-ghost" onclick="app.reset()">← Cari Lagi</button>
+          <button class="btn btn-ghost" onclick="app.reset()">Cari Lagi</button>
         </div>
       </section>
-
     </main>
-  </div>
-
-  <!-- ═══════════════════════════════════════ -->
-  <!-- FEEDBACK MODAL                         -->
-  <!-- ═══════════════════════════════════════ -->
-  <div id="feedback-overlay" class="modal-overlay hidden" onclick="app.closeFeedback(event)">
-    <div class="modal">
-      <div class="modal-header">
-        <h3>Kenapa produk ini salah?</h3>
-        <button class="modal-close-btn" onclick="app.closeFeedback()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div id="modal-product-info" class="modal-product-info"></div>
-
-        <div class="form-group">
-          <label>Pilih alasan <span class="required">*</span></label>
-          <div id="reasons-list" class="reasons-list"></div>
-        </div>
-
-        <div class="form-group">
-          <label for="feedback-note">Catatan tambahan (opsional)</label>
-          <textarea id="feedback-note" rows="3" placeholder="Jelaskan lebih detail..."></textarea>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick="app.closeFeedback()">Batal</button>
-        <button id="submit-feedback-btn" class="btn btn-primary" onclick="app.submitFeedback()">
-          ✓ Kirim Feedback
-        </button>
-      </div>
-    </div>
   </div>
 
   <script src="app.js"></script>

@@ -4,6 +4,7 @@ debug.py - Handles saving debug artifacts on scraper failure.
 import os
 import json
 from pathlib import Path
+from typing import Any
 from src.utils.logger import log
 
 DEBUG_DIR = Path(__file__).parent.parent.parent / "data" / "debug"
@@ -52,6 +53,22 @@ def safe_save_debug(search_id: str, error: str, products: list, progress: dict =
         log("DEBUG", f"Saved debug artifacts for {search_id} to {dir_path}", "OK")
     except Exception as e:
         log("DEBUG", f"Failed to save debug artifacts for {search_id}: {e}", "ERROR")
+
+def save_budget_filter_debug(search_id: str, payload: dict[str, Any], engine_name: str | None = None) -> str:
+    """
+    Save budget filter decisions. Normal mode uses the required exact filename;
+    compare mode gets per-engine files so runs do not overwrite each other.
+    """
+    dir_path = get_debug_dir(search_id)
+    filename = "budget_filter_debug.json"
+    if engine_name:
+        filename = f"budget_filter_debug_{engine_name}.json"
+
+    output_path = dir_path / filename
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    log("DEBUG", f"Saved budget filter debug to {output_path}", "OK")
+    return str(output_path)
 
 def save_debug_state_sync(search_id: str, driver=None, error_msg: str = ""):
     """Synchronous version for Selenium driver."""

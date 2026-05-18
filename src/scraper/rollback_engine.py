@@ -1,162 +1,204 @@
+"""
+rollback_engine.py - Selenium rollback scraper.
+
+Uses Selenium Manager first, webdriver-manager second, and returns the same
+schema as Puppeteer.
+"""
+from __future__ import annotations
+
 import asyncio
-import time
 import random
-import re
+import time
 import urllib.parse
-from typing import Tuple, List, Dict, Any
 from pathlib import Path
-from src.utils.logger import log
+from typing import Any
+
+from src.scraper.normalizer import normalize_products
+from src.scraper.selenium_driver import create_chrome_driver, safe_quit_driver
 from src.server.progress import update_progress
 from src.utils.debug import save_debug_state_sync
-from src.scraper.selenium_driver import create_chrome_driver, safe_quit_driver
+from src.utils.logger import log
+
 
 DEBUG_DIR = Path("data/debug")
 
+
 class RollbackEngine:
     name = "rollback"
-    
+
     def __init__(self, search_id: str):
         self.search_id = search_id
-        
-    async def scrape(self, query: str, raw_target: int, eta_calc) -> Tuple[bool, List[Dict[str, Any]], str]:
-        # Run blocking selenium code in thread so it respects asyncio
+
+    async def scrape(self, query: str, raw_target: int, eta_calc) -> tuple[bool, list[dict[str, Any]], str]:
+        """Run blocking Selenium work in a thread so FastAPI stays responsive."""
         return await asyncio.to_thread(self._scrape_sync, query, raw_target, eta_calc)
-        
-    def _scrape_sync(self, query: str, raw_target: int, eta_calc) -> Tuple[bool, List[Dict[str, Any]], str]:
+
+    def _scrape_sync(self, query: str, raw_target: int, eta_calc) -> tuple[bool, list[dict[str, Any]], str]:
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
-        import tempfile
-        import shutil
-        import os
-        
+
         update_progress(
-            self.search_id, 
-            engine=self.name, 
-            stage="rollback_browser_starting", 
-            percent=48, 
-            message="Menjalankan Chrome rollback scraper..."
+            self.search_id,
+            active_engine=self.name,
+            stage="rollback_browser_starting",
+            percent=48,
+            message="Menjalankan Rollback/Selenium...",
+            elapsed_seconds=eta_calc.get_elapsed(),
         )
-        
-        # We use the new factory
+
         driver, error_msg = create_chrome_driver(self.search_id, DEBUG_DIR / self.search_id)
         if not driver:
-            log(f"[{self.search_id}]", f"[ROLLBACK] ChromeDriver mismatch fixed attempted but driver bootstrap failed: {error_msg}", "ERROR")
-            return False, [], f"ChromeDriver bootstrap failed: {error_msg}"
-            
-        results = []
-        unique_urls = set()
-        
+            return False, [], f"Chrome driver bootstrap failed: {error_msg}"
+
+        products: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+
         try:
             url = f"https://www.tokopedia.com/search?navsource=search&q={urllib.parse.quote(query)}"
-            update_progress(self.search_id, stage="rollback_starting", percent=55, message="Membuka Tokopedia...")
-            
-            log(f"[{self.search_id}]", "[ROLLBACK] Opening Tokopedia", "INFO")
+            update_progress(
+                self.search_id,
+                active_engine=self.name,
+                stage="rollback_opening",
+                percent=52,
+                message="Membuka Tokopedia dengan Selenium...",
+                elapsed_seconds=eta_calc.get_elapsed(),
+            )
+
             driver.get(url)
-            
             try:
                 WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
             except Exception:
-                pass # Continue anyway
-                
-            update_progress(self.search_id, stage="rollback_extracting", percent=60, message="Mencari produk...")
-            
-            # Scroll loop
-            prev_height = 0
+                pass
+
+            previous_height = 0
             stable_rounds = 0
-            for _ in range(15):
-                driver.execute_script("window.scrollBy(0, Math.floor(window.innerHeight * 0.65));")
-                time.sleep(random.uniform(1.0, 1.5))
-                
+
+            for round_index in range(14):
+                driver.execute_script("window.scrollBy(0, Math.floor(window.innerHeight * 0.85));")
+                time.sleep(random.uniform(0.75, 1.15))
+
+                for item in self._extract_cards(driver):
+                    url_key = item.get("url") or ""
+                    if not url_key or url_key in seen_urls:
+                        continue
+                    seen_urls.add(url_key)
+                    products.append(item)
+
+                percent = min(72, 55 + round_index)
+                update_progress(
+                    self.search_id,
+                    active_engine=self.name,
+                    stage="rollback_extracting",
+                    percent=percent,
+                    message=f"Rollback/Selenium menemukan {len(products)} produk...",
+                    found=len(products),
+                    elapsed_seconds=eta_calc.get_elapsed(),
+                    eta_seconds=eta_calc.get_eta(percent),
+                )
+
+                if len(products) >= raw_target:
+                    break
+
                 current_height = driver.execute_script("return document.body.scrollHeight || 0;")
-                if current_height <= prev_height:
+                if current_height <= previous_height:
                     stable_rounds += 1
                 else:
                     stable_rounds = 0
-                prev_height = current_height
-                
+                previous_height = current_height
                 if stable_rounds >= 3:
                     break
-                    
-                # Extraksi in each scroll
-                extracted = self._extract_cards(driver)
-                for item in extracted:
-                    if item["url"] not in unique_urls:
-                        unique_urls.add(item["url"])
-                        results.append(item)
-                        
-                update_progress(
-                    self.search_id, 
-                    stage="rollback_extracting", 
-                    percent=min(70, 60 + int((len(results)/raw_target)*10)), 
-                    found=len(results), 
-                    elapsed_seconds=eta_calc.get_elapsed()
-                )
-                if len(results) >= raw_target:
-                    break
-            
-            if results:
-                log(f"[{self.search_id}]", f"[ROLLBACK] Extracted {len(results)} raw products", "OK")
-                return True, results, ""
-            return False, [], "Tidak ada produk ditemukan di Tokopedia (Fallback)"
-            
-        except Exception as e:
-            err = str(e)
-            log(f"[{self.search_id}]", f"[ROLLBACK] Error: {err}", "ERROR")
-            if driver:
-                save_debug_state_sync(self.search_id, driver, err)
-            return False, [], f"Fallback scraper error: {err}"
+
+            normalized = normalize_products(products, self.name)
+            if normalized:
+                log(f"[{self.search_id}]", f"[ROLLBACK] Extracted {len(normalized)} products", "OK")
+                return True, normalized, ""
+            return False, [], "Rollback/Selenium tidak menemukan produk."
+
+        except Exception as exc:
+            error = str(exc)
+            log(f"[{self.search_id}]", f"[ROLLBACK] Error: {error}", "ERROR")
+            save_debug_state_sync(self.search_id, driver, error)
+            return False, [], f"Rollback/Selenium error: {error}"
         finally:
             safe_quit_driver(driver)
 
-    def _extract_cards(self, driver) -> List[Dict[str, Any]]:
-        extracted_data = driver.execute_script(
+    def _extract_cards(self, driver) -> list[dict[str, Any]]:
+        """Extract product cards in the browser so Selenium only makes one call."""
+        return driver.execute_script(
             r"""
+            const parseRupiah = (text) => {
+              const lower = String(text || '').toLowerCase().trim();
+              const unit = lower.match(/(\d+(?:[.,]\d+)?)\s*(juta|jt|mio|rb|ribu|k)\b/i);
+              if (unit) {
+                const number = Number(unit[1].replace(',', '.'));
+                if (!Number.isFinite(number)) return null;
+                return Math.round(number * (['juta', 'jt', 'mio'].includes(unit[2].toLowerCase()) ? 1000000 : 1000));
+              }
+              const digits = lower.replace(/[^\d]/g, '');
+              if (!digits) return null;
+              const parsed = Number.parseInt(digits, 10);
+              return Number.isFinite(parsed) ? parsed : null;
+            };
+
+            const cleanUrl = (url) => String(url || '').split('?')[0].split('#')[0];
+            const isProductUrl = (href) => {
+              const url = String(href || '');
+              if (!url.includes('tokopedia.com/')) return false;
+              if (url.includes('/search') || url.includes('/cart') || url.includes('/help')) return false;
+              if (url.includes('/p/') || url.includes('/official-store')) return false;
+              return true;
+            };
+            const linesOf = (text) => String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+            const priceOf = (text) => {
+              const match = String(text || '').match(/Rp\s*[\d.,]+(?:\s*(?:juta|jt|mio|rb|ribu|k))?/i);
+              return match ? match[0].trim() : '';
+            };
+
             const results = [];
-            const anchors = Array.from(document.querySelectorAll('a[href*="tokopedia.com"]')).filter(a => a.innerText && a.innerText.includes('Rp'));
-            anchors.forEach(anchor => {
-                const url = (anchor.href || '').split('?')[0];
-                if (!url || url.includes('/p/')) return;
+            const anchors = Array.from(document.querySelectorAll('a[href*="tokopedia.com/"]'));
+            for (const anchor of anchors) {
+              const href = anchor.href || '';
+              if (!isProductUrl(href)) continue;
 
-                const rawText = anchor.innerText || '';
-                const lines = rawText.split('\n');
-                let nama = lines[0] || 'Produk Tokopedia';
-                
-                const priceMatch = rawText.match(/Rp\s*[0-9.,]+/);
-                const harga = priceMatch ? parseInt(priceMatch[0].replace(/[^0-9]/g, ''), 10) : 0;
-                if (!harga || harga < 1000) return;
+              const card =
+                anchor.closest('[data-testid="master-product-card"]') ||
+                anchor.closest('div.pcv3__container') ||
+                anchor.closest('div[class*="css-"]') ||
+                anchor;
+              const text = card.innerText || anchor.innerText || '';
+              const priceRaw = priceOf(text);
+              if (!priceRaw) continue;
 
-                const ratingMatch = rawText.match(/([4-5]\.\d)/);
-                const rating = ratingMatch ? parseFloat(ratingMatch[1]) : 0.0;
+              const lines = linesOf(text);
+              const selectorTitle =
+                card.querySelector('[data-testid="spnSRPProdName"]') ||
+                card.querySelector('.prd_link-product-name');
+              const priceIndex = lines.findIndex((line) => line.includes(priceRaw));
+              const title =
+                (selectorTitle && selectorTitle.textContent.trim()) ||
+                (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
+                lines.find((line) => !line.startsWith('Rp') && line.length > 4) ||
+                'Produk Tokopedia';
 
-                const soldMatch = rawText.match(/(\d+(?:\.\d+)?(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
-                const terjual = soldMatch ? soldMatch[1] : '0';
+              const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
+              const imageNode = card.querySelector('img');
+              const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
+              const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
 
-                // Basic shop parsing if possible, or leave as unknown
-                let toko = "Official/Power Merchant";
-
-                results.push({
-                    nama: nama,
-                    title: nama,
-                    harga: harga,
-                    price_val: harga,
-                    price_text: priceMatch[0],
-                    shop: toko,
-                    rating_toko: rating,
-                    terjual: terjual,
-                    link: url,
-                    url: url,
-                    source: "rollback"
-                });
-            });
+              results.push({
+                title,
+                price_raw: priceRaw,
+                price_value: parseRupiah(priceRaw),
+                shop: afterPrice[0] || '',
+                location: afterPrice[1] || '',
+                rating: ratingMatch ? ratingMatch[1] : '',
+                sold: soldMatch ? soldMatch[0] : '',
+                url: cleanUrl(href),
+                image: imageNode ? (imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || '') : '',
+                source_engine: 'rollback',
+              });
+            }
             return results;
             """
-        )
-        normalized = []
-        for item in extracted_data or []:
-            try:
-                item["harga"] = int(item.get("harga", 0))
-                normalized.append(item)
-            except Exception:
-                pass
-        return normalized
+        ) or []

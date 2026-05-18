@@ -122,10 +122,10 @@ async def filter_relevance(query: str, products: List[Dict[str, Any]], use_ai: b
             if decision.get("relevant") and p["relevance_score"] >= threshold:
                 valid_products.append(p)
         else:
-            # If no AI and no exact match, just accept if broad, else reject
-            if is_broad:
-                p["relevance_score"] = 0.5
-                p["ai_reason"] = "Rule: Broad query fallback."
-                valid_products.append(p)
+            # AI disabled means do not run semantic rejection. Keep anything
+            # that survived hard rejects so Qwen-off mode remains usable.
+            p["relevance_score"] = 0.5 if is_broad else 0.4
+            p["ai_reason"] = "AI disabled: accepted after hard reject rules."
+            valid_products.append(p)
                 
     return valid_products
