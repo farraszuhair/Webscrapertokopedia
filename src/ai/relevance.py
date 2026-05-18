@@ -99,6 +99,7 @@ async def filter_relevance(query: str, products: List[Dict[str, Any]], use_ai: b
         # Layer 1: Rule-based hard reject
         if layer1_rule_reject(title, patterns):
             p["relevance_score"] = 0.0
+            p["ai_decision"] = False
             p["ai_reason"] = "Rule: Hard reject pattern matched."
             continue
             
@@ -108,6 +109,7 @@ async def filter_relevance(query: str, products: List[Dict[str, Any]], use_ai: b
         
         if query_words.issubset(title_words):
             p["relevance_score"] = 1.0
+            p["ai_decision"] = True
             p["ai_reason"] = "Rule: Exact keyword match."
             valid_products.append(p)
             continue
@@ -120,11 +122,15 @@ async def filter_relevance(query: str, products: List[Dict[str, Any]], use_ai: b
             
             threshold = 0.6 if is_broad else 0.8
             if decision.get("relevant") and p["relevance_score"] >= threshold:
+                p["ai_decision"] = True
                 valid_products.append(p)
+            else:
+                p["ai_decision"] = False
         else:
             # AI disabled means do not run semantic rejection. Keep anything
             # that survived hard rejects so Qwen-off mode remains usable.
             p["relevance_score"] = 0.5 if is_broad else 0.4
+            p["ai_decision"] = True
             p["ai_reason"] = "AI disabled: accepted after hard reject rules."
             valid_products.append(p)
                 

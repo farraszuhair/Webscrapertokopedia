@@ -14,13 +14,15 @@ from src.ai.learning import save_feedback
 from src.ai.relevance import filter_relevance
 from src.ai.reset import reset_ai_memory
 from src.scraper.budget_filter import FilterResult, filter_by_budget
+from src.scraper.category_filter import CategoryFilterResult, filter_laptop_candidates
 from src.scraper.dedupe import deduplicate_products
 from src.scraper.engine_selector import EngineRunResult, run_scraper_engines
+from src.scraper.normalizer import normalize_products
 from src.server.lifecycle import register_task, unregister_task
 from src.server.progress import complete_progress, fail_progress, get_progress, init_progress, update_progress
 from src.server.schemas import FeedbackRequest, ProgressResponse, SearchRequest
 from src.utils.currency import calculate_budget_range, format_rupiah, parse_rupiah
-from src.utils.debug import safe_save_debug, save_budget_filter_debug
+from src.utils.debug import safe_save_debug, save_budget_filter_debug, save_category_filter_debug
 from src.utils.eta import ETACalculator
 from src.utils.logger import log
 
@@ -125,6 +127,33 @@ def _budget_info(filter_result: FilterResult) -> dict[str, Any] | None:
     }
 
 
+def _category_failure_message(raw_count: int, category_result: CategoryFilterResult) -> str:
+    """Specific error when scraping found products but none are laptop candidates."""
+    message = (
+        f"Produk ditemukan {raw_count}. Kandidat laptop: 0. "
+        f"Aksesori ditolak: {category_result.rejected_accessory_count}."
+    )
+    if category_result.debug_path:
+        message += f" Debug: {category_result.debug_path}"
+    return message
+
+
+def _budget_failure_message(raw_count: int, category_result: CategoryFilterResult, budget_result: FilterResult) -> str:
+    """Specific error when candidates exist but budget removes all of them."""
+    below = budget_result.reasons.get("below_budget_range", 0)
+    above = budget_result.reasons.get("above_budget_range", 0)
+    invalid = budget_result.reasons.get("invalid_price", 0)
+    message = (
+        f"Produk ditemukan {raw_count}, tapi 0 kandidat laptop gaming sesuai budget "
+        f"{format_rupiah(budget_result.min_price)} - {format_rupiah(budget_result.max_price)}. "
+        f"Aksesori ditolak {category_result.rejected_accessory_count}. "
+        f"Laptop di bawah budget {below}, di atas budget {above}, harga tidak valid {invalid}."
+    )
+    if budget_result.debug_path:
+        message += f" Debug: {budget_result.debug_path}"
+    return message
+
+
 def _sort_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Sort by AI score first, then cheapest valid price."""
     return sorted(
@@ -144,50 +173,76 @@ async def _filter_pipeline(
     engine_name: str | None = None,
     compare_mode: bool = False,
 ) -> dict[str, Any]:
-    """Run dedupe, budget filter, and AI filter for one product list."""
-    deduped = deduplicate_products(raw_products)
+    """Run normalize, category filter, budget filter, and AI filter."""
+    engine = engine_name or "selected"
+    normalized = normalize_products(raw_products, engine_name)
+    deduped = deduplicate_products(normalized)
     budget_value = parse_rupiah(req.budget)
     min_price, max_price = calculate_budget_range(budget_value, req.tolerance)
 
     update_progress(
         search_id,
+        stage="category_filtering",
+        percent=76,
+        message="Menyaring aksesori sebelum budget...",
+        found=len(deduped),
+        elapsed_seconds=eta_calc.get_elapsed(),
+    )
+
+    category_result = filter_laptop_candidates(deduped, req.query)
+    category_result.debug_path = save_category_filter_debug(search_id, category_result.debug_payload(), engine)
+
+    update_progress(
+        search_id,
         stage="budget_filtering",
-        percent=78,
+        percent=80,
         message=(
             f"Filtering budget {format_rupiah(min_price)} - {format_rupiah(max_price)}"
             if budget_value and budget_value > 0
             else "Budget kosong: filter budget dinonaktifkan"
         ),
         found=len(deduped),
+        valid=category_result.candidate_count,
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    filter_result = filter_by_budget(deduped, req.budget, req.tolerance)
-    if filter_result.rejected:
-        filter_result.debug_path = save_budget_filter_debug(
-            search_id,
-            filter_result.debug_payload(),
-            engine_name if compare_mode else None,
-        )
+    filter_result = filter_by_budget(category_result.candidates, req.budget, req.tolerance)
+    if filter_result.budget_value is not None:
+        filter_result.debug_path = save_budget_filter_debug(search_id, filter_result.debug_payload(), engine)
 
     update_progress(
         search_id,
         stage="budget_filtering",
-        percent=82,
-        message=_budget_progress_message(filter_result),
+        percent=84,
+        message=(
+            f"Produk ditemukan {len(deduped)}. Kandidat laptop: {category_result.candidate_count}. "
+            f"Aksesori ditolak: {category_result.rejected_accessory_count}. Budget valid: {len(filter_result.kept)}."
+        ),
         found=len(deduped),
         valid=len(filter_result.kept),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
+    if not category_result.candidates:
+        return {
+            "raw_products": raw_products,
+            "deduped": deduped,
+            "category": category_result,
+            "budget": filter_result,
+            "ai_valid": [],
+            "final": [],
+            "error": _category_failure_message(len(deduped), category_result),
+        }
+
     if not filter_result.kept:
         return {
             "raw_products": raw_products,
             "deduped": deduped,
+            "category": category_result,
             "budget": filter_result,
             "ai_valid": [],
             "final": [],
-            "error": filter_result.failure_message(),
+            "error": _budget_failure_message(len(deduped), category_result, filter_result),
         }
 
     update_progress(
@@ -206,6 +261,7 @@ async def _filter_pipeline(
     return {
         "raw_products": raw_products,
         "deduped": deduped,
+        "category": category_result,
         "budget": filter_result,
         "ai_valid": ai_valid,
         "final": final,
@@ -220,6 +276,7 @@ def _engine_run_payload(run: EngineRunResult) -> dict[str, Any]:
         "ok": run.ok,
         "raw_products_found": run.raw_products_found,
         "duration": round(run.duration_seconds, 2),
+        "status": "success" if run.ok else "fail",
         "error": run.error,
     }
 
@@ -232,9 +289,12 @@ async def _finish_compare(search_id: str, req: SearchRequest, selection, eta_cal
         if not run.ok:
             comparison.append({
                 **_engine_run_payload(run),
+                "laptop_candidates": 0,
+                "rejected_accessories": 0,
                 "valid_after_budget": 0,
                 "valid_after_ai": 0,
                 "data": [],
+                "category_debug_path": None,
                 "budget_debug_path": None,
             })
             continue
@@ -250,23 +310,28 @@ async def _finish_compare(search_id: str, req: SearchRequest, selection, eta_cal
         )
 
         filtered = await _filter_pipeline(search_id, req, run.products, eta_calc, run.engine, compare_mode=True)
+        category_result: CategoryFilterResult = filtered["category"]
         budget_result: FilterResult = filtered["budget"]
         error = run.error or filtered["error"]
         data = filtered["final"]
 
         comparison.append({
             **_engine_run_payload(run),
+            "laptop_candidates": category_result.candidate_count,
+            "rejected_accessories": category_result.rejected_accessory_count,
             "valid_after_budget": len(budget_result.kept),
             "valid_after_ai": len(filtered["ai_valid"]),
             "data": data,
             "error": "" if data else error,
+            "category_debug_path": category_result.debug_path,
             "budget_debug_path": budget_result.debug_path,
+            "category_reasons": category_result.reasons,
             "budget_reasons": budget_result.reasons,
         })
 
     selected = max(
         comparison,
-        key=lambda item: (item["valid_after_ai"], item["valid_after_budget"], item["raw_products_found"]),
+        key=lambda item: (item["valid_after_ai"], item["valid_after_budget"], item["laptop_candidates"], item["raw_products_found"]),
         default=None,
     )
     selected_engine = selected["engine"] if selected else None
@@ -295,7 +360,7 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
     )
     eta_calc = ETACalculator()
 
-    selection = await run_scraper_engines(search_id, req.query, raw_target, eta_calc, req.engine_mode)
+    selection = await run_scraper_engines(search_id, req.query, raw_target, eta_calc, req.engine_mode, req.budget, req.tolerance)
     if req.engine_mode == "compare" and selection.runs:
         await _finish_compare(search_id, req, selection, eta_calc)
         return
@@ -314,7 +379,14 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    filtered = await _filter_pipeline(search_id, req, selection.products, eta_calc)
+    filtered = await _filter_pipeline(
+        search_id,
+        req,
+        selection.products,
+        eta_calc,
+        selection.selected_engine or "selected",
+    )
+    category_result: CategoryFilterResult = filtered["category"]
     budget_result: FilterResult = filtered["budget"]
 
     if not filtered["final"]:
@@ -338,6 +410,11 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "selected_engine": selection.selected_engine,
         "fallback_message": selection.fallback_message,
         "engine_runs": [_engine_run_payload(run) for run in selection.runs],
+        "category_info": {
+            "candidates": category_result.candidate_count,
+            "rejected_accessories": category_result.rejected_accessory_count,
+            "debug_path": category_result.debug_path,
+        },
         "count": len(filtered["final"]),
         "requested_count": req.target_count,
         "data": filtered["final"],

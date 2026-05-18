@@ -40,9 +40,13 @@ class FilterResult:
             "tolerance": self.tolerance,
             "min_price": self.min_price,
             "max_price": self.max_price,
+            "total_category_candidates": self.total_products,
             "total_products": self.total_products,
             "kept": len(self.kept),
             "rejected": len(self.rejected),
+            "below_budget_range": self.reasons.get("below_budget_range", 0),
+            "above_budget_range": self.reasons.get("above_budget_range", 0),
+            "invalid_price": self.reasons.get("invalid_price", 0),
             "reasons": self.reasons,
             "samples": self.samples,
         }
@@ -108,6 +112,8 @@ def filter_by_budget(products: list[dict[str, Any]], budget: Any, tolerance: Any
     tolerance_value = _safe_tolerance(tolerance)
 
     if budget_value is None:
+        for product in normalized:
+            product["budget_decision"] = "kept"
         return FilterResult(
             budget_input=budget,
             budget_value=None,
@@ -151,6 +157,7 @@ def filter_by_budget(products: list[dict[str, Any]], budget: Any, tolerance: Any
             reason = None
 
         if reason is None:
+            product["budget_decision"] = "kept"
             kept.append(product)
             samples.append(_decision_sample(product, "kept", "within_budget_range", min_price, max_price))
             continue
@@ -163,6 +170,7 @@ def filter_by_budget(products: list[dict[str, Any]], budget: Any, tolerance: Any
         rejected_product["min_price"] = min_price
         rejected_product["max_price"] = max_price
         rejected_product["reject_reason"] = reason
+        rejected_product["budget_decision"] = reason
         rejected.append(rejected_product)
         samples.append(_decision_sample(rejected_product, "rejected", reason, min_price, max_price))
 

@@ -88,6 +88,12 @@ def normalize_product(raw: dict[str, Any], source_engine: str | None = None) -> 
         "url": url,
         "image": _first_text(raw, ("image", "image_url", "url_gambar", "thumbnail")),
         "source_engine": engine,
+        "source_query": _first_text(raw, ("source_query", "query_variant")),
+        "category_decision": raw.get("category_decision", ""),
+        "category_reason": raw.get("category_reason", ""),
+        "budget_decision": raw.get("budget_decision", ""),
+        "ai_decision": raw.get("ai_decision", None),
+        "ai_reason": raw.get("ai_reason", ""),
     }
 
     # Compatibility aliases for old frontend/AI code. Old logic trash. Replaced.

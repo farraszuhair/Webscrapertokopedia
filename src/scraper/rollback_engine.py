@@ -29,11 +29,35 @@ class RollbackEngine:
     def __init__(self, search_id: str):
         self.search_id = search_id
 
-    async def scrape(self, query: str, raw_target: int, eta_calc) -> tuple[bool, list[dict[str, Any]], str]:
+    async def scrape(
+        self,
+        query: str,
+        raw_target: int,
+        eta_calc,
+        query_variants: list[str] | None = None,
+        min_price: int | None = None,
+        max_price: int | None = None,
+    ) -> tuple[bool, list[dict[str, Any]], str]:
         """Run blocking Selenium work in a thread so FastAPI stays responsive."""
-        return await asyncio.to_thread(self._scrape_sync, query, raw_target, eta_calc)
+        return await asyncio.to_thread(
+            self._scrape_sync,
+            query,
+            raw_target,
+            eta_calc,
+            query_variants or [query],
+            min_price,
+            max_price,
+        )
 
-    def _scrape_sync(self, query: str, raw_target: int, eta_calc) -> tuple[bool, list[dict[str, Any]], str]:
+    def _scrape_sync(
+        self,
+        query: str,
+        raw_target: int,
+        eta_calc,
+        query_variants: list[str],
+        min_price: int | None,
+        max_price: int | None,
+    ) -> tuple[bool, list[dict[str, Any]], str]:
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
@@ -55,59 +79,27 @@ class RollbackEngine:
         seen_urls: set[str] = set()
 
         try:
-            url = f"https://www.tokopedia.com/search?navsource=search&q={urllib.parse.quote(query)}"
-            update_progress(
-                self.search_id,
-                active_engine=self.name,
-                stage="rollback_opening",
-                percent=52,
-                message="Membuka Tokopedia dengan Selenium...",
-                elapsed_seconds=eta_calc.get_elapsed(),
-            )
-
-            driver.get(url)
-            try:
-                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-            except Exception:
-                pass
-
-            previous_height = 0
-            stable_rounds = 0
-
-            for round_index in range(14):
-                driver.execute_script("window.scrollBy(0, Math.floor(window.innerHeight * 0.85));")
-                time.sleep(random.uniform(0.75, 1.15))
-
-                for item in self._extract_cards(driver):
-                    url_key = item.get("url") or ""
-                    if not url_key or url_key in seen_urls:
-                        continue
-                    seen_urls.add(url_key)
-                    products.append(item)
-
-                percent = min(72, 55 + round_index)
-                update_progress(
-                    self.search_id,
-                    active_engine=self.name,
-                    stage="rollback_extracting",
-                    percent=percent,
-                    message=f"Rollback/Selenium menemukan {len(products)} produk...",
-                    found=len(products),
-                    elapsed_seconds=eta_calc.get_elapsed(),
-                    eta_seconds=eta_calc.get_eta(percent),
-                )
-
+            for variant_index, variant in enumerate(query_variants):
                 if len(products) >= raw_target:
                     break
 
-                current_height = driver.execute_script("return document.body.scrollHeight || 0;")
-                if current_height <= previous_height:
-                    stable_rounds += 1
-                else:
-                    stable_rounds = 0
-                previous_height = current_height
-                if stable_rounds >= 3:
-                    break
+                url = self._build_search_url(variant, min_price, max_price)
+                update_progress(
+                    self.search_id,
+                    active_engine=self.name,
+                    stage="rollback_opening",
+                    percent=min(70, 52 + variant_index),
+                    message=f"Rollback/Selenium scraping {variant} dengan price params {min_price or '-'}-{max_price or '-'}",
+                    elapsed_seconds=eta_calc.get_elapsed(),
+                )
+
+                try:
+                    driver.get(url)
+                    WebDriverWait(driver, 12).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                    self._scroll_and_extract(driver, raw_target, products, seen_urls, eta_calc, variant)
+                except Exception as variant_exc:
+                    log(f"[{self.search_id}]", f"[ROLLBACK] Query failed {variant}: {variant_exc}", "WARN")
+                    continue
 
             normalized = normalize_products(products, self.name)
             if normalized:
@@ -122,6 +114,60 @@ class RollbackEngine:
             return False, [], f"Rollback/Selenium error: {error}"
         finally:
             safe_quit_driver(driver)
+
+    def _build_search_url(self, query: str, min_price: int | None, max_price: int | None) -> str:
+        """Build Tokopedia search URL with local-budget-equivalent params."""
+        params = {
+            "st": "product",
+            "q": query,
+            "sort": "5",
+        }
+        if min_price:
+            params["pmin"] = str(min_price)
+        if max_price:
+            params["pmax"] = str(max_price)
+        return "https://www.tokopedia.com/search?" + urllib.parse.urlencode(params)
+
+    def _scroll_and_extract(self, driver, raw_target: int, products: list[dict[str, Any]], seen_urls: set[str], eta_calc, variant: str) -> None:
+        """Scroll one query page and append unique product cards."""
+        previous_height = 0
+        stable_rounds = 0
+
+        for round_index in range(7):
+            driver.execute_script("window.scrollBy(0, Math.floor(window.innerHeight * 0.9));")
+            time.sleep(random.uniform(0.55, 0.9))
+
+            for item in self._extract_cards(driver):
+                url_key = item.get("url") or ""
+                if not url_key or url_key in seen_urls:
+                    continue
+                seen_urls.add(url_key)
+                item["source_query"] = variant
+                products.append(item)
+
+            percent = min(72, 55 + round_index)
+            update_progress(
+                self.search_id,
+                active_engine=self.name,
+                stage="rollback_extracting",
+                percent=percent,
+                message=f"Rollback/Selenium menemukan {len(products)} produk...",
+                found=len(products),
+                elapsed_seconds=eta_calc.get_elapsed(),
+                eta_seconds=eta_calc.get_eta(percent),
+            )
+
+            if len(products) >= raw_target:
+                break
+
+            current_height = driver.execute_script("return document.body.scrollHeight || 0;")
+            if current_height <= previous_height:
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+            previous_height = current_height
+            if stable_rounds >= 2:
+                break
 
     def _extract_cards(self, driver) -> list[dict[str, Any]]:
         """Extract product cards in the browser so Selenium only makes one call."""

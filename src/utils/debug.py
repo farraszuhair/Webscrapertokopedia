@@ -70,6 +70,15 @@ def save_budget_filter_debug(search_id: str, payload: dict[str, Any], engine_nam
     log("DEBUG", f"Saved budget filter debug to {output_path}", "OK")
     return str(output_path)
 
+def save_category_filter_debug(search_id: str, payload: dict[str, Any], engine_name: str) -> str:
+    """Save category filter decisions per engine."""
+    dir_path = get_debug_dir(search_id)
+    output_path = dir_path / f"category_filter_debug_{engine_name}.json"
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    log("DEBUG", f"Saved category filter debug to {output_path}", "OK")
+    return str(output_path)
+
 def save_debug_state_sync(search_id: str, driver=None, error_msg: str = ""):
     """Synchronous version for Selenium driver."""
     from src.server.progress import get_progress

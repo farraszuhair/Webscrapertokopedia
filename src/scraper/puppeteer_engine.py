@@ -17,7 +17,7 @@ from src.utils.logger import log
 
 class PuppeteerEngine:
     name = "puppeteer"
-    process_timeout_seconds = 95
+    process_timeout_seconds = 180
     idle_stdout_timeout_seconds = 35
 
     def __init__(self, search_id: str):
@@ -46,7 +46,15 @@ class PuppeteerEngine:
             except Exception:
                 pass
 
-    async def scrape(self, query: str, raw_target: int, eta_calc) -> tuple[bool, list[dict[str, Any]], str]:
+    async def scrape(
+        self,
+        query: str,
+        raw_target: int,
+        eta_calc,
+        query_variants: list[str] | None = None,
+        min_price: int | None = None,
+        max_price: int | None = None,
+    ) -> tuple[bool, list[dict[str, Any]], str]:
         worker_path = Path(__file__).parent / "puppeteer_worker.js"
         products: list[dict[str, Any]] = []
         stderr_lines: list[str] = []
@@ -64,6 +72,12 @@ class PuppeteerEngine:
                 str(raw_target),
                 "--search-id",
                 self.search_id,
+                "--variants",
+                json.dumps(query_variants or [query]),
+                "--min-price",
+                str(min_price or ""),
+                "--max-price",
+                str(max_price or ""),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

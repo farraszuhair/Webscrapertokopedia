@@ -26,7 +26,6 @@ def create_chrome_driver(search_id: str, debug_dir: Path) -> Tuple[Optional[webd
     if is_headless:
         options.add_argument("--headless=new")
         
-    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-gpu")
@@ -37,12 +36,7 @@ def create_chrome_driver(search_id: str, debug_dir: Path) -> Tuple[Optional[webd
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-popup-blocking")
     options.add_argument("--lang=id-ID")
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
     options.page_load_strategy = "eager"
-    
-    # Anti-bot
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
 
     error_logs = []
 

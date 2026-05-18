@@ -249,6 +249,8 @@ class ScraperApp {
       engine_selecting: 'Memilih engine',
       puppeteer_starting: 'Puppeteer starting',
       puppeteer_opening: 'Puppeteer opening',
+      puppeteer_query: 'Puppeteer query',
+      puppeteer_query_failed: 'Puppeteer query failed',
       puppeteer_scrolling: 'Puppeteer scrolling',
       puppeteer_extracting: 'Puppeteer extracting',
       puppeteer_retry: 'Puppeteer retry',
@@ -258,6 +260,7 @@ class ScraperApp {
       rollback_extracting: 'Selenium extracting',
       compare_filtering: 'Compare filtering',
       deduplicating: 'Deduplicating',
+      category_filtering: 'Category filtering',
       budget_filtering: 'Budget filtering',
       ai_filtering: 'AI filtering',
       finalizing: 'Finalizing',
@@ -324,18 +327,22 @@ class ScraperApp {
     grid.innerHTML = '';
 
     for (const item of this.state.comparison) {
-      const card = document.createElement('button');
-      card.type = 'button';
+      const card = document.createElement('div');
       card.className = `compare-card ${item.engine === this.state.selectedEngine ? 'active' : ''}`;
-      card.onclick = () => this.selectComparisonEngine(item.engine);
+      const canUse = (item.valid_after_ai || 0) > 0;
       card.innerHTML = `
         <strong>${this.esc(item.engine)}</strong>
-        <span>Raw: ${item.raw_products_found}</span>
-        <span>Budget: ${item.valid_after_budget}</span>
-        <span>AI: ${item.valid_after_ai}</span>
+        <span>Raw scraped: ${item.raw_products_found}</span>
+        <span>Laptop candidates: ${item.laptop_candidates || 0}</span>
+        <span>Rejected accessories: ${item.rejected_accessories || 0}</span>
+        <span>Budget valid: ${item.valid_after_budget}</span>
+        <span>AI valid: ${item.valid_after_ai}</span>
         <span>Duration: ${item.duration}s</span>
+        <span>Status: ${this.esc(item.status || (item.ok ? 'success' : 'fail'))}</span>
         ${item.error ? `<small>${this.esc(item.error)}</small>` : ''}
+        <button class="compare-use" ${canUse ? '' : 'disabled'}>${item.engine === 'puppeteer' ? 'Use Puppeteer Results' : 'Use Rollback Results'}</button>
       `;
+      card.querySelector('.compare-use')?.addEventListener('click', () => this.selectComparisonEngine(item.engine));
       grid.appendChild(card);
     }
   }

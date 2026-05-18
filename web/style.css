@@ -621,7 +621,6 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -644,6 +643,26 @@ html, body {
 .compare-card small {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.compare-use {
+  margin-top: 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: rgba(59,130,246,.12);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 8px;
+}
+
+.compare-use:disabled {
+  border-color: var(--border);
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: .65;
 }
 
 /* Products grid */
