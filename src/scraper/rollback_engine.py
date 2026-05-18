@@ -4,9 +4,13 @@ import random
 import re
 import urllib.parse
 from typing import Tuple, List, Dict, Any
+from pathlib import Path
 from src.utils.logger import log
 from src.server.progress import update_progress
 from src.utils.debug import save_debug_state_sync
+from src.scraper.selenium_driver import create_chrome_driver, safe_quit_driver
+
+DEBUG_DIR = Path("data/debug")
 
 class RollbackEngine:
     name = "rollback"
@@ -19,7 +23,6 @@ class RollbackEngine:
         return await asyncio.to_thread(self._scrape_sync, query, raw_target, eta_calc)
         
     def _scrape_sync(self, query: str, raw_target: int, eta_calc) -> Tuple[bool, List[Dict[str, Any]], str]:
-        import undetected_chromedriver as uc
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
@@ -27,31 +30,28 @@ class RollbackEngine:
         import shutil
         import os
         
-        log(f"[{self.search_id}]", "[ROLLBACK] Starting legacy scraper from ROLLBACK.rar logic", "INFO")
+        update_progress(
+            self.search_id, 
+            engine=self.name, 
+            stage="rollback_browser_starting", 
+            percent=48, 
+            message="Menjalankan Chrome rollback scraper..."
+        )
         
-        options = uc.ChromeOptions()
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--headless")
-        options.add_argument("--window-size=1920,1080")
-        
-        temp_profile_dir = tempfile.mkdtemp(prefix="marketspy_chrome_")
-        options.add_argument(f"--user-data-dir={temp_profile_dir}")
-        
-        driver = None
+        # We use the new factory
+        driver, error_msg = create_chrome_driver(self.search_id, DEBUG_DIR / self.search_id)
+        if not driver:
+            log(f"[{self.search_id}]", f"[ROLLBACK] ChromeDriver mismatch fixed attempted but driver bootstrap failed: {error_msg}", "ERROR")
+            return False, [], f"ChromeDriver bootstrap failed: {error_msg}"
+            
         results = []
         unique_urls = set()
         
         try:
-            update_progress(self.search_id, engine=self.name, stage="rollback_starting", percent=50, message="Menyiapkan browser fallback...")
-            
-            # Using version 120 or similar, but uc.Chrome might fetch automatically
-            driver = uc.Chrome(options=options, version_main=120)
-            driver.set_page_load_timeout(30)
-            
             url = f"https://www.tokopedia.com/search?navsource=search&q={urllib.parse.quote(query)}"
             update_progress(self.search_id, stage="rollback_starting", percent=55, message="Membuka Tokopedia...")
+            
+            log(f"[{self.search_id}]", "[ROLLBACK] Opening Tokopedia", "INFO")
             driver.get(url)
             
             try:
@@ -85,7 +85,13 @@ class RollbackEngine:
                         unique_urls.add(item["url"])
                         results.append(item)
                         
-                update_progress(self.search_id, stage="rollback_extracting", percent=min(70, 60 + int((len(results)/raw_target)*10)), found=len(results), elapsed_seconds=eta_calc.get_elapsed())
+                update_progress(
+                    self.search_id, 
+                    stage="rollback_extracting", 
+                    percent=min(70, 60 + int((len(results)/raw_target)*10)), 
+                    found=len(results), 
+                    elapsed_seconds=eta_calc.get_elapsed()
+                )
                 if len(results) >= raw_target:
                     break
             
@@ -101,13 +107,7 @@ class RollbackEngine:
                 save_debug_state_sync(self.search_id, driver, err)
             return False, [], f"Fallback scraper error: {err}"
         finally:
-            if driver:
-                try:
-                    driver.quit()
-                except: pass
-            try:
-                shutil.rmtree(temp_profile_dir, ignore_errors=True)
-            except: pass
+            safe_quit_driver(driver)
 
     def _extract_cards(self, driver) -> List[Dict[str, Any]]:
         extracted_data = driver.execute_script(

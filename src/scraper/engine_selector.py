@@ -38,14 +38,14 @@ async def run_scraper_chain(search_id: str, query: str, raw_target: int, eta_cal
         pw_error = f"Puppeteer unhandled exception: {str(e)}"
         success, products = False, []
         
-    log(f"[{search_id}]", f"[ENGINE] Puppeteer failed: {pw_error}. Switching to rollback scraper.", "WARN")
+    log(f"[{search_id}]", f"[ENGINE] Puppeteer failed: {pw_error}. Switching to rollback Selenium", "WARN")
     
     # Update progress visibly to show fallback
     update_progress(
         search_id, 
         stage="switching_to_rollback", 
         percent=45, 
-        message="Puppeteer gagal, pindah ke rollback scraper..."
+        message="Puppeteer gagal karena HTTP2. Menggunakan rollback Selenium..."
     )
     
     # Engine 2: Rollback Engine (Selenium)

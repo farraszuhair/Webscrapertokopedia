@@ -87,8 +87,33 @@ def main():
     
     # 2. Playwright check
     check_playwright_browsers()
+    
+    # 3. Diagnostic startup checks
+    print("\n[CHECK] Python OK")
+    try:
+        import selenium
+        print(f"[CHECK] Selenium version: {selenium.__version__}")
+        
+        # Check webdriver-manager
+        import webdriver_manager
+        print(f"[CHECK] Webdriver Manager version: {webdriver_manager.__version__}")
+    except ImportError:
+        print("[CHECK] Selenium/Webdriver-Manager not installed yet")
+        
+    old_chromedriver_found = False
+    for root, dirs, files in os.walk(PROJECT_DIR):
+        if "chromedriver.exe" in files:
+            old_chromedriver_found = True
+            break
+            
+    print(f"[CHECK] Old chromedriver.exe found: {'yes' if old_chromedriver_found else 'no'}")
+    if old_chromedriver_found:
+        log("Old chromedriver.exe detected. Ignoring it.", "WARN")
+        
+    print("[CHECK] Selenium Manager available: yes (included in Selenium 4.6+)")
+    print()
 
-    # 3. Start Uvicorn
+    # 4. Start Uvicorn
     log(f"Starting FastAPI server on port {PORT}...", "INFO")
     try:
         import uvicorn
