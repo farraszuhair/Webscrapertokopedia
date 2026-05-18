@@ -1,107 +1,114 @@
 """
 relevance.py - Qwen-based relevance filtering.
 
-Pipeline: raw products -> Qwen semantic filter -> keep relevant ones.
+Pipeline: raw normalized products -> Qwen semantic filter -> keep relevant ones.
 
-NO hardcoded category keyword filter before Qwen.
-Qwen IS the semantic filter.
-User feedback teaches Qwen via few-shot examples in the prompt.
+Key behaviors:
+1. Run Ollama health check ONCE before batching.
+   If Ollama is down, skip all Qwen calls and use fallback immediately.
+   This prevents 120s * N product timeouts when Ollama is known dead.
 
-Fallback: if Qwen fails, use simple title-word scoring (never crash).
+2. If Qwen returns HTTP 500 or timeout on first product, mark qwen_status="failed"
+   and switch ALL remaining products to fallback. No hanging on 500.
 
-Qwen output schema:
-{
-  "relevant": true,
-  "confidence": 0.86,
-  "categories": ["gaming_laptop"],
-  "reason": "ASUS TUF Gaming is a gaming laptop."
-}
+3. filter_relevance() returns (products, qwen_status) where qwen_status is:
+   "ok"         - Qwen responded correctly
+   "failed"     - Qwen gave 500/timeout/invalid JSON
+   "disabled"   - use_ai=False
+   "unavailable"- Ollama not running
+
+4. Caller (routes.py) puts qwen_status in compare card so UI shows:
+   "Qwen gagal, hasil raw/budget tetap ditampilkan."
+
+NO hardcoded category filter. Qwen IS the semantic filter.
 """
 from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from src.ai.learning import get_recent_examples, get_recent_feedback
-from src.ai.qwen_client import ask_qwen
+from src.ai.qwen_client import ask_qwen, check_ollama_health
 from src.utils.logger import log
 
 
-RELEVANCE_THRESHOLD = 0.55  # accept product if confidence >= this
-FALLBACK_SCORE = 0.5        # used when Qwen is offline
+RELEVANCE_THRESHOLD = 0.55  # keep product if Qwen confidence >= this
+FALLBACK_SCORE = 0.5        # used when Qwen is offline (fail-open default)
+
+# How many consecutive Qwen failures before giving up and switching to fallback
+MAX_CONSECUTIVE_FAILURES = 2
 
 
-def _build_qwen_prompt(query: str, product: dict[str, Any], examples: list, feedback: list) -> str:
+def _build_qwen_prompt(
+    query: str,
+    product: dict[str, Any],
+    examples: list,
+    feedback: list,
+) -> str:
     """
-    Build the Qwen prompt with few-shot examples from user feedback.
-    Examples teach Qwen what the user considers relevant for this specific query.
+    Build Qwen prompt with few-shot examples from user feedback.
+    Keeps prompt small to avoid context-window OOM (which causes HTTP 500).
     """
     title = product.get("title", "")
     price = product.get("price_raw", "")
 
-    # Few-shot section from user feedback (teaches Qwen from past corrections)
+    # Few-shot: last 3 examples max (keep prompt small for 14B context limit)
     few_shot = ""
     if examples:
-        few_shot = "\nExamples from user feedback (learn from these):\n"
-        for ex in examples[-5:]:  # last 5 examples
-            label = ex.get("label", "unknown")
+        few_shot = "\nUser feedback examples (apply these rules):\n"
+        for ex in examples[-3:]:
             few_shot += (
-                f"- Title: \"{ex.get('title', '')}\" -> label: {label}"
-                f" (categories: {ex.get('categories', [])})"
-                f" reason: {ex.get('reason', '')}\n"
+                f'- "{ex.get("title", "")}" -> {ex.get("label", "unknown")}'
+                f' | categories={ex.get("categories", [])}'
+                f' | reason={ex.get("reason", "")}\n'
             )
 
-    # Additional feedback context
+    # Recent corrections context (last 2 only)
     feedback_ctx = ""
     if feedback:
-        feedback_ctx = "\nRecent user corrections:\n"
-        for fb in feedback[-3:]:
+        feedback_ctx = "\nRecent corrections:\n"
+        for fb in feedback[-2:]:
             feedback_ctx += (
-                f"- \"{fb.get('product_title', '')}\" was marked '{fb.get('correction', '')}'"
-                f" because: {fb.get('note', '')}\n"
+                f'- "{fb.get("product_title", "")}" was marked "{fb.get("correction", "")}"'
+                f' | note={fb.get("note", "")}\n'
             )
 
-    prompt = f"""You are an e-commerce product relevance validator for Tokopedia (Indonesian marketplace).
+    prompt = f"""You are an e-commerce product relevance validator for Tokopedia.
 
-User searched for: "{query}"
-Product Title: "{title}"
-Product Price: "{price}"
+User searched: "{query}"
+Product: "{title}"
+Price: "{price}"
 {few_shot}{feedback_ctx}
-Task: Is this product relevant to the user's search?
+Is this product relevant to the search?
 
 Rules:
-- For broad queries like "laptop gaming", accept gaming laptops of any brand (ROG, Legion, ASUS, MSI, Acer, Lenovo, HP Omen, etc.)
-- Reject accessories (mouse, charger, cooler, RAM, SSD, bag, sleeve) unless specifically searched for
-- A product with GPU (RTX, GTX) and "laptop" in title is almost certainly relevant for "laptop gaming"
-- Use context from user feedback examples above to learn what this user wants
+- Accept gaming laptops of any brand (ROG, Legion, ASUS, MSI, Acer, HP Omen, Lenovo, etc.)
+- Reject accessories (mouse, keyboard, charger, cooler, RAM, SSD, headset, bag) unless specifically searched for
+- A product with GPU model (RTX, GTX) and "laptop" in title is almost certainly relevant for "laptop gaming"
 
-Respond in strict JSON only (no text outside JSON):
-{{
-  "relevant": true or false,
-  "confidence": 0.0 to 1.0,
-  "categories": ["one or more from: gaming_laptop, office_laptop, laptop_accessory, mouse, keyboard, charger, cooling_pad, headset, ram, ssd, monitor, not_laptop, other"],
-  "reason": "short explanation in English"
-}}"""
+Respond ONLY in strict JSON (no text outside JSON):
+{{"relevant": true, "confidence": 0.9, "categories": ["gaming_laptop"], "reason": "short reason"}}"""
     return prompt
 
 
 def _fallback_score(query: str, product: dict[str, Any]) -> dict[str, Any]:
     """
-    Simple fallback when Qwen is offline.
-    Uses word overlap + known positive signals.
-    Never rejects anything unless it's an obvious accessory.
+    Offline fallback when Qwen is unavailable.
+    Fail-open: keep product unless it's obviously an accessory.
     """
     title = product.get("title", "").lower()
-    query_words = set(query.lower().split())
     title_words = set(re.findall(r'\w+', title))
+    query_words = set(query.lower().split())
 
-    # Strong positive signals for laptops
-    laptop_signals = {"laptop", "notebook", "rog", "legion", "nitro", "predator", "msi", "omen",
-                      "alienware", "rtx", "gtx", "geforce", "ryzen", "intel"}
-    # Strong negative signals (obvious accessories, not laptops)
-    accessory_signals = {"mouse", "mice", "mousepad", "keyboard", "charger", "adaptor",
-                         "cooling", "headset", "earphone", "webcam", "sleeve", "tas"}
+    laptop_signals = {
+        "laptop", "notebook", "rog", "legion", "nitro", "predator",
+        "msi", "omen", "alienware", "rtx", "gtx", "geforce", "ryzen", "intel",
+    }
+    accessory_signals = {
+        "mouse", "mice", "mousepad", "keyboard", "charger", "adaptor",
+        "cooling", "headset", "earphone", "webcam", "sleeve", "tas",
+    }
 
     accessory_hits = accessory_signals & title_words
     laptop_hits = laptop_signals & title_words
@@ -112,7 +119,7 @@ def _fallback_score(query: str, product: dict[str, Any]) -> dict[str, Any]:
             "relevant": False,
             "confidence": 0.1,
             "categories": ["laptop_accessory"],
-            "reason": f"Fallback: accessory keywords detected ({', '.join(accessory_hits)}), no laptop signals",
+            "reason": f"Fallback: accessory signals detected ({', '.join(accessory_hits)})",
         }
 
     if laptop_hits or query_overlap:
@@ -121,48 +128,15 @@ def _fallback_score(query: str, product: dict[str, Any]) -> dict[str, Any]:
             "relevant": True,
             "confidence": confidence,
             "categories": ["gaming_laptop" if "gaming" in query.lower() else "other"],
-            "reason": f"Fallback: matched {laptop_hits | query_overlap}",
+            "reason": f"Fallback: matched signals {laptop_hits | query_overlap}",
         }
 
-    # No strong signal either way - keep it (fail open)
     return {
         "relevant": True,
         "confidence": FALLBACK_SCORE,
         "categories": ["other"],
-        "reason": "Fallback: no strong signal, accepted by default",
+        "reason": "Fallback: no strong signal, kept by default (fail-open)",
     }
-
-
-async def _validate_product(
-    query: str,
-    product: dict[str, Any],
-    use_ai: bool,
-    examples: list,
-    feedback: list,
-) -> dict[str, Any]:
-    """Ask Qwen about one product. Falls back to scoring if Qwen fails."""
-    if not use_ai:
-        decision = _fallback_score(query, product)
-        decision["source"] = "fallback_ai_disabled"
-        return decision
-
-    prompt = _build_qwen_prompt(query, product, examples, feedback)
-    ai_response = await ask_qwen(prompt)
-
-    if ai_response and isinstance(ai_response, dict) and "relevant" in ai_response:
-        ai_response["source"] = "qwen"
-        # Normalize categories to list
-        cats = ai_response.get("categories")
-        if isinstance(cats, str):
-            ai_response["categories"] = [cats]
-        elif not isinstance(cats, list):
-            ai_response["categories"] = []
-        return ai_response
-
-    # Qwen failed - use fallback
-    decision = _fallback_score(query, product)
-    decision["source"] = "fallback_qwen_failed"
-    return decision
 
 
 async def filter_relevance(
@@ -170,59 +144,161 @@ async def filter_relevance(
     products: List[Dict[str, Any]],
     use_ai: bool = True,
     search_id: str | None = None,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], str]:
     """
     Filter products by Qwen relevance.
 
-    For each product:
-    1. Ask Qwen (or fallback if Qwen is down).
-    2. Keep if relevant=True AND confidence >= threshold.
-    3. Attach ai_decision, ai_reason, relevance_score to each product.
+    Returns:
+        (filtered_products, qwen_status)
 
-    Products are passed in ALREADY normalized. No category filter before this.
+    qwen_status values:
+        "ok"          - Qwen responded to at least one product
+        "failed"      - Qwen consistently failed (500/timeout), fallback used
+        "disabled"    - use_ai=False, fallback used intentionally
+        "unavailable" - Ollama not running, fallback used
+
+    IMPORTANT: This always returns products even when Qwen fails.
+    Caller must NOT block on qwen_status.
     """
-    examples = get_recent_examples(query)
-    feedback = get_recent_feedback(query)
+    if not products:
+        return [], "ok"
 
-    log("AI", f"filter_relevance: {len(products)} products, use_ai={use_ai}, examples={len(examples)}, feedback={len(feedback)}", "INFO")
+    if not use_ai:
+        # AI disabled: use fallback scoring, return all above threshold
+        log("AI", f"AI disabled - applying fallback for {len(products)} products", "INFO")
+        result = _apply_fallback_all(query, products, "fallback_ai_disabled")
+        return result, "disabled"
+
+    # ── Health check ────────────────────────────────────────────────────────
+    # One quick probe before sending potentially 50+ Qwen requests.
+    # If Ollama is down, skip the 120s * N timeouts immediately.
+    ollama_alive = await check_ollama_health()
+    if not ollama_alive:
+        log("AI", "Ollama not reachable - using fallback for all products", "WARN")
+        result = _apply_fallback_all(query, products, "fallback_ollama_unavailable")
+        _save_qwen_filter_debug(search_id, query, products, result, "unavailable", 0, 0)
+        return result, "unavailable"
+
+    # ── Per-product Qwen calls ───────────────────────────────────────────────
+    examples = get_recent_examples(query)
+    feedback_items = get_recent_feedback(query)
+    log("AI", f"Qwen filter: {len(products)} products, examples={len(examples)}, feedback={len(feedback_items)}", "INFO")
 
     valid: list[dict[str, Any]] = []
     qwen_debug: list[dict[str, Any]] = []
+    consecutive_failures = 0
+    qwen_ok_count = 0
+    qwen_fail_count = 0
+    switched_to_fallback = False
 
     for product in products:
-        decision = await _validate_product(query, product, use_ai, examples, feedback)
+        decision: dict[str, Any]
 
-        # Attach decision to product for frontend display
-        product["relevance_score"] = float(decision.get("confidence", 0.5))
+        if switched_to_fallback:
+            # Qwen gave too many consecutive failures - stop trying, use fallback for rest
+            decision = _fallback_score(query, product)
+            decision["source"] = "fallback_qwen_consecutive_fail"
+        else:
+            prompt = _build_qwen_prompt(query, product, examples, feedback_items)
+            ai_response = await ask_qwen(prompt, search_id)
+
+            if ai_response and isinstance(ai_response, dict) and "relevant" in ai_response:
+                # Qwen responded correctly
+                decision = ai_response
+                decision["source"] = "qwen"
+                cats = decision.get("categories")
+                if isinstance(cats, str):
+                    decision["categories"] = [cats]
+                elif not isinstance(cats, list):
+                    decision["categories"] = []
+                consecutive_failures = 0
+                qwen_ok_count += 1
+            else:
+                # Qwen failed (500, timeout, bad JSON)
+                qwen_fail_count += 1
+                consecutive_failures += 1
+                decision = _fallback_score(query, product)
+                decision["source"] = "fallback_qwen_failed"
+
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    log("AI", f"Qwen failed {consecutive_failures} times in a row. Switching all remaining to fallback.", "WARN")
+                    switched_to_fallback = True
+
+        # Attach decision metadata to product
+        product["relevance_score"] = float(decision.get("confidence", FALLBACK_SCORE))
         product["ai_decision"] = decision.get("relevant", True)
         product["ai_reason"] = decision.get("reason", "")
         product["ai_categories"] = decision.get("categories", [])
         product["ai_source"] = decision.get("source", "unknown")
 
+        kept = decision.get("relevant", True) and product["relevance_score"] >= RELEVANCE_THRESHOLD
         qwen_debug.append({
-            "title": product.get("title", ""),
+            "title": product.get("title", "")[:80],
             "decision": decision,
-            "kept": decision.get("relevant", True) and product["relevance_score"] >= RELEVANCE_THRESHOLD,
+            "kept": kept,
         })
 
-        if decision.get("relevant", True) and product["relevance_score"] >= RELEVANCE_THRESHOLD:
+        if kept:
             valid.append(product)
         else:
-            log("AI", f"[REJECT] {product.get('title', '')[:50]} confidence={product['relevance_score']:.2f} reason={product['ai_reason'][:80]}", "INFO")
+            log("AI", f"[REJECT] {product.get('title', '')[:50]} score={product['relevance_score']:.2f}", "INFO")
 
-    # Save Qwen filter debug
-    if search_id:
+    # Determine overall qwen_status
+    if qwen_ok_count > 0 and qwen_fail_count == 0:
+        qwen_status = "ok"
+    elif qwen_ok_count > 0 and qwen_fail_count > 0:
+        qwen_status = "partial"  # some worked, some failed
+    else:
+        qwen_status = "failed"  # everything failed, all fallback
+
+    _save_qwen_filter_debug(search_id, query, products, valid, qwen_status, qwen_ok_count, qwen_fail_count, qwen_debug)
+    log("AI", f"filter_relevance: {len(products)} in, {len(valid)} kept, qwen_status={qwen_status}", "OK")
+    return valid, qwen_status
+
+
+def _apply_fallback_all(
+    query: str,
+    products: list[dict[str, Any]],
+    source: str,
+) -> list[dict[str, Any]]:
+    """Apply fallback scoring to all products. Returns products above threshold."""
+    valid = []
+    for product in products:
+        decision = _fallback_score(query, product)
+        decision["source"] = source
+        product["relevance_score"] = float(decision["confidence"])
+        product["ai_decision"] = decision["relevant"]
+        product["ai_reason"] = decision["reason"]
+        product["ai_categories"] = decision.get("categories", [])
+        product["ai_source"] = source
+        if decision["relevant"] and decision["confidence"] >= RELEVANCE_THRESHOLD:
+            valid.append(product)
+    return valid
+
+
+def _save_qwen_filter_debug(
+    search_id: str | None,
+    query: str,
+    products: list,
+    valid: list,
+    qwen_status: str,
+    ok_count: int,
+    fail_count: int,
+    decisions: list | None = None,
+) -> None:
+    if not search_id:
+        return
+    try:
         from src.utils.debug import save_json_debug
         save_json_debug(search_id, "qwen_filter_debug.json", {
             "query": query,
             "total_input": len(products),
             "total_kept": len(valid),
             "threshold": RELEVANCE_THRESHOLD,
-            "use_ai": use_ai,
-            "examples_used": len(examples),
-            "feedback_used": len(feedback),
-            "decisions": qwen_debug,
+            "qwen_status": qwen_status,
+            "qwen_ok_count": ok_count,
+            "qwen_fail_count": fail_count,
+            "decisions": decisions or [],
         })
-
-    log("AI", f"filter_relevance: {len(products)} in, {len(valid)} kept", "OK")
-    return valid
+    except Exception:
+        pass

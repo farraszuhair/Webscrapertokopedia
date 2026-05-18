@@ -145,6 +145,24 @@ class PuppeteerEngine:
                     if isinstance(done_products, list) and done_products:
                         products = done_products
                     break
+                elif msg_type == "preflight_failed":
+                    error_type = payload.get("error_type", "unknown")
+                    msg = payload.get("message", "Browser opened error page")
+                    last_error = f"Preflight failed: {error_type}. {msg}"
+                    log(f"[{self.search_id}]", f"[PUPPETEER] PREFLIGHT FAIL: {error_type}", "WARN")
+                    # Save debug snapshot immediately
+                    from src.utils.debug import save_json_debug
+                    debug_data = {
+                        "engine": "puppeteer",
+                        "opened_real_page": False,
+                        "error_type": error_type,
+                        "page_title": payload.get("page_title", ""),
+                        "body_text_sample": payload.get("body_text_sample", ""),
+                        "current_url": payload.get("url", ""),
+                        "message": msg,
+                    }
+                    save_json_debug(self.search_id, "puppeteer_preflight_failed.json", debug_data)
+                    break  # Stop trying this engine on preflight failure
                 elif msg_type == "error":
                     last_error = payload.get("error") or "Unknown Puppeteer worker error"
                 elif msg_type == "debug":

@@ -1,17 +1,14 @@
 """
 routes.py - FastAPI routes for the Tokopedia scraper pipeline.
 
-Pipeline:
-  preflight (optional)
-  -> scrape raw products
-  -> normalize
-  -> optional budget filter (local, after raw data exists)
-  -> Qwen relevance filter
-  -> result
-  -> feedback learning
+Pipeline per spec:
+  preflight -> scrape raw -> normalize -> budget filter -> Qwen -> result -> feedback
 
-Removed: category_filter (hardcoded keywords pretending to be AI).
-Qwen IS the semantic filter.
+Key changes:
+  - filter_relevance() now returns (products, qwen_status)
+  - qwen_status propagated to all result/compare payloads
+  - Compare mode runs BOTH engines independently, no silent fallback
+  - Qwen failure does NOT block result: raw/budget products returned with warning
 """
 from __future__ import annotations
 
@@ -32,7 +29,7 @@ from src.scraper.normalizer import normalize_products_with_report
 from src.server.lifecycle import register_task, unregister_task
 from src.server.progress import complete_progress, fail_progress, get_progress, init_progress, update_progress
 from src.server.schemas import FeedbackRequest, ProgressResponse, SearchRequest
-from src.utils.currency import calculate_budget_range, format_rupiah, parse_rupiah
+from src.utils.currency import format_rupiah
 from src.utils.debug import safe_save_debug, save_json_debug
 from src.utils.eta import ETACalculator
 from src.utils.logger import log
@@ -58,10 +55,8 @@ async def start_search(req: SearchRequest):
     search_id = str(uuid.uuid4())
     target_count = max(1, min(int(req.target_count), 100))
     raw_target = max(100, target_count * 4)
-
     req.target_count = target_count
     init_progress(search_id, target_count, raw_target, req.engine_mode)
-
     task = asyncio.create_task(run_scrape_job_wrapper(search_id, req, raw_target))
     register_task(search_id, task)
     task.add_done_callback(lambda t: cleanup_task(search_id, t))
@@ -86,7 +81,7 @@ async def fetch_result(search_id: str):
 
 @router.post("/api/feedback")
 async def handle_feedback(req: FeedbackRequest):
-    """Save user feedback to teach Qwen. Supports multi-category correction."""
+    """Save user feedback (Benar/Salah/Relevan/Tidak Relevan/Ajarkan AI)."""
     try:
         save_feedback(
             query=req.query,
@@ -96,7 +91,6 @@ async def handle_feedback(req: FeedbackRequest):
             categories=req.categories or [],
             note=req.note or "",
         )
-        # Save debug artifact for this feedback
         if req.search_id:
             save_json_debug(req.search_id, "feedback_saved.json", {
                 "query": req.query,
@@ -113,7 +107,7 @@ async def handle_feedback(req: FeedbackRequest):
 
 @router.post("/api/ai/reset")
 async def handle_ai_reset():
-    """Reset AI learning files only. Does NOT touch the Ollama model."""
+    """Clear AI learning files. Does NOT touch the Ollama model."""
     if reset_ai_memory():
         return {"success": True, "message": "AI memory reset. Ollama model untouched."}
     raise HTTPException(status_code=500, detail="Failed to reset AI memory.")
@@ -122,13 +116,13 @@ async def handle_ai_reset():
 @router.get("/api/preflight/{engine}")
 async def run_preflight_check(engine: str, query: str = "laptop gaming"):
     """
-    Run a preflight check for the given engine and return opened_real_page status.
-    Use this to diagnose ERR_HTTP2_PROTOCOL_ERROR before starting a full scrape.
+    Run preflight check for the given engine.
+    Returns opened_real_page + error_type before starting a full scrape.
+    Useful for diagnosing ERR_HTTP2_PROTOCOL_ERROR without wasting time.
     """
     from src.scraper.preflight import run_preflight
     search_id = f"preflight_{uuid.uuid4().hex[:8]}"
-    result = await run_preflight(search_id, engine, query)
-    return result
+    return await run_preflight(search_id, engine, query)
 
 
 async def run_scrape_job_wrapper(search_id: str, req: SearchRequest, raw_target: int) -> None:
@@ -159,7 +153,6 @@ def _budget_info(filter_result: FilterResult) -> dict[str, Any] | None:
 
 
 def _sort_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sort by AI confidence first, then cheapest valid price."""
     return sorted(
         products,
         key=lambda p: (
@@ -177,8 +170,8 @@ async def _filter_pipeline(
     engine_name: str = "selected",
 ) -> dict[str, Any]:
     """
-    Normalize -> dedupe -> optional budget filter -> Qwen relevance filter.
-    No category_filter. Qwen is the semantic filter.
+    Full filter pipeline: normalize -> dedupe -> budget -> Qwen -> sort.
+    Returns dict with all intermediate counts and qwen_status.
     """
     engine = engine_name or "selected"
     normalizer = normalize_products_with_report(raw_products, engine, search_id)
@@ -189,14 +182,13 @@ async def _filter_pipeline(
         search_id,
         stage="budget_filtering",
         percent=78,
-        message="Filtering budget..." if req.budget else "Budget kosong: filter dinonaktifkan",
+        message="Filtering budget..." if req.budget else "Budget kosong: skip budget filter",
         found=len(deduped),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    # Budget filter: local, runs after raw products exist, optional
     budget_result = filter_by_budget(deduped, req.budget, req.tolerance)
-    candidates = budget_result.kept  # all products if no budget; budget-filtered if budget set
+    candidates = budget_result.kept
 
     if budget_result.budget_value is not None:
         from src.utils.debug import save_budget_filter_debug
@@ -206,25 +198,36 @@ async def _filter_pipeline(
         search_id,
         stage="ai_filtering",
         percent=85,
-        message="Validasi relevansi (Qwen AI)..." if req.use_ai else "AI mati: filter fallback...",
+        message="Validasi relevansi (Qwen AI)..." if req.use_ai else "AI nonaktif: fallback scoring...",
         found=len(deduped),
         valid=len(candidates),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    # Qwen relevance filter: THIS is the semantic filter. Not hardcoded keywords.
-    ai_valid = await filter_relevance(req.query, candidates, req.use_ai, search_id)
+    # filter_relevance now returns (products, qwen_status)
+    ai_valid, qwen_status = await filter_relevance(req.query, candidates, req.use_ai, search_id)
     final = _sort_products(ai_valid)[: req.target_count]
 
     error = ""
+    qwen_warning = ""
+
+    if qwen_status in ("failed", "unavailable"):
+        # Qwen failed but we still have products via fallback - show warning, not error
+        qwen_warning = (
+            "Qwen gagal atau tidak tersedia. "
+            "Produk ditampilkan berdasarkan fallback scoring (raw/budget tetap ditampilkan)."
+        )
+
     if not candidates and budget_result.budget_value is not None:
         error = (
             f"0 produk lolos budget {format_rupiah(budget_result.min_price)} - "
-            f"{format_rupiah(budget_result.max_price)}. "
-            f"Coba naikkan budget/tolerance."
+            f"{format_rupiah(budget_result.max_price)}. Coba naikkan budget/tolerance."
         )
     elif not ai_valid:
-        error = "Semua produk ditolak oleh Qwen AI. Coba disable AI atau tambah feedback."
+        if qwen_status in ("failed", "unavailable"):
+            error = f"0 produk tersisa setelah fallback filter. {qwen_warning}"
+        else:
+            error = "Semua produk ditolak Qwen AI. Disable AI atau tambah feedback."
     elif not final:
         error = "Tidak ada produk setelah filter final."
 
@@ -235,19 +238,26 @@ async def _filter_pipeline(
         "budget": budget_result,
         "ai_valid": ai_valid,
         "final": final,
+        "qwen_status": qwen_status,
+        "qwen_warning": qwen_warning,
         "error": error,
     }
 
 
 def _engine_run_payload(run: EngineRunResult) -> dict[str, Any]:
-    """Serialize one engine run for API output. Includes opened_real_page."""
+    """
+    Serialize one engine run to the API response.
+    raw_products_found is before any filter so callers can verify raw != 0.
+    """
+    count = run.raw_products_found
     return {
         "engine": run.engine,
         "ok": run.ok,
         "opened_real_page": run.opened_real_page,
         "error_type": run.error_type,
-        "raw_count": run.raw_products_found,
-        "raw_scraped": run.raw_products_found,
+        "raw_count": count,
+        "raw_scraped": count,
+        "raw_products_found": count,    # ← kept for backward compat with test_engine_reports
         "duration_seconds": round(run.duration_seconds, 2),
         "status": "success" if run.ok else "fail",
         "error": run.error,
@@ -261,16 +271,28 @@ async def _finish_compare(
     selection: EngineSelectionResult,
     eta_calc: ETACalculator,
 ) -> None:
-    """Filter both engine outputs and store comparison metrics."""
+    """
+    Compare mode: run filter pipeline for BOTH engines independently.
+    No silent fallback between engines.
+    Both results are returned regardless of Qwen status.
+    """
     comparison: list[dict[str, Any]] = []
 
     for run in selection.runs:
+        base_payload = _engine_run_payload(run)
+
         if not run.ok or not run.products:
+            # Engine itself failed (Chrome error page / zero raw)
             comparison.append({
-                **_engine_run_payload(run),
+                **base_payload,
+                "budget_count": 0,
                 "budget_valid_count": 0,
+                "ai_count": 0,
                 "ai_valid_count": 0,
+                "qwen_status": "skipped",
+                "qwen_warning": "",
                 "data": [],
+                "products": [],
                 "budget_debug_path": None,
                 "normalizer_debug_path": None,
             })
@@ -281,7 +303,7 @@ async def _finish_compare(
             active_engine=run.engine,
             stage="compare_filtering",
             percent=75,
-            message=f"Compare: filter {run.engine}...",
+            message=f"Compare: filtering {run.engine} ({len(run.products)} raw)...",
             found=len(run.products),
             elapsed_seconds=eta_calc.get_elapsed(),
         )
@@ -292,9 +314,13 @@ async def _finish_compare(
         data = filtered["final"]
 
         comparison.append({
-            **_engine_run_payload(run),
+            **base_payload,
+            "budget_count": len(budget_result.kept),
             "budget_valid_count": len(budget_result.kept),
+            "ai_count": len(filtered["ai_valid"]),
             "ai_valid_count": len(filtered["ai_valid"]),
+            "qwen_status": filtered["qwen_status"],
+            "qwen_warning": filtered["qwen_warning"],
             "data": data,
             "products": data,
             "error": filtered["error"] if not data else "",
@@ -302,7 +328,7 @@ async def _finish_compare(
             "budget_debug_path": budget_result.debug_path,
         })
 
-    # Best engine = most AI-valid products
+    # Best engine = most AI-valid, then budget-valid, then raw
     selected = max(
         comparison,
         key=lambda c: (c["ai_valid_count"], c["budget_valid_count"], c["raw_count"]),
@@ -320,7 +346,8 @@ async def _finish_compare(
         "count": len(final_data),
         "requested_count": req.target_count,
         "data": final_data,
-        "comparison": comparison,
+        "engine_runs": comparison,     # ← also exposed as engine_runs for consistency
+        "comparison": comparison,      # ← kept for frontend renderComparison()
         "budget_info": None,
     }
     complete_progress(search_id)
@@ -340,20 +367,16 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         return
 
     if not selection.ok or not selection.products:
-        # Build a clear error message that includes opened_real_page diagnosis
         error_msg = selection.error or "Tidak ada produk ditemukan."
-
-        # Check if any run reported a preflight failure
+        # Annotate error with preflight context if browser failed
         for run in selection.runs:
             if not run.opened_real_page and run.error_type:
                 error_msg = (
-                    f"Browser tidak bisa membuka halaman Tokopedia. "
-                    f"error_type={run.error_type}. "
-                    f"Ini bukan masalah selector - browser membuka Chrome error page. "
+                    f"Browser membuka Chrome error page: {run.error_type}. "
+                    f"Bukan masalah selector. "
                     f"Lihat debug: data/debug/{search_id}/"
                 )
                 break
-
         fail_progress(search_id, error_msg)
         return
 
@@ -396,8 +419,12 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "engine_runs": [_engine_run_payload(run) for run in selection.runs],
         "raw_count": len(selection.products),
         "deduped_count": len(filtered["deduped"]),
+        "budget_count": len(budget_result.kept),
         "budget_valid_count": len(budget_result.kept),
+        "ai_count": len(filtered["ai_valid"]),
         "ai_valid_count": len(filtered["ai_valid"]),
+        "qwen_status": filtered["qwen_status"],
+        "qwen_warning": filtered["qwen_warning"],
         "count": len(filtered["final"]),
         "requested_count": req.target_count,
         "data": filtered["final"],
@@ -405,4 +432,9 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
     }
 
     complete_progress(search_id)
-    log(f"[{search_id}]", f"Job complete. raw={len(selection.products)} ai_valid={len(filtered['ai_valid'])} returned={len(filtered['final'])}", "OK")
+    log(
+        f"[{search_id}]",
+        f"Done. raw={len(selection.products)} ai={len(filtered['ai_valid'])} "
+        f"returned={len(filtered['final'])} qwen={filtered['qwen_status']}",
+        "OK",
+    )
