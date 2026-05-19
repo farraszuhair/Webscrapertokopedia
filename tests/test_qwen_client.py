@@ -22,8 +22,10 @@ import pytest
 
 # The functions we're testing
 from src.ai.qwen_client import (
+    GenerateResult,
     MODEL_NAME,
     OLLAMA_GENERATE_URL,
+    OllamaModelSelection,
     TIMEOUT_S,
     ask_qwen,
     check_model_loaded,
@@ -36,6 +38,11 @@ from src.ai.qwen_client import (
 def test_timeout_is_at_least_120_seconds():
     """Root cause of Ollama 500: 14B model needs 60-120s cold start. Must not be 30s."""
     assert TIMEOUT_S >= 120, f"TIMEOUT_S={TIMEOUT_S} is too low - Qwen 14B needs at least 120s"
+
+
+def test_default_model_is_qwen_14b():
+    """The project intentionally defaults to qwen2.5:14b."""
+    assert MODEL_NAME == "qwen2.5:14b"
 
 
 # ── ask_qwen: HTTP 500 ────────────────────────────────────────────────────────
@@ -239,9 +246,14 @@ async def test_filter_relevance_qwen_500_uses_fallback():
         },
     ]
 
-    # Simulate Ollama health check passes but generate returns 500
-    with patch("src.ai.relevance.check_ollama_health", AsyncMock(return_value=True)), \
-         patch("src.ai.relevance.ask_qwen", AsyncMock(return_value=None)):
+    # Simulate selected model exists but /api/generate fails.
+    with patch(
+        "src.ai.relevance.select_ollama_model",
+        AsyncMock(return_value=OllamaModelSelection(True, "qwen2.5:14b", ["qwen2.5:14b"])),
+    ), patch(
+        "src.ai.relevance.call_ollama_generate",
+        AsyncMock(return_value=GenerateResult(False, error="Ollama generate HTTP 500", model="qwen2.5:14b")),
+    ):
         result_products, qwen_status = await filter_relevance("laptop gaming", products, use_ai=True)
 
         assert isinstance(result_products, list), "Must return list even when Qwen fails"
@@ -265,7 +277,16 @@ async def test_filter_relevance_ollama_down_uses_fallback():
         },
     ]
 
-    with patch("src.ai.relevance.check_ollama_health", AsyncMock(return_value=False)):
+    with patch(
+        "src.ai.relevance.select_ollama_model",
+        AsyncMock(return_value=OllamaModelSelection(
+            False,
+            None,
+            [],
+            warning="AI skipped: Ollama not reachable at http://localhost:11434",
+            reason="ollama_not_reachable",
+        )),
+    ):
         result_products, qwen_status = await filter_relevance("laptop gaming", products, use_ai=True)
 
         assert qwen_status == "unavailable"

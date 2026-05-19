@@ -44,10 +44,10 @@ OLLAMA_GENERATE_URL = (
     .rstrip("/")
 )
 OLLAMA_TAGS_URL = f"{OLLAMA_BASE_URL}/api/tags"
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip() or "qwen2.5:3b"
-AI_ALLOW_HEAVY_MODEL = _env_bool("AI_ALLOW_HEAVY_MODEL", False)
+MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:14b").strip() or "qwen2.5:14b"
+AI_ALLOW_FALLBACK = _env_bool("AI_ALLOW_FALLBACK", True)
 
-TIMEOUT_S = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
+TIMEOUT_S = int(os.getenv("AI_TIMEOUT_SECONDS", os.getenv("OLLAMA_TIMEOUT_SECONDS", "240")))
 HEALTH_TIMEOUT_S = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "4"))
 
 
@@ -173,8 +173,8 @@ async def check_model_loaded(model_name: str = MODEL_NAME) -> bool:
 
 
 async def select_ollama_model(preferred_model: str | None = None) -> OllamaModelSelection:
-    """Select the configured Qwen model, with opt-in heavy-model fallback."""
-    preferred = (preferred_model or MODEL_NAME).strip() or "qwen2.5:3b"
+    """Select the configured Qwen model. Default is intentionally qwen2.5:14b."""
+    preferred = (preferred_model or MODEL_NAME).strip() or "qwen2.5:14b"
     tags = await get_ollama_tags()
     if not tags.reachable:
         warning = f"AI skipped: Ollama not reachable at {OLLAMA_BASE_URL}"
@@ -193,27 +193,6 @@ async def select_ollama_model(preferred_model: str | None = None) -> OllamaModel
         log("OLLAMA", f"selected_model={preferred}", "INFO")
         return OllamaModelSelection(True, preferred, tags.models)
 
-    heavy_model = "qwen2.5:14b"
-    if preferred == "qwen2.5:3b" and heavy_model in tags.models:
-        if AI_ALLOW_HEAVY_MODEL:
-            log("OLLAMA", f"selected_model={heavy_model}", "WARN")
-            return OllamaModelSelection(
-                ok=True,
-                selected_model=heavy_model,
-                available_models=tags.models,
-                warning="Using qwen2.5:14b because qwen2.5:3b is missing and AI_ALLOW_HEAVY_MODEL=true",
-            )
-
-        warning = "AI model qwen2.5:3b not found. Run: ollama pull qwen2.5:3b"
-        log("AI", warning, "WARN")
-        return OllamaModelSelection(
-            ok=False,
-            selected_model=None,
-            available_models=tags.models,
-            warning=warning,
-            reason="model_missing",
-        )
-
     warning = f"AI model {preferred} not found. Run: ollama pull {preferred}"
     log("AI", warning, "WARN")
     return OllamaModelSelection(
@@ -231,7 +210,7 @@ async def call_ollama_generate(
     search_id: str | None = None,
 ) -> GenerateResult:
     """Call POST /api/generate and parse the model's JSON object response."""
-    selected = (model or MODEL_NAME).strip() or "qwen2.5:3b"
+    selected = (model or MODEL_NAME).strip() or "qwen2.5:14b"
     payload = {
         "model": selected,
         "prompt": prompt,
@@ -244,6 +223,7 @@ async def call_ollama_generate(
     }
 
     log("AI", "calling /api/generate", "INFO")
+    log("AI", f"model={selected}", "INFO")
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:

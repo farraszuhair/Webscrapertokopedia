@@ -170,12 +170,16 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def normalize_score(value: Any, min_value: float, max_value: float) -> float:
+    parsed = _num(value, min_value)
+    if max_value <= min_value:
+        return 0.0
+    return max(0.0, min(1.0, (parsed - min_value) / (max_value - min_value)))
+
+
 def _sold_score(product: dict[str, Any]) -> float:
     sold = _num(product.get("sold_count"), 0.0)
-    if sold <= 0:
-        return 0.0
-    # 1000+ sold is strong enough; cap so one viral item does not dominate.
-    return min(1.0, sold / 1000.0)
+    return normalize_score(min(sold, 1000.0), 0.0, 1000.0)
 
 
 def _rating_score(product: dict[str, Any]) -> float:
@@ -199,39 +203,38 @@ def _ai_confidence(product: dict[str, Any]) -> float:
     return max(0.0, min(1.0, _num(product.get("ai_confidence", product.get("relevance_score")), 0.0)))
 
 
-def _trusted_score(product: dict[str, Any]) -> float:
-    completeness = 0.0
-    if product.get("image") or product.get("image_url"):
-        completeness += 0.5
-    if product.get("url") or product.get("product_url"):
-        completeness += 0.5
+def _price_sanity_score(product: dict[str, Any]) -> float:
+    price = product.get("price_value")
+    if isinstance(price, int) and price > 0:
+        return 1.0
+    return 0.0 if product.get("price_parse_failed") else 0.35
+
+
+def _data_completeness_score(product: dict[str, Any]) -> float:
+    keys = ("title", "price_raw", "url", "image", "shop", "location", "rating", "sold")
+    return sum(1 for key in keys if product.get(key)) / len(keys)
+
+
+def score_trusted_product(product: dict[str, Any]) -> float:
     return (
         _rating_score(product) * 0.35
         + _sold_score(product) * 0.30
         + _shop_score(product) * 0.15
         + _ai_confidence(product) * 0.20
-        + completeness * 0.05
     )
 
 
-def _overall_score(product: dict[str, Any]) -> float:
-    price_value = product.get("price_value")
-    price_score = 0.65 if price_value else 0.35
-    completeness = sum(
-        1
-        for key in ("title", "price_raw", "url", "image", "shop", "rating", "sold")
-        if product.get(key)
-    ) / 7.0
+def score_best_product(product: dict[str, Any]) -> float:
     return (
         _ai_confidence(product) * 0.35
         + _rating_score(product) * 0.20
-        + _sold_score(product) * 0.15
-        + price_score * 0.15
-        + completeness * 0.15
+        + _sold_score(product) * 0.20
+        + _price_sanity_score(product) * 0.10
+        + _data_completeness_score(product) * 0.15
     )
 
 
-def _looks_like_accessory_for_query(query: str, product: dict[str, Any]) -> bool:
+def is_accessory_like(product: dict[str, Any], query: str) -> bool:
     query_lower = query.lower()
     title = str(product.get("title") or "").lower()
     accessory_terms = {
@@ -264,35 +267,39 @@ def _recommendation_payload(product: dict[str, Any] | None, reason: str) -> dict
     }
 
 
-def _build_recommendations(query: str, products: list[dict[str, Any]]) -> dict[str, Any]:
+def build_recommendations(products: list[dict[str, Any]], query: str) -> dict[str, Any]:
     relevant = [p for p in products if p.get("ai_decision", True)]
     if not relevant:
         relevant = list(products)
 
-    main_products = [p for p in relevant if not _looks_like_accessory_for_query(query, p)] or relevant
+    main_products = [p for p in relevant if not is_accessory_like(p, query)] or relevant
     priced = [
         p for p in main_products
         if isinstance(p.get("price_value"), int) and p.get("price_value") > 0
     ]
 
-    most_trusted = max(main_products, key=_trusted_score, default=None)
+    trusted = max(main_products, key=score_trusted_product, default=None)
     cheapest = min(priced, key=lambda p: p.get("price_value", 10**18), default=None)
-    best_overall = max(main_products, key=_overall_score, default=None)
+    best = max(main_products, key=score_best_product, default=None)
 
     return {
-        "most_trusted": _recommendation_payload(
-            most_trusted,
-            "Rating, sold count, shop signal, data completeness, and AI confidence are strongest.",
-        ),
         "cheapest": _recommendation_payload(
-            cheapest or (main_products[0] if main_products else None),
-            "Cheapest valid-price relevant product in the final result set.",
+            cheapest,
+            "Harga paling rendah dari produk yang lolos filter.",
         ),
-        "best_overall": _recommendation_payload(
-            best_overall,
-            "Best blend of relevance, rating, sold count, price sanity, AI confidence, and complete data.",
+        "trusted": _recommendation_payload(
+            trusted,
+            "Dipilih karena rating, penjualan, dan skor kepercayaan paling kuat.",
+        ),
+        "best": _recommendation_payload(
+            best,
+            "Skor keseluruhan terbaik dari relevansi, rating, penjualan, dan kelengkapan data.",
         ),
     }
+
+
+def _build_recommendations(query: str, products: list[dict[str, Any]]) -> dict[str, Any]:
+    return build_recommendations(products, query)
 
 
 def _limited_reason(requested_count: int, displayed_count: int) -> str | None:
@@ -372,7 +379,7 @@ async def _filter_pipeline(
     update_progress(
         search_id,
         stage="ranking",
-        percent=90,
+        percent=88,
         message="Ranking hasil...",
         found=len(deduped),
         valid=len(ai_valid),
@@ -382,6 +389,17 @@ async def _filter_pipeline(
     ranked = _sort_products(ai_valid)
     final = ranked[: req.target_count]
     limited = _limited_reason(req.target_count, len(final))
+
+    update_progress(
+        search_id,
+        stage="recommendation_building",
+        percent=93,
+        message="Membangun rekomendasi cepat...",
+        found=len(deduped),
+        valid=len(final),
+        elapsed_seconds=eta_calc.get_elapsed(),
+    )
+
     recommendations = _build_recommendations(req.query, final)
     metadata = {
         "requested_count": req.target_count,
@@ -625,7 +643,7 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
     update_progress(
         search_id,
         stage="finalizing",
-        percent=94,
+        percent=96,
         message="Menyiapkan hasil...",
         valid=len(filtered["final"]),
         elapsed_seconds=eta_calc.get_elapsed(),

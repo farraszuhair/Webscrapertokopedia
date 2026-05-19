@@ -697,17 +697,60 @@ html, body {
 
 .recommendations-panel.hidden { display: none !important; }
 
-.recommendations-panel h3 {
+.recommendations-trigger {
+  align-items: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 15px;
-  font-weight: 700;
-  margin-bottom: 10px;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px 16px;
+  text-align: left;
+  transition: border-color var(--trans), background var(--trans);
+  width: 100%;
+}
+
+.recommendations-trigger:hover,
+.recommendations-open .recommendations-trigger {
+  background: rgba(59,130,246,.08);
+  border-color: var(--accent);
+}
+
+.recommendation-trigger-title {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.recommendation-trigger-subtitle {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.recommendation-trigger-state {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
 }
 
 .recommendations-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+  margin-top: 10px;
+  animation: reveal-recommendations .18s ease-out;
+}
+
+.recommendations-grid.hidden { display: none !important; }
+
+@keyframes reveal-recommendations {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .recommendation-card {
@@ -797,6 +840,12 @@ html, body {
   font-weight: 700;
   margin-top: 7px;
   text-decoration: none;
+}
+
+.recommendation-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 /* Products grid */
@@ -966,27 +1015,6 @@ html, body {
   font-weight: 700;
   padding: 2px 6px;
 }
-
-.btn-relevan {
-  background: rgba(59,130,246,.1);
-  border-color: rgba(59,130,246,.3);
-  color: var(--accent);
-}
-.btn-relevan:hover { background: rgba(59,130,246,.2); }
-
-.btn-tidak-relevan {
-  background: rgba(245,158,11,.1);
-  border-color: rgba(245,158,11,.3);
-  color: var(--amber);
-}
-.btn-tidak-relevan:hover { background: rgba(245,158,11,.2); }
-
-.btn-ajarkan {
-  background: rgba(99,102,241,.1);
-  border-color: rgba(99,102,241,.3);
-  color: var(--accent-2);
-}
-.btn-ajarkan:hover { background: rgba(99,102,241,.2); }
 
 /* Product card after feedback sent */
 .product-card.feedback-sent {

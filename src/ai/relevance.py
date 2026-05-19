@@ -14,13 +14,19 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator, List, Tuple
 
 from src.ai.learning import get_recent_examples, get_recent_feedback
-from src.ai.qwen_client import ask_qwen, call_ollama_generate, check_ollama_health, select_ollama_model
+from src.ai.qwen_client import (
+    AI_ALLOW_FALLBACK,
+    ask_qwen,
+    call_ollama_generate,
+    check_ollama_health,
+    select_ollama_model,
+)
 from src.utils.logger import log
 
 
 RELEVANCE_THRESHOLD = float(os.getenv("AI_RELEVANCE_THRESHOLD", "0.55"))
 FALLBACK_SCORE = 0.5
-AI_BATCH_SIZE = max(1, int(os.getenv("AI_BATCH_SIZE", "25")))
+AI_BATCH_SIZE = max(1, int(os.getenv("AI_BATCH_SIZE", "20")))
 
 
 @dataclass
@@ -283,6 +289,10 @@ async def ai_filter_products(
         "skipped_reason": selection.reason,
     }
     if not selection.ok or not selection.selected_model:
+        if not AI_ALLOW_FALLBACK:
+            meta.update({"fallback_used": False, "accepted_count": 0})
+            _save_qwen_filter_debug(search_id, query, products, [], "unavailable", 0, 0, [], meta)
+            return AiFilterResult([], "unavailable", meta)
         result = _apply_fallback_all(query, products, f"fallback_{selection.reason or 'ollama_unavailable'}")
         meta.update({"fallback_used": True, "accepted_count": len(result)})
         _save_qwen_filter_debug(search_id, query, products, result, "unavailable", 0, 0, [], meta)
@@ -329,7 +339,7 @@ async def ai_filter_products(
                 else f"AI fallback used because generate failed: {generate.error}"
             )
             log("AI", reason, "WARN")
-            fallback_products = _keep_prefiltered_batch(batch, reason)
+            fallback_products = _keep_prefiltered_batch(batch, reason) if AI_ALLOW_FALLBACK else []
             valid.extend(fallback_products)
             for idx, product, _ in batch:
                 decisions.append({
@@ -349,7 +359,7 @@ async def ai_filter_products(
             invalid_response_used = True
             reason = "AI fallback used because response was invalid"
             log("AI", f"{reason}: missing valid_indexes", "WARN")
-            fallback_products = _keep_prefiltered_batch(batch, reason)
+            fallback_products = _keep_prefiltered_batch(batch, reason) if AI_ALLOW_FALLBACK else []
             valid.extend(fallback_products)
             continue
 

@@ -24,7 +24,7 @@ def init_progress(search_id: str, target: int, raw_target: int, engine_mode: str
         "raw_target": raw_target,
         "elapsed_seconds": 0,
         "eta_seconds": None,
-        "eta_label": "Calculating...",
+        "eta_label": "ETA: calculating...",
         "engine": "none",
         "attempt": 1,
         "max_attempts": 1,

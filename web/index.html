@@ -183,8 +183,12 @@
         </div>
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
-          <h3>Rekomendasi Cepat</h3>
-          <div id="recommendations-grid" class="recommendations-grid"></div>
+          <button id="recommendations-trigger" class="recommendations-trigger" type="button" onclick="app.toggleRecommendations()" aria-expanded="false">
+            <span class="recommendation-trigger-title">🎯 Lihat Rekomendasi Cepat</span>
+            <span class="recommendation-trigger-subtitle">Termurah, Trusted, dan Terbaik dari hasil scraping</span>
+            <span class="recommendation-trigger-state">Buka</span>
+          </button>
+          <div id="recommendations-grid" class="recommendations-grid hidden"></div>
         </div>
 
         <div id="products-grid" class="products-grid"></div>
