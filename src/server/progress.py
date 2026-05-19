@@ -16,8 +16,8 @@ def init_progress(search_id: str, target: int, raw_target: int, engine_mode: str
         "engine_mode": engine_mode,
         "active_engine": "none",
         "percent": 0,
-        "stage": "queued",
-        "message": "Menunggu giliran...",
+        "stage": "initializing",
+        "message": "Initializing...",
         "found": 0,
         "valid": 0,
         "target": target,
@@ -68,7 +68,7 @@ def fail_progress(search_id: str, error_msg: str) -> None:
     """Mark a search as failed with a specific visible error."""
     update_progress(
         search_id,
-        stage="failed",
+        stage="error",
         message=error_msg,
         error=error_msg,
         done=True,

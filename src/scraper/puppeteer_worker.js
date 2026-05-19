@@ -17,11 +17,22 @@ const argv = require('minimist')(process.argv.slice(2));
 const MAX_ATTEMPTS = 2;
 const NAV_TIMEOUT_MS = 30000;  // navigation timeout per page
 const IDLE_WAIT_MS = 1500;      // wait after load before extracting
+const MAX_SCROLL_ROUNDS = Number.parseInt(process.env.PUPPETEER_MAX_SCROLL_ROUNDS || argv['max-scrolls'] || '12', 10);
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+const STARTED_AT = Date.now();
+let currentPhase = 'initializing';
 
 /** Write a JSON line to stdout so Python can parse it. */
 function send(payload) {
-  process.stdout.write(JSON.stringify(payload) + '\n');
+  try {
+    process.stdout.write(JSON.stringify(payload) + '\n');
+  } catch (error) {
+    process.stderr.write(`[SCRAPER] stdout write failed: ${error.message || error}\n`);
+  }
+}
+
+function setPhase(phase) {
+  currentPhase = phase;
 }
 
 function sleep(ms) {
@@ -306,12 +317,14 @@ async function saveEngineErrorDebug({
 }
 
 async function scrapeUrl(page, url, query, targetRemaining, knownKeys) {
+  setPhase('opening_page');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
   await page.waitForSelector('body', { timeout: 10000 });
   await sleep(IDLE_WAIT_MS);
 
   const products = [];
-  for (let round = 0; round < 8 && products.length < targetRemaining; round += 1) {
+  for (let round = 0; round < MAX_SCROLL_ROUNDS && products.length < targetRemaining; round += 1) {
+    setPhase(round === 0 ? 'extracting' : 'scrolling');
     const extracted = await extractProducts(page, knownKeys, query);
     for (const product of extracted) {
       products.push(product);
@@ -334,9 +347,10 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
   const consoleLogs = [];
 
   try {
+    setPhase('launching_browser');
     send({
       type: 'progress',
-      stage: 'puppeteer_opening',
+      stage: 'launching_browser',
       percent: 8,
       attempt,
       max_attempts: MAX_ATTEMPTS,
@@ -365,9 +379,10 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
       lastPage = page;
       await configurePage(page, consoleLogs);
 
+      setPhase('opening_page');
       send({
         type: 'progress',
-        stage: 'puppeteer_query',
+        stage: 'opening_page',
         percent: Math.min(55, 10 + variantIndex * 3),
         attempt,
         max_attempts: MAX_ATTEMPTS,
@@ -377,6 +392,7 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
 
       try {
         // Navigate and do preflight check before extracting
+        setPhase('opening_page');
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
         await sleep(800);
 
@@ -409,6 +425,7 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
         // Real Tokopedia page confirmed. Extract raw products.
         await page.waitForSelector('body', { timeout: 5000 });
         const before = products.length;
+        setPhase('scrolling');
         const extracted = await scrapeUrl(page, url, variant, target - products.length, knownKeys);
         products.push(...extracted);
         if (products.length === before) {
@@ -444,11 +461,21 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
   const searchId = argv['search-id'] || 'unknown';
   const variants = parseJsonArray(argv.variants, [query]);
   let lastError = '';
+  const heartbeat = setInterval(() => {
+    send({
+      type: 'heartbeat',
+      phase: currentPhase,
+      elapsed: Number(((Date.now() - STARTED_AT) / 1000).toFixed(1)),
+    });
+  }, 5000);
+  heartbeat.unref?.();
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
       const products = await runAttempt({ query, variants, target, searchId, attempt });
-      send({ type: 'done', products });
+      setPhase('finalizing');
+      clearInterval(heartbeat);
+      send({ type: 'result', products });
       process.exit(0);
     } catch (error) {
       lastError = error && error.message ? error.message : String(error);
@@ -464,9 +491,14 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
     }
   }
 
-  send({ type: 'error', error: lastError || 'Unknown Puppeteer error' });
+  clearInterval(heartbeat);
+  send({ type: 'error', message: lastError || 'Unknown Puppeteer error' });
   process.exit(1);
 })().catch((error) => {
-  send({ type: 'error', error: error && error.message ? error.message : String(error) });
+  send({
+    type: 'error',
+    message: error && error.message ? error.message : String(error),
+    stack: error && error.stack ? error.stack : '',
+  });
   process.exit(1);
 });

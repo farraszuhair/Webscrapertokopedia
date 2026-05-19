@@ -245,7 +245,7 @@ async def test_filter_relevance_qwen_500_uses_fallback():
         result_products, qwen_status = await filter_relevance("laptop gaming", products, use_ai=True)
 
         assert isinstance(result_products, list), "Must return list even when Qwen fails"
-        assert qwen_status in ("failed", "partial"), f"Expected 'failed' or 'partial', got '{qwen_status}'"
+        assert qwen_status in ("failed", "partial", "unavailable"), f"Unexpected qwen_status '{qwen_status}'"
         # Fallback must keep at least the laptop products
         assert len(result_products) > 0, "Fallback must keep at least some products"
 

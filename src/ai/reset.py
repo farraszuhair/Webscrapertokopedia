@@ -12,12 +12,7 @@ from __future__ import annotations
 
 import json
 
-from src.ai.memory_store import (
-    CATEGORY_RULES_FILE,
-    EXAMPLES_FILE,
-    FEEDBACK_FILE,
-    ensure_memory_dir,
-)
+import src.ai.memory_store as memory_store
 from src.utils.logger import log
 
 
@@ -27,14 +22,14 @@ def reset_ai_memory() -> bool:
     Ollama model is NOT touched.
     """
     try:
-        ensure_memory_dir()
+        memory_store.ensure_memory_dir()
 
         # Clear JSONL files
-        FEEDBACK_FILE.write_text("", encoding="utf-8")
-        EXAMPLES_FILE.write_text("", encoding="utf-8")
+        memory_store.FEEDBACK_FILE.write_text("", encoding="utf-8")
+        memory_store.EXAMPLES_FILE.write_text("", encoding="utf-8")
 
         # Reset category rules to empty
-        CATEGORY_RULES_FILE.write_text(
+        memory_store.CATEGORY_RULES_FILE.write_text(
             json.dumps({"version": 1, "rules": []}, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )

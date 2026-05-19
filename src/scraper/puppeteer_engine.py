@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,8 @@ from src.utils.logger import log
 
 class PuppeteerEngine:
     name = "puppeteer"
-    process_timeout_seconds = 180
-    idle_stdout_timeout_seconds = 35
+    process_timeout_seconds = int(os.getenv("PUPPETEER_PROCESS_TIMEOUT_SECONDS", "240"))
+    idle_stdout_timeout_seconds = int(os.getenv("PUPPETEER_IDLE_TIMEOUT_SECONDS", "90"))
 
     def __init__(self, search_id: str):
         self.search_id = search_id
@@ -130,6 +131,17 @@ class PuppeteerEngine:
                         elapsed_seconds=eta_calc.get_elapsed(),
                         eta_seconds=eta_calc.get_eta(percent),
                     )
+                elif msg_type == "heartbeat":
+                    phase = payload.get("phase", "unknown")
+                    log(f"[{self.search_id}]", f"[PUPPETEER] heartbeat phase={phase}", "INFO")
+                    update_progress(
+                        self.search_id,
+                        active_engine=self.name,
+                        stage=str(phase),
+                        message=f"Puppeteer masih bekerja: {phase}",
+                        found=len(products),
+                        elapsed_seconds=eta_calc.get_elapsed(),
+                    )
                 elif msg_type == "product":
                     data = payload.get("data")
                     if isinstance(data, dict):
@@ -141,10 +153,11 @@ class PuppeteerEngine:
                             found=len(products),
                             elapsed_seconds=eta_calc.get_elapsed(),
                         )
-                elif msg_type == "done":
+                elif msg_type in ("done", "result"):
                     done_products = payload.get("products", [])
                     if isinstance(done_products, list) and done_products:
                         products = done_products
+                    log(f"[{self.search_id}]", f"[PUPPETEER] received result products={len(products)}", "INFO")
                     break
                 elif msg_type == "preflight_failed":
                     error_type = payload.get("error_type", "unknown")
@@ -165,7 +178,7 @@ class PuppeteerEngine:
                     save_json_debug(self.search_id, "puppeteer_preflight_failed.json", debug_data)
                     break  # Stop trying this engine on preflight failure
                 elif msg_type == "error":
-                    last_error = payload.get("error") or "Unknown Puppeteer worker error"
+                    last_error = payload.get("message") or payload.get("error") or "Unknown Puppeteer worker error"
                 elif msg_type == "debug":
                     log(f"[{self.search_id}]", "[PUPPETEER] Worker saved zero-raw debug snapshot", "WARN")
 
@@ -180,6 +193,7 @@ class PuppeteerEngine:
 
             if process.returncode not in (0, None) and not last_error:
                 last_error = f"Node exited with code {process.returncode}"
+            log(f"[{self.search_id}]", f"[PUPPETEER] worker_exit_code={process.returncode}", "INFO")
 
             if products:
                 return True, products, ""

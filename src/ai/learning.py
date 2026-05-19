@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import src.ai.memory_store as memory_store
 from src.ai.memory_store import (
     CATEGORY_RULES_FILE,
     EXAMPLES_FILE,
@@ -40,20 +41,36 @@ from src.utils.logger import log
 
 def save_feedback(
     query: str,
-    product_id: str,
-    product_title: str,
-    user_action: str,
-    selected_reasons: list[str],
-    custom_reason: str,
-    corrected_label: str,
-    ai_label: str,
-    ai_confidence: float,
+    product_id: str | None = None,
+    product_title: str | None = None,
+    user_action: str | None = None,
+    selected_reasons: list[str] | None = None,
+    custom_reason: str | None = None,
+    corrected_label: str | None = None,
+    ai_label: str | None = None,
+    ai_confidence: float | None = None,
+    product: dict[str, Any] | None = None,
+    ai_decision: dict[str, Any] | None = None,
+    correction: str | None = None,
+    categories: list[str] | None = None,
+    note: str | None = None,
 ) -> None:
     """
     Save full feedback record to feedback.jsonl and examples.jsonl.
     Also update category_rules.json when user teaches AI about a category.
     """
-    ensure_memory_dir()
+    memory_store.ensure_memory_dir()
+
+    selected_reasons = selected_reasons if selected_reasons is not None else (categories or [])
+    custom_reason = custom_reason if custom_reason is not None else (note or "")
+    user_action = user_action or correction or ""
+    product = product or {}
+    product_title = product_title or str(product.get("title") or "")
+    product_id = product_id or str(product.get("id") or product.get("url") or product_title or "unknown")
+    ai_decision = ai_decision or {}
+    ai_label = ai_label or ("relevan" if ai_decision.get("relevant", True) else "tidak_relevan")
+    ai_confidence = ai_confidence if ai_confidence is not None else float(ai_decision.get("confidence") or 0)
+    corrected_label = corrected_label or _label_from_correction(user_action, selected_reasons)
 
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -66,9 +83,13 @@ def save_feedback(
         "selected_reasons": selected_reasons,
         "custom_reason": custom_reason,
         "corrected_label": corrected_label,
+        # Backward-compatible fields used by older learning tests/debug files.
+        "correction": user_action,
+        "categories": selected_reasons,
+        "note": custom_reason,
     }
 
-    append_jsonl(FEEDBACK_FILE, record)
+    memory_store.append_jsonl(memory_store.FEEDBACK_FILE, record)
 
     # Save to examples.jsonl so Qwen prompts can reference these as few-shot examples
     example = {
@@ -78,7 +99,7 @@ def save_feedback(
         "categories": selected_reasons,
         "reason": custom_reason or user_action,
     }
-    append_jsonl(EXAMPLES_FILE, example)
+    memory_store.append_jsonl(memory_store.EXAMPLES_FILE, example)
 
     # Update category_rules.json for systematic patterns
     _update_category_rules(query, product_title, user_action, selected_reasons)
@@ -102,7 +123,7 @@ def _update_category_rules(
     categories: list[str],
 ) -> None:
     """Add a category rule when user explicitly teaches the AI."""
-    rules_data = load_category_rules()
+    rules_data = memory_store.load_category_rules()
     rules = rules_data.get("rules", [])
 
     for cat in (categories or []):
@@ -116,12 +137,12 @@ def _update_category_rules(
         rules.append(rule)
 
     rules_data["rules"] = rules[-500:]  # keep last 500 rules
-    save_category_rules(rules_data)
+    memory_store.save_category_rules(rules_data)
 
 
 def get_recent_feedback(query: str, limit: int = 5) -> list[dict[str, Any]]:
     """Get recent feedback for a specific query to inject as few-shot examples into Qwen prompts."""
-    all_feedback = read_jsonl(FEEDBACK_FILE)
+    all_feedback = memory_store.read_jsonl(memory_store.FEEDBACK_FILE)
     q_lower = query.lower()
     relevant = [r for r in all_feedback if r.get("query", "").lower() == q_lower]
     return relevant[-limit:]
@@ -129,7 +150,7 @@ def get_recent_feedback(query: str, limit: int = 5) -> list[dict[str, Any]]:
 
 def get_recent_examples(query: str, limit: int = 5) -> list[dict[str, Any]]:
     """Get confirmed examples for few-shot prompting."""
-    all_examples = read_jsonl(EXAMPLES_FILE)
+    all_examples = memory_store.read_jsonl(memory_store.EXAMPLES_FILE)
     q_lower = query.lower()
     relevant = [e for e in all_examples if e.get("query", "").lower() == q_lower]
     return relevant[-limit:]

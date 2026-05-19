@@ -64,15 +64,15 @@ def test_budget_reject_reasons():
         20,
     )
 
-    assert len(result.kept) == 0
+    assert len(result.kept) == 1
     assert result.reasons["above_budget_range"] == 1
     assert result.reasons["below_budget_range"] == 1
-    assert result.reasons["invalid_price"] == 1
+    assert result.reasons["invalid_price_kept"] == 1
     assert {item["reject_reason"] for item in result.rejected} == {
         "above_budget_range",
         "below_budget_range",
-        "invalid_price",
     }
+    assert result.kept[0]["price_parse_failed"] is True
     for rejected in result.rejected:
         assert "price_raw" in rejected
         assert "price_value" in rejected

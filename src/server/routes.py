@@ -13,6 +13,7 @@ Key changes:
 from __future__ import annotations
 
 import asyncio
+import os
 import traceback
 import uuid
 from typing import Any
@@ -54,7 +55,8 @@ def cleanup_task(search_id: str, task: asyncio.Task) -> None:
 async def start_search(req: SearchRequest):
     search_id = str(uuid.uuid4())
     target_count = max(1, min(int(req.target_count), 100))
-    raw_target = max(100, target_count * 4)
+    overfetch_multiplier = max(1, int(os.getenv("SCRAPER_OVERFETCH_MULTIPLIER", "3")))
+    raw_target = max(100, target_count * overfetch_multiplier)
     req.target_count = target_count
     init_progress(search_id, target_count, raw_target, req.engine_mode)
     task = asyncio.create_task(run_scrape_job_wrapper(search_id, req, raw_target))
@@ -81,7 +83,7 @@ async def fetch_result(search_id: str):
 
 @router.post("/api/feedback")
 async def handle_feedback(req: FeedbackRequest):
-    """Save user feedback (Benar/Salah/Relevan/Tidak Relevan/Ajarkan AI)."""
+    """Save user feedback from Benar/Salah result-card actions."""
     try:
         save_feedback(
             query=req.query,
@@ -159,6 +161,146 @@ def _sort_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _num(value: Any, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return default
+
+
+def _sold_score(product: dict[str, Any]) -> float:
+    sold = _num(product.get("sold_count"), 0.0)
+    if sold <= 0:
+        return 0.0
+    # 1000+ sold is strong enough; cap so one viral item does not dominate.
+    return min(1.0, sold / 1000.0)
+
+
+def _rating_score(product: dict[str, Any]) -> float:
+    rating = _num(product.get("rating"), 0.0)
+    if rating <= 0:
+        return 0.0
+    return max(0.0, min(1.0, rating / 5.0))
+
+
+def _shop_score(product: dict[str, Any]) -> float:
+    text = " ".join(
+        str(product.get(key) or "")
+        for key in ("shop_name", "shop", "shop_badge", "title")
+    ).lower()
+    if any(token in text for token in ("official", "mall", "power merchant", "pro")):
+        return 1.0
+    return 0.5 if (product.get("shop_name") or product.get("shop")) else 0.0
+
+
+def _ai_confidence(product: dict[str, Any]) -> float:
+    return max(0.0, min(1.0, _num(product.get("ai_confidence", product.get("relevance_score")), 0.0)))
+
+
+def _trusted_score(product: dict[str, Any]) -> float:
+    completeness = 0.0
+    if product.get("image") or product.get("image_url"):
+        completeness += 0.5
+    if product.get("url") or product.get("product_url"):
+        completeness += 0.5
+    return (
+        _rating_score(product) * 0.35
+        + _sold_score(product) * 0.30
+        + _shop_score(product) * 0.15
+        + _ai_confidence(product) * 0.20
+        + completeness * 0.05
+    )
+
+
+def _overall_score(product: dict[str, Any]) -> float:
+    price_value = product.get("price_value")
+    price_score = 0.65 if price_value else 0.35
+    completeness = sum(
+        1
+        for key in ("title", "price_raw", "url", "image", "shop", "rating", "sold")
+        if product.get(key)
+    ) / 7.0
+    return (
+        _ai_confidence(product) * 0.35
+        + _rating_score(product) * 0.20
+        + _sold_score(product) * 0.15
+        + price_score * 0.15
+        + completeness * 0.15
+    )
+
+
+def _looks_like_accessory_for_query(query: str, product: dict[str, Any]) -> bool:
+    query_lower = query.lower()
+    title = str(product.get("title") or "").lower()
+    accessory_terms = {
+        "mouse", "keyboard", "charger", "adaptor", "adapter", "cooling",
+        "cooler", "stand", "headset", "earphone", "webcam", "sleeve",
+        "tas", "bag", "ram", "ssd", "sticker", "sparepart", "spare parts",
+        "baterai", "battery",
+    }
+    query_asks_accessory = any(term in query_lower for term in accessory_terms)
+    return not query_asks_accessory and any(term in title for term in accessory_terms)
+
+
+def _recommendation_payload(product: dict[str, Any] | None, reason: str) -> dict[str, Any] | None:
+    if not product:
+        return None
+    return {
+        "id": product.get("id", ""),
+        "title": product.get("title", ""),
+        "price": product.get("price_raw") or product.get("price_text") or "",
+        "price_value": product.get("price_value"),
+        "rating": product.get("rating"),
+        "sold_count": product.get("sold_count"),
+        "sold": product.get("sold") or product.get("sold_text") or "",
+        "shop_name": product.get("shop_name") or product.get("shop") or "",
+        "shop_location": product.get("shop_location") or product.get("location") or "",
+        "image": product.get("image") or product.get("image_url") or "",
+        "url": product.get("url") or product.get("product_url") or "",
+        "ai_confidence": product.get("ai_confidence", product.get("relevance_score", 0)),
+        "reason": reason,
+    }
+
+
+def _build_recommendations(query: str, products: list[dict[str, Any]]) -> dict[str, Any]:
+    relevant = [p for p in products if p.get("ai_decision", True)]
+    if not relevant:
+        relevant = list(products)
+
+    main_products = [p for p in relevant if not _looks_like_accessory_for_query(query, p)] or relevant
+    priced = [
+        p for p in main_products
+        if isinstance(p.get("price_value"), int) and p.get("price_value") > 0
+    ]
+
+    most_trusted = max(main_products, key=_trusted_score, default=None)
+    cheapest = min(priced, key=lambda p: p.get("price_value", 10**18), default=None)
+    best_overall = max(main_products, key=_overall_score, default=None)
+
+    return {
+        "most_trusted": _recommendation_payload(
+            most_trusted,
+            "Rating, sold count, shop signal, data completeness, and AI confidence are strongest.",
+        ),
+        "cheapest": _recommendation_payload(
+            cheapest or (main_products[0] if main_products else None),
+            "Cheapest valid-price relevant product in the final result set.",
+        ),
+        "best_overall": _recommendation_payload(
+            best_overall,
+            "Best blend of relevance, rating, sold count, price sanity, AI confidence, and complete data.",
+        ),
+    }
+
+
+def _limited_reason(requested_count: int, displayed_count: int) -> str | None:
+    if displayed_count >= requested_count:
+        return None
+    return f"Requested {requested_count} products, but only {displayed_count} matched after filtering."
+
+
 async def _filter_pipeline(
     search_id: str,
     req: SearchRequest,
@@ -177,8 +319,18 @@ async def _filter_pipeline(
 
     update_progress(
         search_id,
+        stage="deduplicating",
+        percent=65,
+        message=f"Deduped {len(normalized)} raw products into {len(deduped)} candidates",
+        found=len(normalized),
+        valid=len(deduped),
+        elapsed_seconds=eta_calc.get_elapsed(),
+    )
+
+    update_progress(
+        search_id,
         stage="budget_filtering",
-        percent=78,
+        percent=68,
         message="Filtering budget..." if req.budget else "Budget kosong: skip budget filter",
         found=len(deduped),
         elapsed_seconds=eta_calc.get_elapsed(),
@@ -186,6 +338,18 @@ async def _filter_pipeline(
 
     budget_result = filter_by_budget(deduped, req.budget, req.tolerance)
     candidates = budget_result.kept
+    budget_enabled = budget_result.budget_value is not None
+
+    log(
+        "BUDGET",
+        (
+            f"enabled={str(budget_enabled).lower()} raw={len(raw_products)} "
+            f"deduped={len(deduped)} valid={len(candidates)} "
+            f"min={budget_result.min_price} max={budget_result.max_price} "
+            f"rejected={len(budget_result.rejected)}"
+        ),
+        "INFO",
+    )
 
     if budget_result.budget_value is not None:
         from src.utils.debug import save_budget_filter_debug
@@ -194,27 +358,52 @@ async def _filter_pipeline(
     update_progress(
         search_id,
         stage="ai_filtering",
-        percent=85,
+        percent=70,
         message="Validasi relevansi (Qwen AI)..." if req.use_ai else "AI nonaktif: fallback scoring...",
         found=len(deduped),
         valid=len(candidates),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    # filter_relevance now returns (products, qwen_status)
-    ai_valid, qwen_status = await filter_relevance(req.query, candidates, req.use_ai, search_id)
-    final = _sort_products(ai_valid)[: req.target_count]
+    ai_result = await filter_relevance(req.query, candidates, req.use_ai, search_id)
+    ai_valid, qwen_status = ai_result
+    ai_meta = getattr(ai_result, "meta", {}) or {}
+
+    update_progress(
+        search_id,
+        stage="ranking",
+        percent=90,
+        message="Ranking hasil...",
+        found=len(deduped),
+        valid=len(ai_valid),
+        elapsed_seconds=eta_calc.get_elapsed(),
+    )
+
+    ranked = _sort_products(ai_valid)
+    final = ranked[: req.target_count]
+    limited = _limited_reason(req.target_count, len(final))
+    recommendations = _build_recommendations(req.query, final)
+    metadata = {
+        "requested_count": req.target_count,
+        "raw_scraped": len(raw_products),
+        "deduped_count": len(deduped),
+        "budget_valid_count": len(candidates),
+        "ai_accepted_count": len(ai_valid),
+        "qwen_accepted_count": ai_meta.get("qwen_accepted_count", len(ai_valid) if qwen_status in ("ok", "partial") else 0),
+        "displayed_count": len(final),
+        "limited_reason": limited,
+        "qwen_status": qwen_status,
+        "qwen_warning": ai_meta.get("warning", ""),
+    }
 
     error = ""
-    qwen_warning = ""
+    qwen_warning = ai_meta.get("warning", "")
 
-    if qwen_status == "unavailable":
-        qwen_warning = "AI filter skipped because model unavailable. Run: ollama pull qwen2.5:3b"
+    if qwen_status == "unavailable" and not qwen_warning:
+        qwen_warning = "AI filter skipped because Ollama or model is unavailable."
     elif qwen_status == "failed":
-        qwen_warning = (
-            "Qwen gagal. "
-            "Produk ditampilkan berdasarkan fallback scoring (raw/budget tetap ditampilkan)."
-        )
+        qwen_warning = qwen_warning or "Qwen failed. Products were displayed with explicit fallback."
+    metadata["qwen_warning"] = qwen_warning
 
     if not candidates and budget_result.budget_value is not None:
         error = (
@@ -235,9 +424,13 @@ async def _filter_pipeline(
         "deduped": deduped,
         "budget": budget_result,
         "ai_valid": ai_valid,
+        "ranked": ranked,
         "final": final,
         "qwen_status": qwen_status,
         "qwen_warning": qwen_warning,
+        "ai_meta": ai_meta,
+        "metadata": metadata,
+        "recommendations": recommendations,
         "error": error,
     }
 
@@ -287,8 +480,20 @@ async def _finish_compare(
                 "budget_valid_count": 0,
                 "ai_count": 0,
                 "ai_valid_count": 0,
+                "qwen_accepted_count": 0,
                 "qwen_status": "skipped",
                 "qwen_warning": "",
+                "result_metadata": {
+                    "requested_count": req.target_count,
+                    "raw_scraped": run.raw_products_found,
+                    "deduped_count": 0,
+                    "budget_valid_count": 0,
+                    "ai_accepted_count": 0,
+                    "qwen_accepted_count": 0,
+                    "displayed_count": 0,
+                    "limited_reason": _limited_reason(req.target_count, 0),
+                },
+                "recommendations": _build_recommendations(req.query, []),
                 "data": [],
                 "products": [],
                 "budget_debug_path": None,
@@ -317,8 +522,11 @@ async def _finish_compare(
             "budget_valid_count": len(budget_result.kept),
             "ai_count": len(filtered["ai_valid"]),
             "ai_valid_count": len(filtered["ai_valid"]),
+            "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
             "qwen_status": filtered["qwen_status"],
             "qwen_warning": filtered["qwen_warning"],
+            "result_metadata": filtered["metadata"],
+            "recommendations": filtered["recommendations"],
             "data": data,
             "products": data,
             "error": filtered["error"] if not data else "",
@@ -333,7 +541,17 @@ async def _finish_compare(
         default=None,
     )
     selected_engine = selected["engine"] if selected else None
-    final_data = (selected or {}).get("data", [])[: req.target_count]
+    final_data = (selected or {}).get("data", [])
+    selected_metadata = (selected or {}).get("result_metadata") or {
+        "requested_count": req.target_count,
+        "raw_scraped": 0,
+        "deduped_count": 0,
+        "budget_valid_count": 0,
+        "ai_accepted_count": 0,
+        "qwen_accepted_count": 0,
+        "displayed_count": len(final_data),
+        "limited_reason": _limited_reason(req.target_count, len(final_data)),
+    }
 
     _results_store[search_id] = {
         "success": True,
@@ -343,6 +561,12 @@ async def _finish_compare(
         "selected_engine": selected_engine,
         "count": len(final_data),
         "requested_count": req.target_count,
+        "displayed_count": len(final_data),
+        "limited_reason": selected_metadata.get("limited_reason"),
+        "result_metadata": selected_metadata,
+        "recommendations": (selected or {}).get("recommendations") or _build_recommendations(req.query, final_data),
+        "qwen_status": (selected or {}).get("qwen_status", "skipped"),
+        "qwen_warning": (selected or {}).get("qwen_warning", ""),
         "data": final_data,
         "engine_runs": comparison,     # ← also exposed as engine_runs for consistency
         "comparison": comparison,      # ← kept for frontend renderComparison()
@@ -382,7 +606,7 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         search_id,
         active_engine=selection.selected_engine or "unknown",
         stage="deduplicating",
-        percent=74,
+        percent=58,
         message="Menghapus duplikat...",
         found=len(selection.products),
         elapsed_seconds=eta_calc.get_elapsed(),
@@ -401,11 +625,30 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
     update_progress(
         search_id,
         stage="finalizing",
-        percent=95,
+        percent=94,
         message="Menyiapkan hasil...",
         valid=len(filtered["final"]),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
+
+    engine_runs = []
+    for run in selection.runs:
+        payload = _engine_run_payload(run)
+        if run.engine == (selection.selected_engine or ""):
+            payload.update({
+                "budget_count": len(budget_result.kept),
+                "budget_valid_count": len(budget_result.kept),
+                "ai_count": len(filtered["ai_valid"]),
+                "ai_valid_count": len(filtered["ai_valid"]),
+                "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
+                "qwen_status": filtered["qwen_status"],
+                "qwen_warning": filtered["qwen_warning"],
+                "result_metadata": filtered["metadata"],
+                "recommendations": filtered["recommendations"],
+                "products": filtered["final"],
+                "data": filtered["final"],
+            })
+        engine_runs.append(payload)
 
     _results_store[search_id] = {
         "success": True,
@@ -414,17 +657,22 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "engine_mode": req.engine_mode,
         "selected_engine": selection.selected_engine,
         "fallback_message": selection.fallback_message,
-        "engine_runs": [_engine_run_payload(run) for run in selection.runs],
+        "engine_runs": engine_runs,
         "raw_count": len(selection.products),
         "deduped_count": len(filtered["deduped"]),
         "budget_count": len(budget_result.kept),
         "budget_valid_count": len(budget_result.kept),
         "ai_count": len(filtered["ai_valid"]),
         "ai_valid_count": len(filtered["ai_valid"]),
+        "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
         "qwen_status": filtered["qwen_status"],
         "qwen_warning": filtered["qwen_warning"],
         "count": len(filtered["final"]),
         "requested_count": req.target_count,
+        "displayed_count": len(filtered["final"]),
+        "limited_reason": filtered["metadata"].get("limited_reason"),
+        "result_metadata": filtered["metadata"],
+        "recommendations": filtered["recommendations"],
         "data": filtered["final"],
         "budget_info": _budget_info(budget_result),
     }

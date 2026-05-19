@@ -6,12 +6,20 @@ from budget rejection so failures are debuggable.
 """
 from __future__ import annotations
 
+import os
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.scraper.normalizer import normalize_products
 from src.utils.currency import calculate_budget_range, format_rupiah, parse_rupiah
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 @dataclass
@@ -110,9 +118,14 @@ def filter_by_budget(products: list[dict[str, Any]], budget: Any, tolerance: Any
         budget_value = None
 
     tolerance_value = _safe_tolerance(tolerance)
+    strict_budget_mode = _env_bool("STRICT_BUDGET_MODE", False)
 
     if budget_value is None:
         for product in normalized:
+            parsed_price = parse_rupiah(product.get("price_value"))
+            if parsed_price is None:
+                parsed_price = parse_rupiah(product.get("price_raw"))
+            product["price_parse_failed"] = parsed_price is None
             product["budget_decision"] = "kept"
         return FilterResult(
             budget_input=budget,
@@ -143,12 +156,13 @@ def filter_by_budget(products: list[dict[str, Any]], budget: Any, tolerance: Any
 
         product["price_value"] = price_value
         product["price_val"] = price_value
+        product["price_parse_failed"] = price_value is None or price_value <= 0
         if not product.get("price_raw") and price_value is not None:
             product["price_raw"] = format_rupiah(price_value)
             product["price_text"] = product["price_raw"]
 
         if price_value is None or price_value <= 0:
-            reason = "invalid_price"
+            reason = "invalid_price" if strict_budget_mode else None
         elif price_value < min_price:
             reason = "below_budget_range"
         elif price_value > max_price:
@@ -159,7 +173,10 @@ def filter_by_budget(products: list[dict[str, Any]], budget: Any, tolerance: Any
         if reason is None:
             product["budget_decision"] = "kept"
             kept.append(product)
-            samples.append(_decision_sample(product, "kept", "within_budget_range", min_price, max_price))
+            kept_reason = "price_parse_failed_kept" if product["price_parse_failed"] else "within_budget_range"
+            if product["price_parse_failed"]:
+                reasons["invalid_price_kept"] += 1
+            samples.append(_decision_sample(product, "kept", kept_reason, min_price, max_price))
             continue
 
         reasons[reason] += 1

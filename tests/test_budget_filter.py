@@ -65,11 +65,12 @@ class TestBudget10MillionTolerance10:
         assert len(result.kept) == 0
         assert result.reasons.get("above_budget_range", 0) == 1
 
-    def test_invalid_price_rejected(self):
+    def test_invalid_price_kept_by_default(self):
         products = [make_product("No Price", "", None)]
         result = self._run(products)
-        assert len(result.kept) == 0
-        assert result.reasons.get("invalid_price", 0) == 1
+        assert len(result.kept) == 1
+        assert result.kept[0]["price_parse_failed"] is True
+        assert result.reasons.get("invalid_price_kept", 0) == 1
 
     def test_range_values(self):
         result = self._run([])

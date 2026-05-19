@@ -5,33 +5,22 @@
  * - Search form with engine mode, budget, AI toggle
  * - Progress polling with stage pipeline display
  * - Compare mode table with opened_real_page status
- * - Product cards with Benar/Salah/Relevan/Tidak Relevan/Ajarkan AI buttons
- * - Feedback popup with multi-select category tags
+ * - Product cards with Benar/Salah feedback
+ * - Feedback modal for Salah corrections
  * - AI reset button
  */
 
-// All valid feedback categories the user can assign
-const FEEDBACK_CATEGORIES = [
-  { key: 'gaming_laptop',    label: 'Gaming Laptop' },
-  { key: 'office_laptop',    label: 'Office Laptop' },
-  { key: 'laptop_accessory', label: 'Laptop Accessory' },
-  { key: 'mouse',            label: 'Mouse' },
-  { key: 'keyboard',         label: 'Keyboard' },
-  { key: 'charger',          label: 'Charger' },
-  { key: 'cooling_pad',      label: 'Cooling Pad' },
-  { key: 'headset',          label: 'Headset' },
-  { key: 'ram',              label: 'RAM' },
-  { key: 'ssd',              label: 'SSD' },
-  { key: 'monitor',          label: 'Monitor' },
-  { key: 'not_laptop',       label: 'Bukan Laptop' },
-  { key: 'wrong_price',      label: 'Harga Salah' },
-  { key: 'wrong_title',      label: 'Judul Salah' },
-  { key: 'duplicate',        label: 'Duplikat' },
-  { key: 'should_include',   label: 'Harus Dimasukkan' },
-  { key: 'should_exclude',   label: 'Harus Dikeluarkan' },
-  { key: 'budget_match',     label: 'Sesuai Budget' },
-  { key: 'budget_mismatch',  label: 'Tidak Sesuai Budget' },
-  { key: 'other',            label: 'Lainnya' },
+const FEEDBACK_REASONS = [
+  'Produk tidak relevan',
+  'Produk sebenarnya relevan',
+  'Kategori salah',
+  'AI salah paham judul',
+  'Harga tidak sesuai',
+  'Bukan produk yang dicari',
+  'Aksesori dianggap produk utama',
+  'Produk utama dianggap tidak relevan',
+  'Gambar / data tidak sesuai',
+  'Lainnya',
 ];
 
 class ScraperApp {
@@ -43,6 +32,8 @@ class ScraperApp {
       pollTimer: null,
       comparison: [],
       selectedEngine: null,
+      recommendations: {},
+      metadata: {},
     };
 
     this.$ = (id) => document.getElementById(id);
@@ -243,15 +234,17 @@ class ScraperApp {
 
   stageLabel(stage) {
     const labels = {
-      queued: 'Menunggu', engine_selecting: 'Memilih engine',
+      queued: 'Menunggu', initializing: 'Initializing', engine_selecting: 'Memilih engine',
+      launching_browser: 'Launching browser', opening_page: 'Opening page',
+      scrolling: 'Scrolling', extracting: 'Extracting',
       puppeteer_starting: 'Puppeteer start', puppeteer_opening: 'Puppeteer open',
       puppeteer_query: 'Puppeteer query', puppeteer_retry: 'Puppeteer retry',
       switching_to_rollback: 'Pindah ke Selenium',
       rollback_browser_starting: 'Selenium start', rollback_opening: 'Selenium open',
       rollback_extracting: 'Selenium extract', compare_filtering: 'Compare filter',
       deduplicating: 'Dedup', budget_filtering: 'Budget filter',
-      ai_filtering: 'Qwen AI filter', finalizing: 'Finalizing',
-      done: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan',
+      ai_filtering: 'Qwen AI filter', ranking: 'Ranking', finalizing: 'Finalizing',
+      done: 'Selesai', error: 'Error', failed: 'Gagal', cancelled: 'Dibatalkan',
     };
     return labels[stage] || stage || 'Processing';
   }
@@ -275,12 +268,31 @@ class ScraperApp {
     this.state.comparison = data.comparison || [];
     this.state.selectedEngine = data.selected_engine || null;
     this.state.products = data.data || [];
+    this.state.recommendations = data.recommendations || {};
+    this.state.metadata = data.result_metadata || {};
 
     this.$('r-target').textContent = data.requested_count ?? '-';
     this.renderBudgetBar(data.budget_info);
     this.renderComparison(data);
+    this.renderResultWarning(data);
+    this.renderRecommendations(this.state.recommendations);
     this.updateResultCount();
     this.renderProducts();
+  }
+
+  renderResultWarning(data) {
+    const box = this.$('r-warning');
+    if (!box) return;
+    const messages = [];
+    if (data.limited_reason) messages.push(data.limited_reason);
+    if (data.qwen_warning) messages.push(data.qwen_warning);
+    if (!messages.length) {
+      box.classList.add('hidden');
+      box.textContent = '';
+      return;
+    }
+    box.textContent = messages.join(' ');
+    box.classList.remove('hidden');
   }
 
   renderBudgetBar(budgetInfo) {
@@ -349,9 +361,62 @@ class ScraperApp {
     if (!item) return;
     this.state.selectedEngine = engine;
     this.state.products = item.data || item.products || [];
+    this.state.recommendations = item.recommendations || {};
+    this.state.metadata = item.result_metadata || {};
     this.renderComparison({ engine_runs: this.state.comparison });
+    this.renderRecommendations(this.state.recommendations);
+    this.renderResultWarning({
+      limited_reason: this.state.metadata.limited_reason,
+      qwen_warning: item.qwen_warning || '',
+    });
     this.updateResultCount();
     this.renderProducts();
+  }
+
+  renderRecommendations(recommendations) {
+    const panel = this.$('recommendations-panel');
+    const grid = this.$('recommendations-grid');
+    if (!panel || !grid) return;
+
+    const items = [
+      ['most_trusted', '&#128737; Most Trusted'],
+      ['cheapest', '&#128176; Termurah'],
+      ['best_overall', '&#11088; Terbaik'],
+    ];
+
+    grid.innerHTML = '';
+    let rendered = 0;
+    for (const [key, label] of items) {
+      const product = recommendations?.[key];
+      if (!product) continue;
+      rendered += 1;
+      const card = document.createElement('div');
+      card.className = 'recommendation-card';
+      const title = product.title || 'Produk Tokopedia';
+      const img = product.image
+        ? `<img src="${this.esc(product.image)}" alt="${this.esc(title)}" loading="lazy">`
+        : '<div class="recommendation-img-placeholder">No image</div>';
+      card.innerHTML = `
+        <div class="recommendation-label">${label}</div>
+        <div class="recommendation-main">
+          <div class="recommendation-img">${img}</div>
+          <div class="recommendation-body">
+            <div class="recommendation-title">${this.esc(title)}</div>
+            <div class="recommendation-price">${this.esc(product.price || '-')}</div>
+            <div class="recommendation-meta">
+              ${product.rating ? `<span>Rating ${this.esc(product.rating)}</span>` : ''}
+              ${product.sold ? `<span>${this.esc(product.sold)}</span>` : ''}
+            </div>
+            ${product.shop_name ? `<div class="recommendation-shop">${this.esc(product.shop_name)}</div>` : ''}
+            <div class="recommendation-reason">${this.esc(product.reason || '')}</div>
+            ${product.url ? `<a class="recommendation-link" href="${this.esc(product.url)}" target="_blank" rel="noopener">Buka produk</a>` : ''}
+          </div>
+        </div>
+      `;
+      grid.appendChild(card);
+    }
+
+    panel.classList.toggle('hidden', rendered === 0);
   }
 
   updateResultCount() {
@@ -370,7 +435,7 @@ class ScraperApp {
     }
   }
 
-  createCard(product) {
+  _createCardLegacy(product) {
     const card = document.createElement('div');
     card.className = 'product-card';
     const id = product.id || '';
@@ -439,6 +504,74 @@ class ScraperApp {
   }
 
   // ── Feedback Modal ─────────────────────────────────────────────────────────
+
+  createCard(product) {
+    const card = document.createElement('div');
+    card.className = 'product-card';
+    const id = product.id || '';
+    card.dataset.id = id;
+
+    const title = product.title || 'Produk Tokopedia';
+    const url = product.url || '#';
+    const price = product.price_raw || product.price_text || '-';
+    const image = product.image || product.image_url || '';
+    const imgHtml = image
+      ? `<img src="${this.esc(image)}" alt="${this.esc(title)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\"product-img-placeholder\\">No image</div>'">`
+      : '<div class="product-img-placeholder">No image</div>';
+    const aiValue = product.ai_confidence ?? product.relevance_score;
+    const confidence = aiValue != null && Number.isFinite(Number(aiValue))
+      ? `<span class="ai-score">AI confidence ${Number(aiValue).toFixed(2)}</span>`
+      : '';
+    const aiLabel = product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan');
+    const aiReason = product.ai_reason || product.ai_explanation || '';
+    const aiCategories = (product.ai_categories || []).length
+      ? `<div class="ai-cats">${product.ai_categories.map(c => `<span class="cat-tag">${this.esc(c)}</span>`).join('')}</div>`
+      : '';
+
+    card.innerHTML = `
+      <a href="${this.esc(url)}" target="_blank" rel="noopener" class="product-link">
+        <div class="product-img">${imgHtml}</div>
+        <div class="product-body">
+          <div class="product-title">${this.esc(title)}</div>
+          <div class="product-price">${this.esc(price)}</div>
+          <div class="product-stats">
+            ${product.rating ? `<span class="product-rating">Rating ${this.esc(product.rating)}</span>` : ''}
+            ${product.sold ? `<span class="product-sold">${this.esc(product.sold)}</span>` : ''}
+          </div>
+          ${product.shop ? `<div class="product-shop">Shop: ${this.esc(product.shop)}</div>` : ''}
+          ${product.location ? `<div class="product-location">Location: ${this.esc(product.location)}</div>` : ''}
+          ${product.source_engine ? `<div class="product-source">${this.esc(product.source_engine)}</div>` : ''}
+          <div class="ai-line"><span class="ai-label">AI label: ${this.esc(aiLabel)}</span>${confidence}</div>
+          ${aiCategories}
+          ${aiReason ? `<div class="ai-reason">${this.esc(aiReason)}</div>` : ''}
+        </div>
+      </a>
+      <div class="product-footer">
+        <button class="btn-feedback btn-benar" data-id="${this.esc(id)}" data-action="benar" title="Produk ini benar">Benar</button>
+        <button class="btn-feedback btn-salah" data-id="${this.esc(id)}" data-action="salah" title="Produk ini salah">Salah</button>
+      </div>
+    `;
+
+    card.querySelectorAll('.btn-feedback').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pid = btn.dataset.id;
+        if (btn.dataset.action === 'salah') {
+          this._openFeedbackModal(pid);
+          return;
+        }
+        this._submitFeedback(pid, {
+          userAction: 'benar',
+          selectedReasons: [],
+          customReason: '',
+          correctedLabel: 'relevan',
+        });
+      });
+    });
+
+    return card;
+  }
 
   _createFeedbackModal() {
     const modal = document.createElement('div');
@@ -598,6 +731,140 @@ class ScraperApp {
     } else {
       this._submitFeedback(productId, correction, [], '');
     }
+  }
+
+  _createFeedbackModal() {
+    const modal = document.createElement('div');
+    modal.id = 'feedback-modal';
+    modal.className = 'modal hidden';
+    modal.innerHTML = `
+      <div class="modal-overlay" id="modal-overlay"></div>
+      <div class="modal-box" role="dialog" aria-modal="true" aria-label="Feedback salah">
+        <div class="modal-header">
+          <h3>Ini salah kenapa?</h3>
+          <button class="modal-close" id="modal-close" aria-label="Tutup">x</button>
+        </div>
+        <div class="modal-product" id="modal-product-info"></div>
+        <p class="modal-question">Kenapa hasil ini salah?</p>
+        <div class="modal-cats" id="modal-cats"></div>
+        <div class="modal-note-wrap">
+          <label for="modal-note">Penjelasan</label>
+          <textarea id="modal-note" placeholder="Jelaskan kenapa AI salah..." maxlength="500"></textarea>
+        </div>
+        <div class="modal-corrected-label" id="modal-corrected-label-wrap">
+          <p class="modal-label">Corrected label</p>
+          <label><input type="radio" name="corrected_label" value="relevan"> Relevan</label>
+          <label><input type="radio" name="corrected_label" value="tidak_relevan" checked> Tidak relevan</label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="modal-submit">Kirim feedback</button>
+          <button class="btn btn-ghost" id="modal-cancel">Batal</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    modal.querySelector('#modal-overlay')?.addEventListener('click', () => this._closeFeedbackModal());
+    modal.querySelector('#modal-close')?.addEventListener('click', () => this._closeFeedbackModal());
+    modal.querySelector('#modal-cancel')?.addEventListener('click', () => this._closeFeedbackModal());
+    modal.querySelector('#modal-submit')?.addEventListener('click', () => this._submitModalFeedback());
+
+    const reasonsDiv = modal.querySelector('#modal-cats');
+    FEEDBACK_REASONS.forEach((reason) => {
+      const item = document.createElement('label');
+      item.className = 'cat-checkbox';
+      item.innerHTML = `<input type="checkbox" name="reason" value="${this.esc(reason)}"><span>${this.esc(reason)}</span>`;
+      reasonsDiv.appendChild(item);
+    });
+
+    this._modal = modal;
+    this._modalPid = null;
+  }
+
+  _openFeedbackModal(productId) {
+    const product = this.state.products.find((p) => p.id === productId);
+    if (!product) return;
+
+    this._modalPid = productId;
+    const info = this._modal.querySelector('#modal-product-info');
+    if (info) info.textContent = product.title || 'Produk';
+    this._modal.querySelectorAll('input[name="reason"]').forEach((cb) => { cb.checked = false; });
+    this._modal.querySelectorAll('input[name="corrected_label"]').forEach((rb) => {
+      rb.checked = rb.value === 'tidak_relevan';
+    });
+    const note = this._modal.querySelector('#modal-note');
+    if (note) note.value = '';
+
+    this._modal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+  }
+
+  _submitModalFeedback() {
+    if (!this._modalPid) return;
+    const selectedReasons = Array.from(this._modal.querySelectorAll('input[name="reason"]:checked'))
+      .map((cb) => cb.value);
+    const customReason = this._modal.querySelector('#modal-note')?.value.trim() || '';
+    const corrected = this._modal.querySelector('input[name="corrected_label"]:checked')?.value || 'tidak_relevan';
+
+    this._submitFeedback(this._modalPid, {
+      userAction: 'salah',
+      selectedReasons,
+      customReason,
+      correctedLabel: corrected,
+    });
+    this._closeFeedbackModal();
+  }
+
+  async _submitFeedback(productId, feedback) {
+    const product = this.state.products.find((p) => p.id === productId);
+    if (!product) return;
+
+    const payload = {
+      search_id: this.state.searchId || 'unknown',
+      product_id: productId || 'unknown',
+      product_title: product.title || '',
+      user_action: feedback.userAction,
+      selected_reasons: feedback.selectedReasons || [],
+      custom_reason: feedback.customReason || '',
+      corrected_label: feedback.correctedLabel,
+      ai_label: product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan'),
+      ai_confidence: product.ai_confidence ?? product.relevance_score ?? 0,
+      query: this.state.query || '',
+      timestamp: new Date().toISOString(),
+    };
+
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        console.warn('Feedback gagal:', data);
+        return;
+      }
+      const card = document.querySelector(`[data-id="${productId}"]`)?.closest('.product-card');
+      if (card) {
+        card.classList.add('feedback-sent');
+        card.title = `Feedback: ${feedback.userAction}`;
+      }
+    } catch (err) {
+      console.error('Feedback error:', err);
+    }
+  }
+
+  sendFeedback(productId, correction) {
+    if (correction === 'should_exclude' || correction === 'salah') {
+      this._openFeedbackModal(productId);
+      return;
+    }
+    this._submitFeedback(productId, {
+      userAction: 'benar',
+      selectedReasons: [],
+      customReason: '',
+      correctedLabel: 'relevan',
+    });
   }
 
   showError(message) {
