@@ -48,6 +48,15 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, parsed))
 
 
+def _as_number(value: Any, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return default
+
+
 def _confidence_label(confidence: float) -> str:
     if confidence >= 0.85:
         return "High"
@@ -87,6 +96,57 @@ def _mark_product(
     product["product_category"] = product_category
     product["category_match"] = category_match
     return product
+
+
+def combine_rule_and_semantic_score(rule_score: float, semantic_score: float | None) -> float:
+    if semantic_score is None:
+        return rule_score
+    return round(max(rule_score, rule_score * 0.70 + semantic_score * 0.30), 3)
+
+
+def _product_key(product: dict[str, Any]) -> str:
+    return str(product.get("id") or product.get("url") or product.get("product_url") or product.get("title") or "")
+
+
+def _decision_priority(product: dict[str, Any]) -> int:
+    priority = {
+        "ai_orchestrator": 0,
+        "rule_accept": 1,
+        "fallback_expansion": 2,
+        "fallback_after_ai_reject": 3,
+    }
+    return priority.get(str(product.get("decision_source") or product.get("ai_source") or ""), 9)
+
+
+def _rank_final_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        products,
+        key=lambda product: (
+            -_as_number(product.get("confidence", product.get("relevance_score", product.get("ai_confidence", 0)))),
+            _decision_priority(product),
+            -_as_number(product.get("rating")),
+            -_as_number(product.get("sold_count")),
+            _price_sort_value(product),
+        ),
+    )
+
+
+def _price_sort_value(product: dict[str, Any]) -> float:
+    price = _as_number(product.get("price_value", product.get("price")), 0.0)
+    return price if price > 0 else float("inf")
+
+
+def _sort_fallback_candidates(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        products,
+        key=lambda product: (
+            -_as_number(product.get("rule_score", (product.get("_rule_context") or {}).get("rule_score"))),
+            -_as_number(product.get("semantic_score", (product.get("_rule_context") or {}).get("semantic_score"))),
+            -_as_number(product.get("rating")),
+            -_as_number(product.get("sold_count")),
+            _price_sort_value(product),
+        ),
+    )
 
 
 async def _run_with_ai_heartbeat(
@@ -155,6 +215,7 @@ async def filter_products(
     selected_model = orchestrator_status.get("classifier")
     classifier_installed = bool(selected_model)
     target_count = int(products[0].get("_requested_target", 50) or 50) if products else 50
+    target_display = min(target_count, len(products or []))
     
     log(
         "AI_ORCH",
@@ -176,6 +237,10 @@ async def filter_products(
     rule_accepted = 0
     rule_rejected = 0
     semantic_checked = 0
+    classifier_checked = 0
+    ai_accepted = 0
+    ai_rejected = 0
+    ai_fallback = 0
     ai_calls_attempted = 0
     ai_calls_succeeded = 0
 
@@ -192,14 +257,12 @@ async def filter_products(
     for product in list(products or []):
         product_category = detect_product_category(product)
         rule_score = compute_rule_score(query, product, query_intent)
-        obvious_junk = is_obvious_junk_for_intent(query, product, query_intent)
         semantic_score = None
         
         if (
             semantic_enabled
             and query_embedding
-            and not obvious_junk
-            and FALLBACK_EXPANSION_THRESHOLD <= rule_score < RULE_ACCEPT_THRESHOLD
+            and str(product.get("title") or "").strip()
         ):
             try:
                 from src.ai.ollama_client import cosine_similarity, get_embedding_async
@@ -207,9 +270,12 @@ async def filter_products(
                 semantic_score = cosine_similarity(query_embedding, title_embedding)
                 if semantic_score is not None:
                     semantic_checked += 1
-                    rule_score = round(max(rule_score, rule_score * 0.70 + semantic_score * 0.30), 3)
+                    product["semantic_score"] = round(semantic_score, 3)
+                    rule_score = combine_rule_and_semantic_score(rule_score, semantic_score)
             except Exception:
                 semantic_score = None
+
+        obvious_junk = is_obvious_junk_for_intent(query, product, query_intent)
                 
         product["_rule_context"] = {
             "query_intent": query_intent,
@@ -255,6 +321,8 @@ async def filter_products(
             continue
 
         if _is_safe_fallback_candidate(product, rule_score, obvious_junk):
+            product["rule_score"] = round(rule_score, 3)
+            product["decision_source"] = "fallback_candidate"
             fallback_candidates.append(product)
             continue
 
@@ -272,77 +340,81 @@ async def filter_products(
 
     def apply_fallback_expansion() -> int:
         expanded = 0
-        if len(accepted) >= target_count:
+        if len(accepted) >= target_display:
             return 0
-        seen_ids = {p.get("id") or p.get("url") or p.get("title") for p in accepted}
+        seen_ids = {_product_key(p) for p in accepted}
 
         unique_candidates: list[dict[str, Any]] = []
         candidate_keys = set()
         for p in fallback_candidates:
-            key = p.get("id") or p.get("url") or p.get("title")
+            key = _product_key(p)
             if key in seen_ids or key in candidate_keys:
                 continue
             candidate_keys.add(key)
             unique_candidates.append(p)
 
-        unique_candidates.sort(
-            key=lambda p: float((p.get("_rule_context") or {}).get("rule_score") or p.get("rule_score") or FALLBACK_EXPANSION_THRESHOLD),
-            reverse=True,
-        )
+        unique_candidates = _sort_fallback_candidates(unique_candidates)
 
         for product in unique_candidates:
-            if len(accepted) >= target_count:
+            if len(accepted) >= target_display:
                 break
             ctx = product.get("_rule_context") or {}
             score = float(ctx.get("rule_score") or product.get("rule_score") or FALLBACK_EXPANSION_THRESHOLD)
+            semantic = _as_number(ctx.get("semantic_score", product.get("semantic_score")), 0.0)
+            if is_obvious_junk_for_intent(query, product, query_intent):
+                continue
             product_category = str(ctx.get("product_category") or detect_product_category(product))
+            source = str(product.get("decision_source") or "fallback_expansion")
             marked = _mark_product(
                 product,
                 accepted=True,
-                confidence=max(score, 0.35),
-                reason="Included by fallback expansion to satisfy requested count",
-                source="fallback_expansion",
+                confidence=max(score, semantic, 0.35),
+                reason="Included by fallback expansion to approach requested count",
+                source=source,
                 query_intent=query_intent,
                 product_category=product_category,
                 rule_score=score,
                 category_match="fallback_expansion",
             )
             accepted.append(marked)
-            seen_ids.add(product.get("id") or product.get("url") or product.get("title"))
+            seen_ids.add(_product_key(product))
             expanded += 1
         
         return expanded
 
-    def _ai_skip_reason(ai_checked: int) -> str | None:
-        if ai_checked:
+    def _ai_skip_reason(checked: int) -> str | None:
+        if checked:
             return None
-        if not products:
-            return "Candidate pool empty"
         if not use_ai:
             return "AI disabled"
         if not classifier_installed:
             return "No supported classifier installed"
-        if rule_accepted + rule_rejected >= len(products):
-            return "All products handled by rules"
-        return "No borderline candidates"
+        if not products:
+            return "Candidate pool empty"
+        if not borderline:
+            return "No borderline candidates"
+        return "Classifier path not reached"
 
     def _warning_text(fallback_expanded: int) -> str:
+        warnings: list[str] = []
+        displayed = min(len(accepted), target_display)
+        if displayed < target_display:
+            warnings.append(f"Ditampilkan {displayed} produk aman dari {len(products)} kandidat valid.")
         if fallback_expanded:
-            return "Beberapa produk confidence rendah ditambahkan agar mendekati target. Produk obvious junk tetap dibuang."
-        if len(accepted) < target_count:
-            return f"Diminta {target_count}, tetapi hanya {len(accepted)} produk aman yang bisa ditampilkan dari {len(products)} kandidat valid."
-        return ""
+            warnings.append(f"{fallback_expanded} produk confidence rendah ditambahkan agar hasil mendekati target.")
+        return " ".join(dict.fromkeys(warnings))
 
     def _build_meta(
         *,
         status: str,
-        llm_checked: int,
-        llm_accepted: int,
-        llm_failures: int,
+        checked: int,
+        accepted_by_classifier: int,
+        rejected_by_classifier: int,
+        fallback_by_classifier: int,
         fallback_expanded: int,
         warning: str,
     ) -> dict[str, Any]:
-        ai_rejected = max(0, llm_checked - llm_accepted)
+        displayed = min(len(accepted), target_display)
         return {
             "requested": target_count,
             "requested_count": target_count,
@@ -366,21 +438,23 @@ async def filter_products(
             "rule_rejected": rule_rejected,
             "rule_rejected_count": rule_rejected,
             "semantic_checked_count": semantic_checked,
-            "ai_checked": llm_checked,
-            "llm_checked_count": llm_checked,
+            "semantic_checked": semantic_checked,
+            "classifier_checked": checked,
+            "ai_checked": checked,
+            "llm_checked_count": checked,
             "ai_calls_attempted": ai_calls_attempted,
             "ai_calls_succeeded": ai_calls_succeeded,
-            "ai_accepted": llm_accepted,
-            "ai_accepted_count": llm_accepted,
-            "ai_rejected": ai_rejected,
-            "ai_fallback": llm_failures,
+            "ai_accepted": accepted_by_classifier,
+            "ai_accepted_count": accepted_by_classifier,
+            "ai_rejected": rejected_by_classifier,
+            "ai_fallback": fallback_by_classifier,
             "fallback_added": fallback_expanded,
             "fallback_expansion_count": fallback_expanded,
-            "displayed": len(accepted),
-            "displayed_count": len(accepted),
+            "displayed": displayed,
+            "displayed_count": displayed,
             "accepted_count": len(accepted),
             "rejected_count": len(rejected),
-            "fallback_used": llm_failures > 0,
+            "fallback_used": fallback_by_classifier > 0,
             "warning": warning,
             "thresholds": {
                 "rule_accept": RULE_ACCEPT_THRESHOLD,
@@ -389,7 +463,7 @@ async def filter_products(
                 "fallback_expansion": FALLBACK_EXPANSION_THRESHOLD,
                 "llm_accept": LLM_ACCEPT_THRESHOLD,
             },
-            "ai_skip_reason": _ai_skip_reason(llm_checked),
+            "ai_skip_reason": _ai_skip_reason(checked),
         }
 
     if not borderline:
@@ -399,30 +473,28 @@ async def filter_products(
         log(
             "AI",
             (
-                f"raw={len(products)} intent={query_intent} rule_accept={rule_accepted} "
-                f"rule_reject={rule_rejected} semantic_checked={semantic_checked} "
-                f"borderline_candidates=0 ai_checked=0 ai_calls_attempted=0 "
-                f"fallback_expansion={fallback_expanded} final={len(accepted)} "
+                f"raw={len(products)} target_display={target_display} intent={query_intent} "
+                f"classifier_installed={classifier_installed} selected_classifier={selected_model or 'none'} "
+                f"rule_accept={rule_accepted} rule_reject={rule_rejected} semantic_checked={semantic_checked} "
+                f"borderline_candidates=0 classifier_checked=0 ai_calls_attempted=0 "
+                f"fallback_candidates={len(fallback_candidates)} fallback_added={fallback_expanded} final_displayed={len(accepted)} "
                 f"ai_skip_reason={_ai_skip_reason(0)}"
             ),
             "OK",
         )
         meta = _build_meta(
             status=status,
-            llm_checked=0,
-            llm_accepted=0,
-            llm_failures=0,
+            checked=0,
+            accepted_by_classifier=0,
+            rejected_by_classifier=0,
+            fallback_by_classifier=0,
             fallback_expanded=fallback_expanded,
             warning=warning,
         )
-        return IntentFilterResult(accepted, status, meta)
+        return IntentFilterResult(_rank_final_products(accepted)[:target_display], status, meta)
 
     batches = _chunks(borderline, AI_BATCH_SIZE)
     completed_batch_durations: list[float] = []
-    llm_checked = 0
-    llm_accepted = 0
-    llm_failures = 0
-
     log("AI_ORCH", f"borderline_candidates={len(borderline)} batches={len(batches)} ai_calls_attempted={len(borderline)}", "INFO")
 
     for batch_index, batch in enumerate(batches, 1):
@@ -467,13 +539,13 @@ async def filter_products(
                 valid_count=len(accepted),
             )
             
-            llm_checked += 1
+            classifier_checked += 1
             ai_calls_attempted += 1
             if response.get("_chat_ok"):
                 ai_calls_succeeded += 1
             fallback_used = bool(response.get("_fallback_used"))
             if fallback_used:
-                llm_failures += 1
+                ai_fallback += 1
                 
             ai_confidence = _as_float(response.get("confidence"), 0.5)
             llm_accepts = bool(response.get("accepted", True)) and (
@@ -493,10 +565,19 @@ async def filter_products(
                 category_match=str(response.get("category_match") or "ai"),
             )
             if llm_accepts:
-                llm_accepted += 1
+                if not fallback_used:
+                    ai_accepted += 1
                 accepted.append(marked)
             else:
-                rejected.append(marked)
+                ai_rejected += 1
+                marked["decision_source"] = "ai_reject"
+                marked["ai_source"] = "ai_reject"
+                if _is_safe_fallback_candidate(marked, rule_score, obvious_junk):
+                    marked["decision_source"] = "fallback_after_ai_reject"
+                    marked["rule_score"] = round(rule_score, 3)
+                    fallback_candidates.append(marked)
+                else:
+                    rejected.append(marked)
 
         completed_batch_durations.append(time.perf_counter() - batch_started)
         if search_id:
@@ -516,26 +597,23 @@ async def filter_products(
 
     fallback_expanded = apply_fallback_expansion()
 
-    if llm_failures and llm_failures == llm_checked:
+    if ai_fallback and ai_fallback == classifier_checked:
         status = "unavailable"
-    elif llm_failures:
+    elif ai_fallback:
         status = "partial"
     else:
         status = "ok"
 
-    warning = ""
-    if llm_failures:
-        warning = "AI model failed for some borderline products; fallback kept usable candidates."
-    elif fallback_expanded:
-        warning = "Beberapa produk confidence rendah ditambahkan agar mendekati target. Produk obvious junk tetap dibuang."
-    elif len(accepted) < target_count:
-        warning = f"Diminta {target_count}, tetapi hanya {len(accepted)} produk aman yang bisa ditampilkan dari {len(products)} kandidat valid."
+    warning = _warning_text(fallback_expanded)
+    if borderline and classifier_checked == 0:
+        log("AI_ORCH", "AI classifier integration failure: borderline products exist but /api/chat was not called", "ERROR")
 
     meta = _build_meta(
         status=status,
-        llm_checked=llm_checked,
-        llm_accepted=llm_accepted,
-        llm_failures=llm_failures,
+        checked=classifier_checked,
+        accepted_by_classifier=ai_accepted,
+        rejected_by_classifier=ai_rejected,
+        fallback_by_classifier=ai_fallback,
         fallback_expanded=fallback_expanded,
         warning=warning,
     )
@@ -544,15 +622,17 @@ async def filter_products(
     log(
         "AI",
         (
-            f"raw={len(products)} intent={query_intent} rule_accept={rule_accepted} "
-            f"rule_reject={rule_rejected} semantic_checked={semantic_checked} "
-            f"ai_checked={llm_checked} ai_calls_attempted={ai_calls_attempted} "
-            f"ai_calls_succeeded={ai_calls_succeeded} ai_fallback={llm_failures} "
-            f"fallback_expansion={fallback_expanded} final={len(accepted)}"
+            f"raw={len(products)} target_display={target_display} intent={query_intent} "
+            f"classifier_installed={classifier_installed} selected_classifier={selected_model or 'none'} "
+            f"rule_accept={rule_accepted} rule_reject={rule_rejected} semantic_checked={semantic_checked} "
+            f"borderline_candidates={len(borderline)} classifier_checked={classifier_checked} "
+            f"ai_calls_attempted={ai_calls_attempted} ai_calls_succeeded={ai_calls_succeeded} "
+            f"ai_accepted={ai_accepted} ai_rejected={ai_rejected} ai_fallback={ai_fallback} "
+            f"fallback_candidates={len(fallback_candidates)} fallback_added={fallback_expanded} final_displayed={len(accepted)}"
         ),
         "OK",
     )
-    return IntentFilterResult(accepted, status, meta)
+    return IntentFilterResult(_rank_final_products(accepted)[:target_display], status, meta)
 
 
 def _is_safe_fallback_candidate(product: dict[str, Any], rule_score: float, obvious_junk: bool) -> bool:

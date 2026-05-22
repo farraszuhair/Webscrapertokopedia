@@ -24,8 +24,9 @@ CHAT_CALLS_SUCCEEDED = 0
 FALLBACK_RESPONSE = {
     "accepted": True,
     "confidence": 0.50,
-    "reason": "AI unavailable, accepted by fallback to avoid empty results",
+    "reason": "Classifier unavailable, accepted by safe fallback to avoid empty results",
     "category_match": "fallback",
+    "decision_source": "ai_fallback",
 }
 
 
@@ -64,7 +65,13 @@ def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_f
     payload: dict[str, Any] = {
         "model": selected_model,
         "stream": False,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an intent-aware marketplace product classifier. Return JSON only.",
+            },
+            {"role": "user", "content": prompt},
+        ],
         "options": {
             "temperature": 0,
             "num_ctx": 2048,
@@ -102,7 +109,13 @@ def chat_raw(
     payload: dict[str, Any] = {
         "model": model,
         "stream": False,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an intent-aware marketplace product classifier. Return JSON only.",
+            },
+            {"role": "user", "content": prompt},
+        ],
         "options": {
             "temperature": 0,
             "num_ctx": 2048,

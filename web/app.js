@@ -561,26 +561,18 @@ class ScraperApp {
   renderResultWarning(data) {
     const box = this.$('r-warning');
     if (!box) return;
-    const messages = [];
     const meta = data.result_metadata || this.state.metadata || {};
-    const requested = Number(meta.requested_count ?? data.requested_count ?? 0);
-    const displayed = Number(meta.displayed_count ?? data.displayed_count ?? this.state.products.length);
-    const limitedReason = meta.limited_reason || data.limited_reason;
-    if (requested && displayed < requested) {
-      messages.push(
-        `Produk yang tampil kurang dari permintaan. Diminta ${requested}, tetapi hanya ${displayed} yang lolos.`
-      );
-      messages.push(`Alasan: ${limitedReason || 'hanya produk tersebut yang lolos filter setelah scraping dan AI.'}`);
-    } else if (limitedReason) {
-      messages.push(limitedReason);
-    }
-    if (data.ai_warning) messages.push(data.ai_warning);
-    if (!messages.length) {
+    const messages = [data.ai_warning, meta.ai_warning, meta.limited_reason, data.limited_reason]
+      .filter(Boolean)
+      .map((message) => String(message).trim())
+      .filter(Boolean);
+    const uniqueMessages = [...new Set(messages)];
+    if (!uniqueMessages.length) {
       box.classList.add('hidden');
       box.textContent = '';
       return;
     }
-    box.textContent = messages.join(' ');
+    box.textContent = uniqueMessages.join(' ');
     box.classList.remove('hidden');
   }
 
@@ -635,7 +627,8 @@ class ScraperApp {
         <div class="compare-stats">
           <span>Raw scraped: <b>${item.raw_scraped ?? item.raw_count ?? 0}</b></span>
           <span>Budget valid: <b>${item.budget_valid_count ?? 0}</b></span>
-          <span>AI accepted: <b>${item.ai_accepted_count ?? item.ai_valid_count ?? 0}</b></span>
+          <span>AI checked: <b>${item.result_metadata?.classifier_checked ?? item.result_metadata?.ai_checked ?? 0}</b></span>
+          <span>AI accepted: <b>${item.ai_accepted_count ?? item.result_metadata?.ai_accepted_count ?? 0}</b></span>
           <span>Duration: ${item.duration_seconds ?? item.duration ?? 0}s</span>
           <span>Status: ${item.ok ? 'OK' : 'FAIL'}</span>
         </div>
@@ -680,6 +673,7 @@ class ScraperApp {
     const raw = Number(meta.raw_scraped_count ?? meta.raw_scraped ?? data.raw_count ?? 0);
     const deduped = Number(meta.deduped_count ?? data.deduped_count ?? 0);
     const budget = Number(meta.budget_valid_count ?? data.budget_valid_count ?? data.budget_count ?? 0);
+    const aiChecked = Number(meta.classifier_checked ?? meta.ai_checked ?? data.ai_checked ?? 0);
     const aiAccepted = Number(meta.ai_accepted_count ?? data.ai_accepted_count ?? data.ai_valid_count ?? 0);
 
     this.setText('r-count', displayed || this.state.products.length || 0);
@@ -688,6 +682,7 @@ class ScraperApp {
     this.setText('rs-raw', raw || 0);
     this.setText('rs-deduped', deduped || 0);
     this.setText('rs-budget', budget || 0);
+    this.setText('rs-ai-checked', aiChecked || 0);
     this.setText('rs-ai', aiAccepted || 0);
     this.setText('rs-displayed', displayed || this.state.products.length || 0);
   }

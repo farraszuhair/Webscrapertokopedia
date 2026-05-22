@@ -385,6 +385,28 @@ def _limited_reason(requested_count: int, displayed_count: int, candidate_count:
     return f"Diminta {requested_count}, tetapi hanya {displayed_count} produk aman yang bisa ditampilkan."
 
 
+def _build_result_warning(
+    *,
+    requested: int,
+    displayed: int,
+    candidate_pool_count: int,
+    budget_enabled: bool,
+    budget_valid_count: int,
+    fallback_added: int,
+) -> str:
+    warnings: list[str] = []
+    target_display = min(requested, candidate_pool_count)
+    if budget_enabled and budget_valid_count < requested:
+        warnings.append(f"Diminta {requested}, tetapi hanya {budget_valid_count} kandidat sesuai budget.")
+    elif candidate_pool_count < requested:
+        warnings.append(f"Diminta {requested}, tetapi hanya {candidate_pool_count} kandidat valid.")
+    if displayed < target_display:
+        warnings.append(f"Ditampilkan {displayed} produk aman dari {candidate_pool_count} kandidat valid.")
+    if fallback_added > 0:
+        warnings.append(f"{fallback_added} produk confidence rendah ditambahkan agar hasil mendekati target.")
+    return " ".join(dict.fromkeys(warnings))
+
+
 async def _filter_pipeline(
     search_id: str,
     req: SearchRequest,
@@ -499,11 +521,19 @@ async def _filter_pipeline(
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    ranked = _sort_products(ai_valid, req.sort_mode)
-    final = ranked[: req.target_count]
-    limited = _limited_reason(req.target_count, len(final), len(candidates))
-    if len(final) < req.target_count and ai_meta.get("warning"):
-        limited = ai_meta.get("warning")
+    target_display = min(req.target_count, len(candidates))
+    ranked = list(ai_valid)
+    final = ranked[:target_display]
+    fallback_added = int(ai_meta.get("fallback_added", ai_meta.get("fallback_expansion_count", 0)) or 0)
+    final_warning = _build_result_warning(
+        requested=req.target_count,
+        displayed=len(final),
+        candidate_pool_count=len(candidates),
+        budget_enabled=budget_enabled,
+        budget_valid_count=len(candidates),
+        fallback_added=fallback_added,
+    )
+    limited = final_warning or None
 
     update_progress(
         search_id,
@@ -516,7 +546,9 @@ async def _filter_pipeline(
     )
 
     recommendations = _build_recommendations(req.query, final)
-    has_enough = len(final) >= req.target_count
+    has_enough = len(final) >= target_display
+    classifier_checked = ai_meta.get("classifier_checked", ai_meta.get("ai_checked", ai_meta.get("llm_checked_count", 0)))
+    semantic_checked = ai_meta.get("semantic_checked", ai_meta.get("semantic_checked_count", 0))
     metadata = {
         "requested": req.target_count,
         "requested_count": req.target_count,
@@ -532,30 +564,32 @@ async def _filter_pipeline(
         "rule_accepted": ai_meta.get("rule_accepted", ai_meta.get("rule_accepted_count", 0)),
         "rule_rejected": ai_meta.get("rule_rejected", ai_meta.get("rule_rejected_count", 0)),
         "borderline_candidates": ai_meta.get("borderline_candidates", 0),
-        "ai_checked": ai_meta.get("ai_checked", ai_meta.get("llm_checked_count", 0)),
+        "semantic_checked": semantic_checked,
+        "semantic_checked_count": semantic_checked,
+        "classifier_checked": classifier_checked,
+        "ai_checked": classifier_checked,
         "ai_calls_attempted": ai_meta.get("ai_calls_attempted", 0),
         "ai_calls_succeeded": ai_meta.get("ai_calls_succeeded", 0),
         "ai_accepted": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
         "ai_accepted_count": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
         "ai_rejected": ai_meta.get("ai_rejected", 0),
         "ai_fallback": ai_meta.get("ai_fallback", 0),
-        "fallback_added": ai_meta.get("fallback_added", ai_meta.get("fallback_expansion_count", 0)),
+        "fallback_added": fallback_added,
         "displayed_count": len(final),
         "displayed": len(final),
         "has_enough_results": has_enough,
         "limited_reason": limited,
         "ai_skip_reason": ai_meta.get("ai_skip_reason"),
         "ai_status": ai_status,
-        "ai_warning": ai_meta.get("warning", ""),
+        "ai_warning": final_warning,
         "ai_orchestrator": ai_meta.get("ai_orchestrator", orchestrator_status),
         "ai_model": ai_meta.get("selected_model"),
         "query_intent": ai_meta.get("query_intent"),
         "sort_mode": req.sort_mode,
         "rule_accepted_count": ai_meta.get("rule_accepted_count", 0),
         "rule_rejected_count": ai_meta.get("rule_rejected_count", 0),
-        "llm_checked_count": ai_meta.get("llm_checked_count", 0),
-        "fallback_expansion_count": ai_meta.get("fallback_expansion_count", 0),
-        "semantic_checked_count": ai_meta.get("semantic_checked_count", 0),
+        "llm_checked_count": classifier_checked,
+        "fallback_expansion_count": fallback_added,
     }
 
     log(
@@ -563,8 +597,12 @@ async def _filter_pipeline(
         (
             f"requested={req.target_count} raw_target={get_progress(search_id).get('raw_target') if get_progress(search_id) else '?'} "
             f"raw_scraped={len(raw_products)} deduped={len(deduped)} "
-            f"budget_valid={len(candidates)} ai_input={len(candidates)} "
-            f"ai_accepted={len(ai_valid)} displayed={len(final)} "
+            f"budget_valid={len(candidates)} candidate_pool={len(candidates)} target_display={target_display} "
+            f"semantic_checked={semantic_checked} classifier_checked={classifier_checked} "
+            f"ai_calls_attempted={metadata['ai_calls_attempted']} ai_calls_succeeded={metadata['ai_calls_succeeded']} "
+            f"ai_accepted={metadata['ai_accepted']} ai_rejected={metadata['ai_rejected']} ai_fallback={metadata['ai_fallback']} "
+            f"fallback_added={fallback_added} displayed={len(final)} "
+            f"ai_skip_reason={metadata['ai_skip_reason']} "
             f"has_enough={str(has_enough).lower()}"
             + (f' reason="{limited}"' if limited else "")
         ),
@@ -572,17 +610,12 @@ async def _filter_pipeline(
     )
 
     error = ""
-    ai_warning = ai_meta.get("warning", "")
+    ai_warning = final_warning
 
     if ai_status == "unavailable" and not ai_warning:
         ai_warning = "AI unavailable for borderline products; deterministic relevance fallback was used."
     elif ai_status == "failed":
         ai_warning = ai_warning or "AI filtering failed. Products were displayed with explicit fallback."
-    elif ai_meta.get("fallback_expansion_count"):
-        ai_warning = (
-            ai_warning
-            or f"Beberapa produk confidence rendah ditambahkan agar mendekati target {req.target_count}. Produk obvious junk tetap dibuang."
-        )
     metadata["ai_warning"] = ai_warning
 
     if not candidates and budget_result.budget_value is not None:
