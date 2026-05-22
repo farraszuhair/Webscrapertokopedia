@@ -12,7 +12,10 @@ python -m pip install -r requirements.txt
 npm install
 
 # Start Ollama (separate terminal)
-ollama pull qwen2.5:14b
+ollama pull gemma3:4b
+ollama pull llama3.2:3b
+ollama pull phi4-mini
+ollama pull nomic-embed-text
 ollama serve
 ```
 
@@ -145,7 +148,7 @@ python app.py
 curl http://localhost:11434/api/tags
 
 # If empty, pull model
-ollama pull qwen2.5:14b
+ollama pull gemma3:4b
 
 # If slow, check GPU
 nvidia-smi  # On NVIDIA

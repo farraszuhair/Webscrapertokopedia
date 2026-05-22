@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from typing import Any
 
 import requests
 
-from src.ai.model_router import get_ai_model, get_fallback_model
 from src.config import OLLAMA_BASE_URL, OLLAMA_TIMEOUT_SECONDS
 from src.utils.logger import log
 
@@ -92,19 +92,67 @@ def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_f
     return parsed
 
 
+def chat_raw(
+    prompt: str,
+    model: str,
+    timeout: int | None = None,
+    use_json_format: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "stream": False,
+        "messages": [{"role": "user", "content": prompt}],
+        "options": {
+            "temperature": 0,
+            "num_ctx": 2048,
+            "num_predict": 160,
+        },
+    }
+    if use_json_format:
+        payload["format"] = "json"
+
+    try:
+        log("AI_ORCH", f"chat_model={model}", "INFO")
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json=payload,
+            timeout=timeout or OLLAMA_TIMEOUT_SECONDS,
+        )
+        if response.status_code == 404 or (
+            response.status_code == 400 and "not found" in response.text.lower()
+        ):
+            return {"ok": False, "model": model, "content": "", "parsed": None, "error": f"model not found: {model}"}
+        response.raise_for_status()
+        envelope = response.json()
+        content = ""
+        if isinstance(envelope, dict):
+            message = envelope.get("message")
+            content = str((message or {}).get("content") or envelope.get("response") or "")
+        return {
+            "ok": True,
+            "model": model,
+            "content": content,
+            "parsed": _parse_chat_content(envelope),
+            "error": "",
+        }
+    except Exception as exc:
+        log("AI_ORCH", f"chat_failed model={model} error={exc}", "WARN")
+        return {"ok": False, "model": model, "content": "", "parsed": None, "error": str(exc)}
+
+
 def chat_json(
     prompt: str,
     model: str | None = None,
     timeout: int | None = None,
     use_json_format: bool = True,
 ) -> dict[str, Any]:
-    selected_model = model or get_ai_model("balanced")
+    selected_model = model or "gemma3:4b"
 
     try:
         return _post_chat(prompt, selected_model, timeout, use_json_format)
     except Exception as exc:
         log("AI", f"Ollama chat failed with {selected_model}: {exc}", "WARN")
-        fallback_model = get_fallback_model()
+        fallback_model = "llama3.2:3b"
         if selected_model == fallback_model:
             return _fallback(str(exc), selected_model)
         try:
@@ -121,3 +169,43 @@ async def chat_json_async(
     use_json_format: bool = True,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(chat_json, prompt, model, timeout, use_json_format)
+
+
+async def chat_raw_async(
+    prompt: str,
+    model: str,
+    timeout: int | None = None,
+    use_json_format: bool = True,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(chat_raw, prompt, model, timeout, use_json_format)
+
+
+def get_embedding(text: str, model: str = "nomic-embed-text") -> list[float] | None:
+    try:
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/embeddings",
+            json={"model": model, "prompt": text},
+            timeout=OLLAMA_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        embedding = response.json().get("embedding")
+        if isinstance(embedding, list):
+            return [float(item) for item in embedding]
+    except Exception as exc:
+        log("AI_ORCH", f"embedding_failed model={model} error={exc}", "WARN")
+    return None
+
+
+async def get_embedding_async(text: str, model: str = "nomic-embed-text") -> list[float] | None:
+    return await asyncio.to_thread(get_embedding, text, model)
+
+
+def cosine_similarity(a: list[float] | None, b: list[float] | None) -> float | None:
+    if not a or not b or len(a) != len(b):
+        return None
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a <= 0 or norm_b <= 0:
+        return None
+    return max(0.0, min(1.0, (dot / (norm_a * norm_b) + 1.0) / 2.0))

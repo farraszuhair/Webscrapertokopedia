@@ -6,17 +6,17 @@ products, and the local LLM only sees borderline cases.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
-import math
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Awaitable
+import asyncio
 
-from src.ai.model_router import get_ai_model
-from src.ai.ollama_client import chat_json_async
+from src.ai.ai_orchestrator import classify_borderline_product
+from src.ai.model_registry import get_orchestrator_status
 from src.config import (
     AI_BATCH_SIZE,
+    FALLBACK_EXPANSION_THRESHOLD,
     LLM_ACCEPT_THRESHOLD,
     RULE_ACCEPT_THRESHOLD,
     RULE_REJECT_THRESHOLD,
@@ -124,10 +124,9 @@ JSON format:
 """
 
 
-async def _chat_with_progress_heartbeat(
+async def _run_with_ai_heartbeat(
     *,
-    prompt: str,
-    model: str,
+    coro: Awaitable[dict[str, Any]],
     search_id: str | None,
     batch_current: int,
     batch_total: int,
@@ -138,7 +137,7 @@ async def _chat_with_progress_heartbeat(
     valid_count: int,
 ) -> dict[str, Any]:
     if not search_id:
-        return await chat_json_async(prompt, model=model)
+        return await coro
 
     from src.server.progress import update_ai_eta_progress
 
@@ -163,7 +162,7 @@ async def _chat_with_progress_heartbeat(
 
     task = asyncio.create_task(heartbeat())
     try:
-        return await chat_json_async(prompt, model=model)
+        return await coro
     finally:
         stop_event.set()
         task.cancel()
@@ -188,21 +187,64 @@ async def filter_products(
     )
 
     query_intent = detect_query_intent(query)
-    selected_model = get_ai_model(ai_mode)
+    orchestrator_status = get_orchestrator_status()
+    selected_model = orchestrator_status.get("classifier")
+    log(
+        "AI_ORCH",
+        (
+            f"supported={orchestrator_status.get('supported', [])} "
+            f"missing={orchestrator_status.get('missing', [])} "
+            f"classifier={selected_model or 'rules_only'} "
+            f"semantic={bool(orchestrator_status.get('capabilities', {}).get('semantic'))} "
+            f"json_repair={bool(orchestrator_status.get('capabilities', {}).get('json_repair'))}"
+        ),
+        "INFO",
+    )
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     borderline: list[dict[str, Any]] = []
+    expansion_pool: list[dict[str, Any]] = []
     rule_accepted = 0
     rule_rejected = 0
+    semantic_checked = 0
+
+    query_embedding = None
+    semantic_enabled = bool(orchestrator_status.get("capabilities", {}).get("semantic"))
+    if semantic_enabled:
+        try:
+            from src.ai.ollama_client import get_embedding_async
+
+            query_embedding = await get_embedding_async(query)
+        except Exception:
+            query_embedding = None
+            semantic_enabled = False
 
     for product in list(products or []):
         product_category = detect_product_category(product)
         rule_score = compute_rule_score(query, product, query_intent)
         obvious_junk = is_obvious_junk_for_intent(query, product, query_intent)
+        semantic_score = None
+        if (
+            semantic_enabled
+            and query_embedding
+            and not obvious_junk
+            and FALLBACK_EXPANSION_THRESHOLD <= rule_score < RULE_ACCEPT_THRESHOLD
+        ):
+            try:
+                from src.ai.ollama_client import cosine_similarity, get_embedding_async
+
+                title_embedding = await get_embedding_async(str(product.get("title") or ""))
+                semantic_score = cosine_similarity(query_embedding, title_embedding)
+                if semantic_score is not None:
+                    semantic_checked += 1
+                    rule_score = round(max(rule_score, rule_score * 0.70 + semantic_score * 0.30), 3)
+            except Exception:
+                semantic_score = None
         product["_rule_context"] = {
             "query_intent": query_intent,
             "product_category": product_category,
             "rule_score": rule_score,
+            "semantic_score": semantic_score,
             "obvious_junk": obvious_junk,
         }
 
@@ -236,6 +278,9 @@ async def filter_products(
             ))
             continue
 
+        if not obvious_junk and rule_score >= FALLBACK_EXPANSION_THRESHOLD:
+            expansion_pool.append(product)
+
         if use_ai and should_call_llm(rule_score, obvious_junk):
             borderline.append(product)
             continue
@@ -258,18 +303,72 @@ async def filter_products(
             category_match="rule_review" if accepted_by_rule_review else "low_score",
         ))
 
+    def apply_fallback_expansion() -> int:
+        expanded = 0
+        target_count = int(products[0].get("_requested_target", 0) or 0) if products else 0
+        if not (target_count and len(accepted) < target_count and len(products) >= target_count):
+            return 0
+        seen_ids = {p.get("id") or p.get("url") or p.get("title") for p in accepted}
+        expansion_candidates = [
+            p for p in expansion_pool + rejected
+            if (p.get("id") or p.get("url") or p.get("title")) not in seen_ids
+            and not bool((p.get("_rule_context") or {}).get("obvious_junk"))
+            and float((p.get("_rule_context") or {}).get("rule_score") or p.get("rule_score") or 0) >= FALLBACK_EXPANSION_THRESHOLD
+        ]
+        expansion_candidates.sort(
+            key=lambda p: float((p.get("_rule_context") or {}).get("rule_score") or p.get("rule_score") or 0),
+            reverse=True,
+        )
+        for product in expansion_candidates:
+            if len(accepted) >= target_count:
+                break
+            ctx = product.get("_rule_context") or {}
+            score = float(ctx.get("rule_score") or product.get("rule_score") or FALLBACK_EXPANSION_THRESHOLD)
+            accepted.append(_mark_product(
+                product,
+                accepted=True,
+                confidence=max(score, 0.35),
+                reason="Included by fallback expansion to satisfy requested count",
+                source="fallback_expansion",
+                query_intent=query_intent,
+                product_category=str(ctx.get("product_category") or detect_product_category(product)),
+                rule_score=score,
+                category_match="fallback_expansion",
+            ))
+            seen_ids.add(product.get("id") or product.get("url") or product.get("title"))
+            expanded += 1
+        return expanded
+
     if not use_ai or not borderline:
+        fallback_expanded = apply_fallback_expansion()
+        warning = (
+            "Beberapa produk confidence rendah ditambahkan agar mendekati target. Produk obvious junk tetap dibuang."
+            if fallback_expanded else ""
+        )
         status = "disabled" if not use_ai else "ok"
+        log(
+            "AI",
+            (
+                f"raw={len(products)} intent={query_intent} rule_accept={rule_accepted} "
+                f"rule_reject={rule_rejected} semantic_checked={semantic_checked} "
+                f"ai_checked=0 fallback_expansion={fallback_expanded} final={len(accepted)}"
+            ),
+            "OK",
+        )
         return IntentFilterResult(accepted, status, {
             "query_intent": query_intent,
             "selected_model": None if not use_ai else selected_model,
+            "ai_orchestrator": orchestrator_status,
             "borderline_count": len(borderline),
             "rule_accepted_count": rule_accepted,
             "rule_rejected_count": rule_rejected,
+            "semantic_checked_count": semantic_checked,
             "llm_checked_count": 0,
             "qwen_accepted_count": 0,
+            "fallback_expansion_count": fallback_expanded,
             "accepted_count": len(accepted),
             "rejected_count": len(rejected),
+            "warning": warning,
         })
 
     batches = _chunks(borderline, AI_BATCH_SIZE)
@@ -301,10 +400,14 @@ async def filter_products(
             product_category = str(ctx.get("product_category") or "unknown")
             rule_score = float(ctx.get("rule_score") or 0.0)
             obvious_junk = bool(ctx.get("obvious_junk"))
-            prompt = _build_prompt(query, query_intent, product)
-            response = await _chat_with_progress_heartbeat(
-                prompt=prompt,
-                model=selected_model,
+            response = await _run_with_ai_heartbeat(
+                coro=classify_borderline_product(
+                    query,
+                    query_intent,
+                    product,
+                    rule_score,
+                    status=orchestrator_status,
+                ),
                 search_id=search_id,
                 batch_current=batch_index,
                 batch_total=len(batches),
@@ -328,7 +431,7 @@ async def filter_products(
                 accepted=llm_accepts,
                 confidence=confidence,
                 reason=str(response.get("reason") or "AI classified product"),
-                source="ai_fallback" if fallback_used else "ai_borderline",
+                source=str(response.get("decision_source") or ("ai_fallback" if fallback_used else "ai_classifier")),
                 query_intent=query_intent,
                 product_category=product_category,
                 rule_score=rule_score,
@@ -357,13 +460,7 @@ async def filter_products(
                 batch_done=True,
             )
 
-    if not accepted:
-        rescue = [
-            p for p in rejected
-            if float(p.get("rule_score") or 0) >= RULE_REVIEW_THRESHOLD
-            and p.get("category_match") != "intent_mismatch"
-        ]
-        accepted.extend(sorted(rescue, key=lambda p: float(p.get("rule_score") or 0), reverse=True)[:10])
+    fallback_expanded = apply_fallback_expansion()
 
     if llm_failures and llm_failures == llm_checked:
         status = "unavailable"
@@ -375,17 +472,22 @@ async def filter_products(
     warning = ""
     if llm_failures:
         warning = "AI model failed for some borderline products; fallback kept usable candidates."
+    if fallback_expanded and not warning:
+        warning = "Beberapa produk confidence rendah ditambahkan agar mendekati target. Produk obvious junk tetap dibuang."
 
     meta = {
         "query_intent": query_intent,
         "selected_model": selected_model,
+        "ai_orchestrator": orchestrator_status,
         "borderline_count": len(borderline),
         "batch_count": len(batches),
         "rule_accepted_count": rule_accepted,
         "rule_rejected_count": rule_rejected,
+        "semantic_checked_count": semantic_checked,
         "llm_checked_count": llm_checked,
         "llm_accepted_count": llm_accepted,
         "qwen_accepted_count": llm_accepted,
+        "fallback_expansion_count": fallback_expanded,
         "accepted_count": len(accepted),
         "rejected_count": len(rejected),
         "fallback_used": llm_failures > 0,
@@ -397,5 +499,14 @@ async def filter_products(
             "llm_accept": LLM_ACCEPT_THRESHOLD,
         },
     }
-    log("AI", f"intent={query_intent} rule={rule_accepted} llm={llm_checked} accepted={len(accepted)}", "OK")
+    log(
+        "AI",
+        (
+            f"raw={len(products)} intent={query_intent} rule_accept={rule_accepted} "
+            f"rule_reject={rule_rejected} semantic_checked={semantic_checked} "
+            f"ai_checked={llm_checked} ai_fallback={llm_failures} "
+            f"fallback_expansion={fallback_expanded} final={len(accepted)}"
+        ),
+        "OK",
+    )
     return IntentFilterResult(accepted, status, meta)

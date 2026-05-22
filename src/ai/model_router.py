@@ -11,7 +11,6 @@ def get_ai_model(mode: str = "balanced") -> str:
         "fast": "llama3.2:3b",
         "balanced": "gemma3:4b",
         "json": "phi4-mini",
-        "accurate": "qwen2.5:14b",
     }
     selected_mode = (mode or AI_MODE or "balanced").strip().lower()
     if selected_mode == "balanced" and AI_FILTER_MODEL:

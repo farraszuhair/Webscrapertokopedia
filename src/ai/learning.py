@@ -60,6 +60,7 @@ def save_feedback(
     feedback_type: str | None = None,
     rule_score: float | None = None,
     sort_mode: str | None = None,
+    decision_source: str | None = None,
 ) -> None:
     """
     Save full feedback record to feedback.jsonl and examples.jsonl.
@@ -107,6 +108,7 @@ def save_feedback(
         "note": custom_reason,
         "rule_score": rule_score or 0.0,
         "sort_mode": sort_mode or "terbaik",
+        "decision_source": decision_source or product.get("decision_source") or product.get("ai_source") or "",
         "ai_label": ai_label,
         "ai_confidence": ai_confidence,
         "user_action": user_action,

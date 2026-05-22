@@ -16,9 +16,9 @@ _progress_lock = threading.RLock()
 MAX_ETA_SECONDS = 3600
 AI_PROGRESS_START = 70.0
 AI_PROGRESS_SPAN = 18.0
-QWEN_DEFAULT_BATCH_SECONDS = int(os.getenv("QWEN_DEFAULT_BATCH_SECONDS", "75"))
-QWEN_MIN_BATCH_SECONDS = int(os.getenv("QWEN_MIN_BATCH_SECONDS", "30"))
-QWEN_MAX_BATCH_SECONDS = int(os.getenv("QWEN_MAX_BATCH_SECONDS", "180"))
+AI_DEFAULT_BATCH_SECONDS = int(os.getenv("AI_DEFAULT_BATCH_SECONDS", os.getenv("QWEN_DEFAULT_BATCH_SECONDS", "75")))
+AI_MIN_BATCH_SECONDS = int(os.getenv("AI_MIN_BATCH_SECONDS", os.getenv("QWEN_MIN_BATCH_SECONDS", "30")))
+AI_MAX_BATCH_SECONDS = int(os.getenv("AI_MAX_BATCH_SECONDS", os.getenv("QWEN_MAX_BATCH_SECONDS", "180")))
 
 
 def _epoch_ms() -> int:
@@ -55,8 +55,8 @@ def _bounded_batch_seconds(value: Any) -> float:
     try:
         parsed = float(value)
     except (TypeError, ValueError, OverflowError):
-        parsed = float(QWEN_DEFAULT_BATCH_SECONDS)
-    return max(float(QWEN_MIN_BATCH_SECONDS), min(float(QWEN_MAX_BATCH_SECONDS), parsed))
+        parsed = float(AI_DEFAULT_BATCH_SECONDS)
+    return max(float(AI_MIN_BATCH_SECONDS), min(float(AI_MAX_BATCH_SECONDS), parsed))
 
 
 def _average_batch_seconds(completed_ai_batch_durations: list[float] | tuple[float, ...] | None) -> float:
@@ -69,7 +69,7 @@ def _average_batch_seconds(completed_ai_batch_durations: list[float] | tuple[flo
         if parsed > 0:
             durations.append(parsed)
     if not durations:
-        return _bounded_batch_seconds(QWEN_DEFAULT_BATCH_SECONDS)
+        return _bounded_batch_seconds(AI_DEFAULT_BATCH_SECONDS)
     return _bounded_batch_seconds(sum(durations) / len(durations))
 
 
@@ -167,6 +167,7 @@ def init_progress(search_id: str, target: int, raw_target: int, engine_mode: str
             "ai_avg_batch_seconds": None,
             "ai_current_batch_elapsed_seconds": None,
             "ai_completed_batches": None,
+            "ai_orchestrator": None,
             "engine": "none",
             "attempt": 1,
             "max_attempts": 1,
@@ -235,7 +236,7 @@ def calculate_ai_eta_snapshot(
     completed_ai_batch_durations: list[float] | tuple[float, ...] | None = None,
     batch_done: bool = False,
 ) -> dict[str, Any]:
-    """Build a live ETA/progress snapshot for the Qwen AI filter phase."""
+    """Build a live ETA/progress snapshot for the AI filter phase."""
     now_monotonic = time.perf_counter()
     now_epoch_ms = _epoch_ms()
     total = max(1, int(batch_total or 1))
@@ -287,7 +288,7 @@ def update_ai_eta_progress(
     valid: int | None = None,
     batch_done: bool = False,
 ) -> dict[str, Any]:
-    """Refresh progress while an Ollama/Qwen batch is running."""
+    """Refresh progress while an Ollama classifier batch is running."""
     snapshot = calculate_ai_eta_snapshot(
         batch_current=batch_current,
         batch_total=batch_total,

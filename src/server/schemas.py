@@ -12,7 +12,6 @@ from src.config import TARGET_COUNT_DEFAULT
 
 
 EngineMode = Literal["auto", "puppeteer", "rollback", "compare"]
-AiMode = Literal["fast", "balanced", "json", "accurate"]
 SortMode = Literal["terbaik", "termurah", "most_trusted"]
 REQUESTED_COUNT_DEFAULT = max(1, int(TARGET_COUNT_DEFAULT))
 
@@ -27,7 +26,6 @@ class SearchRequest(BaseModel):
     tolerance: float = 20.0
     use_ai: bool = Field(default=True, validation_alias=AliasChoices("use_ai", "ai"))
     engine_mode: EngineMode = "auto"
-    ai_mode: AiMode = "balanced"
     sort_mode: SortMode = "terbaik"
 
 
@@ -82,6 +80,7 @@ class ProgressResponse(BaseModel):
     ai_avg_batch_seconds: Optional[float] = None
     ai_current_batch_elapsed_seconds: Optional[float] = None
     ai_completed_batches: Optional[int] = None
+    ai_orchestrator: Optional[Dict[str, Any]] = None
     engine: str = "none"
     attempt: int = 1
     max_attempts: int = 1

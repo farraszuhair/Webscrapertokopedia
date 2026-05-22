@@ -189,7 +189,7 @@ project/
 - Python 3.10+
 - Node.js 16+
 - Chrome/Chromium browser
-- Ollama with qwen2.5:14b model running on localhost:11434
+- Ollama with at least one supported model running on localhost:11434
 
 ### 1. Install Python Dependencies
 ```bash
@@ -204,7 +204,10 @@ npm install
 
 ### 3. Start Ollama
 ```bash
-ollama pull qwen2.5:14b
+ollama pull gemma3:4b
+ollama pull llama3.2:3b
+ollama pull phi4-mini
+ollama pull nomic-embed-text
 ollama serve
 # Runs on http://localhost:11434
 ```
@@ -313,7 +316,7 @@ python -m pytest tests/test_integration.py -v
 - **Cause**: Ollama not running OR model not loaded
 - **Fix**:
   - Check: curl http://localhost:11434/api/tags
-  - Pull model: ollama pull qwen2.5:14b
+  - Pull model: ollama pull gemma3:4b
   - Check logs in data/debug/<search_id>/qwen_error.json
 
 ### "0 produk lolos budget"

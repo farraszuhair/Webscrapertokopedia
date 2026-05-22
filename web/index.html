@@ -55,14 +55,18 @@
           </select>
         </div>
 
-        <div class="form-group">
-          <label for="ai_mode">AI Mode</label>
-          <select id="ai_mode">
-            <option value="balanced" selected>Balanced - gemma3:4b</option>
-            <option value="fast">Fast - llama3.2:3b</option>
-            <option value="json">JSON - phi4-mini</option>
-            <option value="accurate">Accurate - qwen2.5:14b</option>
-          </select>
+        <div id="ai-status-card" class="ai-status-card">
+          <div class="ai-status-head">
+            <strong>AI Orchestrator</strong>
+            <span id="ai-status-badge" class="ai-status-badge is-checking">Checking...</span>
+          </div>
+          <p id="ai-status-message" class="ai-status-message">Memeriksa model Ollama lokal...</p>
+          <div class="ai-status-grid">
+            <span>Classifier</span><b id="ai-status-classifier">-</b>
+            <span>Semantic</span><b id="ai-status-semantic">-</b>
+            <span>JSON Repair</span><b id="ai-status-json">-</b>
+          </div>
+          <pre id="ai-install-command" class="ai-install-command hidden"></pre>
         </div>
 
         <div class="form-group">
@@ -91,8 +95,8 @@
         <div class="form-group checkbox-group">
           <label class="checkbox-label">
             <input type="checkbox" id="use_ai" checked>
-            <span>Gunakan AI untuk produk borderline</span>
-            <small>(rules tetap berjalan jika Ollama mati)</small>
+            <span>Gunakan AI Orchestrator untuk produk borderline</span>
+            <small>Model dipilih otomatis. Rules tetap jalan walaupun Ollama mati.</small>
           </label>
         </div>
 
@@ -197,9 +201,9 @@
         <div id="r-warning" class="result-warning hidden"></div>
 
         <div class="quick-sort" id="quick-sort">
-          <button class="quick-sort-btn" type="button" data-sort="most_trusted">Most Trusted</button>
-          <button class="quick-sort-btn" type="button" data-sort="termurah">Termurah</button>
-          <button class="quick-sort-btn active" type="button" data-sort="terbaik">Terbaik</button>
+          <button class="quick-sort-btn" type="button" data-sort="most_trusted">🏆 Most Trusted</button>
+          <button class="quick-sort-btn" type="button" data-sort="termurah">💸 Termurah</button>
+          <button class="quick-sort-btn active" type="button" data-sort="terbaik">⭐ Terbaik</button>
         </div>
 
         <div id="comparison-panel" class="comparison-panel hidden">

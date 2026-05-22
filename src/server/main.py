@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI
 app = FastAPI(
     title="Tokopedia Scraper API",
-    description="Python/Puppeteer/Selenium scraper with Qwen AI validation.",
+    description="Python/Puppeteer/Selenium scraper with automatic local AI orchestration.",
     version="4.0",
     lifespan=lifespan
 )

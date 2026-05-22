@@ -1,9 +1,8 @@
 """
-Qwen-based relevance filtering.
+Intent-aware relevance filtering.
 
-Flow:
-  deduped products -> optional budget filter -> batched compact JSON prompt
-  -> Ollama /api/generate -> ranked candidates.
+The active path delegates to src.ai.ai_filter: deterministic rules first,
+automatic small-model orchestration only for borderline products.
 """
 from __future__ import annotations
 
@@ -19,13 +18,6 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator, List, Tuple
 
 from src.ai.learning import get_recent_examples, get_recent_feedback
-from src.ai.qwen_client import (
-    AI_ALLOW_FALLBACK,
-    ask_qwen,
-    call_ollama_generate,
-    check_ollama_health,
-    select_ollama_model,
-)
 from src.utils.logger import log
 from src.utils.currency import parse_rupiah
 from src.config import (
@@ -235,13 +227,34 @@ def is_obvious_match_for_intent(query: str, product: dict[str, Any], query_inten
 
 
 def should_call_llm(rule_score: float, obvious_junk: bool) -> bool:
-    if rule_score >= RULE_ACCEPT_THRESHOLD:
-        return False
-    if obvious_junk and rule_score < RULE_REJECT_THRESHOLD:
-        return False
-    if rule_score >= RULE_REVIEW_THRESHOLD:
-        return True
-    return False
+    from src.ai.ai_orchestrator import should_call_llm as orchestrator_should_call_llm
+
+    return orchestrator_should_call_llm(rule_score, obvious_junk)
+
+
+async def compute_semantic_score_if_available(
+    query: str,
+    product: dict[str, Any],
+    orchestrator_status: dict[str, Any] | None = None,
+) -> float | None:
+    status = orchestrator_status
+    if status is None:
+        from src.ai.model_registry import get_orchestrator_status
+
+        status = get_orchestrator_status()
+    if not status.get("capabilities", {}).get("semantic"):
+        return None
+    try:
+        from src.ai.ollama_client import cosine_similarity, get_embedding_async
+
+        title = str(product.get("title") or "")
+        if not title:
+            return None
+        query_embedding = await get_embedding_async(query)
+        title_embedding = await get_embedding_async(title)
+        return cosine_similarity(query_embedding, title_embedding)
+    except Exception:
+        return None
 
 
 def get_feedback_score_adjustment(query: str, query_intent: str, product_category: str, title: str) -> float:

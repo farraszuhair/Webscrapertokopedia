@@ -4,7 +4,7 @@ test_integration.py - Full pipeline integration tests.
 Coverage:
 - Compare mode returns both engine reports independently
 - Engine preflight errors reported with opened_real_page=false
-- Qwen failures don't crash pipeline
+- AI Orchestrator failures don't crash pipeline
 - Budget filters work end-to-end
 - Product feedback saved and can be retrieved
 """
@@ -30,7 +30,7 @@ class TestCompareMode:
                     "opened_real_page": True,
                     "raw_count": 42,
                     "ai_valid_count": 35,
-                    "qwen_status": "ok",
+                    "ai_status": "ok",
                 },
                 {
                     "engine": "rollback",
@@ -38,7 +38,7 @@ class TestCompareMode:
                     "opened_real_page": True,
                     "raw_count": 38,
                     "ai_valid_count": 32,
-                    "qwen_status": "ok",
+                    "ai_status": "ok",
                 },
             ],
             "selected_engine": "puppeteer",
@@ -112,42 +112,42 @@ class TestPreflightInPipeline:
         assert engine_result["ok"] is False
 
 
-class TestQwenFailureInPipeline:
-    """Test that Qwen failure is handled in pipeline."""
+class TestAIOrchestratorFailureInPipeline:
+    """Test that AI Orchestrator failure is handled in pipeline."""
 
-    def test_qwen_failed_shows_fallback_warning(self):
-        """When Qwen fails, qwen_status=failed and warning is shown."""
+    def test_ai_orchestrator_failed_shows_fallback_warning(self):
+        """When AI Orchestrator fails, ai_status=failed and warning is shown."""
         result = {
-            "qwen_status": "failed",
-            "qwen_warning": "Qwen gagal atau tidak tersedia. Produk ditampilkan berdasarkan fallback scoring.",
-            "data": [  # Still has data from fallback
+            "ai_status": "failed",
+            "ai_warning": "AI Orchestrator gagal atau tidak tersedia. Produk ditampilkan berdasarkan rule engine fallback.",
+            "data": [  # Still has data from rule fallback
                 {"title": "Laptop 1"},
                 {"title": "Laptop 2"},
             ],
         }
-        assert result["qwen_status"] == "failed"
-        assert "Qwen gagal" in result["qwen_warning"]
+        assert result["ai_status"] == "failed"
+        assert "AI" in result["ai_warning"]
         assert len(result["data"]) > 0  # Products still returned
 
-    def test_qwen_disabled_shows_disabled_status(self):
-        """When use_ai=false, qwen_status=disabled."""
+    def test_ai_orchestrator_disabled_shows_disabled_status(self):
+        """When use_ai=false, ai_status=disabled."""
         result = {
-            "qwen_status": "disabled",
+            "ai_status": "disabled",
             "data": [
                 {"title": "Laptop 1"},
             ],
         }
-        assert result["qwen_status"] == "disabled"
+        assert result["ai_status"] == "disabled"
 
-    def test_qwen_unavailable_fallback_used(self):
-        """When Ollama not running, fallback scorer used."""
+    def test_ai_orchestrator_unavailable_fallback_used(self):
+        """When Ollama not running, rule engine used as fallback."""
         result = {
-            "qwen_status": "unavailable",
+            "ai_status": "unavailable",
             "data": [
                 {"title": "Laptop 1"},
             ],
         }
-        assert result["qwen_status"] == "unavailable"
+        assert result["ai_status"] == "unavailable"
         assert len(result["data"]) > 0
 
 
@@ -189,11 +189,11 @@ class TestErrorMessageQuality:
         assert "error page" in msg.lower()
         assert "http2_protocol_error" in msg
 
-    def test_qwen_failure_message(self):
-        """Qwen failure should explain fallback is being used."""
-        msg = "Qwen gagal atau tidak tersedia. Produk ditampilkan berdasarkan fallback scoring (raw/budget tetap ditampilkan)."
-        assert "Qwen gagal" in msg
-        assert "fallback" in msg.lower()
+    def test_ai_orchestrator_failure_message(self):
+        """AI Orchestrator failure should explain rule engine fallback is being used."""
+        msg = "AI Orchestrator gagal atau tidak tersedia. Produk ditampilkan berdasarkan rule engine fallback (raw/budget tetap ditampilkan)."
+        assert "AI" in msg
+        assert "fallback" in msg.lower() or "rule" in msg.lower()
 
     def test_budget_no_match_message(self):
         """Budget no-match should show range."""

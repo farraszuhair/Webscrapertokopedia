@@ -23,7 +23,19 @@ class TestNormalizerKeepsWeakProducts:
         raw = {"title": "ROG Strix", "price_raw": "Rp20.000.000", "url": "https://tokopedia.com/c/d"}
         result = normalize_product(raw)
         assert result is not None
-        assert result["image"] == ""
+        assert result["image"] is None
+
+    def test_keeps_only_valid_http_image_url(self):
+        raw = {
+            "title": "ROG Strix",
+            "price_raw": "Rp20.000.000",
+            "url": "https://tokopedia.com/c/d",
+            "image": '">broken',
+            "thumbnail": "https://images.tokopedia.net/rog.jpg",
+        }
+        result = normalize_product(raw)
+        assert result is not None
+        assert result["image"] == "https://images.tokopedia.net/rog.jpg"
 
     def test_drops_product_missing_title(self):
         raw = {"price_raw": "Rp5.000.000", "url": "https://tokopedia.com/x/y"}

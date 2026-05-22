@@ -40,6 +40,7 @@ class ScraperApp {
       localEtaSeconds: null,
       lastEtaFallbackSignature: null,
       lastProgress: null,
+      aiStatus: null,
     };
 
     this.$ = (id) => document.getElementById(id);
@@ -54,6 +55,7 @@ class ScraperApp {
     this.bindResetAI();
     this.bindQuickSort();
     this._createFeedbackModal();
+    this.fetchAiStatus();
   }
 
   show(panelId) {
@@ -100,6 +102,16 @@ class ScraperApp {
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return 'Rp0';
     return 'Rp' + n.toLocaleString('id-ID');
+  }
+
+  formatRupiah(value) {
+    const number = Number(value || 0);
+    if (!number) return 'Harga tidak tersedia';
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      maximumFractionDigits: 0,
+    }).format(number);
   }
 
   bindBudgetInfo() {
@@ -158,6 +170,79 @@ class ScraperApp {
     });
   }
 
+  async fetchAiStatus() {
+    try {
+      const res = await fetch('/api/ai/status');
+      const status = await res.json();
+      this.state.aiStatus = status;
+      this.renderAiStatus(status);
+    } catch (err) {
+      const fallback = {
+        ok: false,
+        classifier: null,
+        capabilities: { semantic: false, json_repair: false },
+        missing: ['gemma3:4b', 'llama3.2:3b', 'phi4-mini', 'nomic-embed-text'],
+        message: 'Ollama belum bisa dihubungi. Search tetap bisa berjalan dengan rules.',
+        install_commands: [
+          'ollama pull gemma3:4b',
+          'ollama pull llama3.2:3b',
+          'ollama pull phi4-mini',
+          'ollama pull nomic-embed-text',
+        ],
+      };
+      this.state.aiStatus = fallback;
+      this.renderAiStatus(fallback);
+      console.warn('AI status error:', err);
+    }
+  }
+
+  renderAiStatus(status) {
+    const badge = this.$('ai-status-badge');
+    const message = this.$('ai-status-message');
+    const classifier = this.$('ai-status-classifier');
+    const semantic = this.$('ai-status-semantic');
+    const json = this.$('ai-status-json');
+    const install = this.$('ai-install-command');
+    const useAi = this.$('use_ai');
+    if (!badge || !message || !classifier || !semantic || !json || !install) return;
+
+    const capabilities = status?.capabilities || {};
+    badge.textContent = status?.ok ? 'Ready' : 'Rules only';
+    badge.className = `ai-status-badge ${status?.ok ? 'is-ready' : 'is-missing'}`;
+    message.textContent = status?.ok
+      ? (status.message || 'AI Orchestrator ready')
+      : 'Model AI belum terinstall. Jalankan: ollama pull gemma3:4b';
+    classifier.textContent = status?.classifier || 'Rules only';
+    semantic.textContent = capabilities.semantic ? 'nomic-embed-text installed' : 'nomic-embed-text missing';
+    json.textContent = capabilities.json_repair ? 'phi4-mini installed' : 'phi4-mini missing';
+
+    const commands = status?.install_commands || [
+      'ollama pull gemma3:4b',
+      'ollama pull llama3.2:3b',
+      'ollama pull phi4-mini',
+      'ollama pull nomic-embed-text',
+    ];
+    const missing = Array.isArray(status?.missing) ? status.missing : [];
+    const missingCommands = commands.filter((cmd) => missing.some((model) => cmd.includes(model)));
+    if (status?.ok) {
+      install.textContent = missingCommands.length
+        ? ['Model opsional yang belum terinstall:', ...missingCommands].join('\n')
+        : '';
+      install.classList.toggle('hidden', !missingCommands.length);
+      if (useAi) {
+        useAi.disabled = false;
+        useAi.checked = true;
+      }
+    } else {
+      install.textContent = commands.join('\n');
+      install.classList.remove('hidden');
+      if (useAi) {
+        useAi.checked = false;
+        useAi.disabled = true;
+      }
+    }
+  }
+
   async startSearch() {
     const query = this.$('query')?.value.trim();
     const targetRaw = this.$('target_count')?.value ?? '';
@@ -166,7 +251,6 @@ class ScraperApp {
     const tolerance = Number.parseFloat(this.$('tolerance')?.value || '20');
     const ai = this.$('use_ai')?.checked ?? true;
     const engineMode = this.$('engine_mode')?.value || 'auto';
-    const aiMode = this.$('ai_mode')?.value || 'balanced';
     const budget = this.getBudgetText();
 
     if (!query) {
@@ -198,7 +282,6 @@ class ScraperApp {
           ai,
           use_ai: ai,
           engine_mode: engineMode,
-          ai_mode: aiMode,
           sort_mode: this.state.sortMode,
         }),
       });
@@ -414,7 +497,7 @@ class ScraperApp {
       compare_filtering: 'Compare filter',
       deduplicating: 'Dedup',
       budget_filtering: 'Budget filter',
-      ai_filtering: 'Qwen AI filter',
+      ai_filtering: 'AI Orchestrator',
       ranking: 'Ranking',
       recommendation_building: 'Recommendations',
       finalizing: 'Finalizing',
@@ -476,7 +559,7 @@ class ScraperApp {
     } else if (limitedReason) {
       messages.push(limitedReason);
     }
-    if (data.qwen_warning) messages.push(data.qwen_warning);
+    if (data.ai_warning) messages.push(data.ai_warning);
     if (!messages.length) {
       box.classList.add('hidden');
       box.textContent = '';
@@ -534,7 +617,7 @@ class ScraperApp {
         <div class="compare-stats">
           <span>Raw scraped: <b>${item.raw_scraped ?? item.raw_count ?? 0}</b></span>
           <span>Budget valid: <b>${item.budget_valid_count ?? 0}</b></span>
-          <span>Qwen accepted: <b>${item.qwen_accepted_count ?? item.ai_valid_count ?? 0}</b></span>
+          <span>AI accepted: <b>${item.ai_accepted_count ?? item.ai_valid_count ?? 0}</b></span>
           <span>Duration: ${item.duration_seconds ?? item.duration ?? 0}s</span>
           <span>Status: ${item.ok ? 'OK' : 'FAIL'}</span>
         </div>
@@ -565,7 +648,7 @@ class ScraperApp {
     this.renderResultSummary(item);
     this.renderResultWarning({
       limited_reason: this.state.metadata.limited_reason,
-      qwen_warning: item.qwen_warning || '',
+      ai_warning: item.ai_warning || '',
       result_metadata: this.state.metadata,
     });
     this.updateResultCount();
@@ -579,7 +662,7 @@ class ScraperApp {
     const raw = Number(meta.raw_scraped_count ?? meta.raw_scraped ?? data.raw_count ?? 0);
     const deduped = Number(meta.deduped_count ?? data.deduped_count ?? 0);
     const budget = Number(meta.budget_valid_count ?? data.budget_valid_count ?? data.budget_count ?? 0);
-    const qwen = Number(meta.qwen_accepted_count ?? meta.ai_accepted_count ?? data.qwen_accepted_count ?? data.ai_valid_count ?? 0);
+    const aiAccepted = Number(meta.ai_accepted_count ?? data.ai_accepted_count ?? data.ai_valid_count ?? 0);
 
     this.setText('r-count', displayed || this.state.products.length || 0);
     this.setText('r-target', requested || '-');
@@ -587,7 +670,7 @@ class ScraperApp {
     this.setText('rs-raw', raw || 0);
     this.setText('rs-deduped', deduped || 0);
     this.setText('rs-budget', budget || 0);
-    this.setText('rs-qwen', qwen || 0);
+    this.setText('rs-qwen', aiAccepted || 0);
     this.setText('rs-displayed', displayed || this.state.products.length || 0);
   }
 
@@ -715,77 +798,181 @@ class ScraperApp {
 
   sortProducts(products, mode) {
     const list = [...(products || [])];
-    const numeric = (value, fallback = 0) => {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : fallback;
+    const safeNumber = (value) => Number(value || 0);
+    const price = (p) => {
+      const value = safeNumber(p.price_value ?? p.price);
+      return value > 0 ? value : Number.MAX_SAFE_INTEGER;
     };
-    const price = (p) => numeric(p.price_value ?? p.price, Number.MAX_SAFE_INTEGER);
-    const relevance = (p) => numeric(p.relevance_score ?? p.ai_confidence, 0);
-    const rating = (p) => numeric(p.rating, 0);
-    const sold = (p) => numeric(p.sold_count, 0);
+    const relevance = (p) => safeNumber(p.confidence ?? p.relevance_score ?? p.ai_confidence);
+    const rating = (p) => safeNumber(p.rating);
+    const sold = (p) => safeNumber(p.sold_count);
+    const review = (p) => safeNumber(p.review_count);
     const trust = (p) => {
+      if (p.store_trust_score != null) return safeNumber(p.store_trust_score);
       const shop = String(p.shop_name || p.shop || '').toLowerCase();
       const shopBoost = /(official|mall|power merchant|pro)/.test(shop) ? 1 : shop ? 0.5 : 0;
-      return shopBoost + rating(p) / 5 + Math.min(sold(p), 1000) / 1000;
+      return shopBoost + rating(p) / 5 + Math.min(sold(p), 1000) / 1000 + Math.min(review(p), 1000) / 2000;
     };
-    if (mode === 'termurah') return list.sort((a, b) => price(a) - price(b) || relevance(b) - relevance(a));
-    if (mode === 'most_trusted') return list.sort((a, b) => trust(b) - trust(a) || relevance(b) - relevance(a));
-    return list.sort((a, b) => relevance(b) - relevance(a) || rating(b) - rating(a) || sold(b) - sold(a));
+    if (mode === 'termurah') {
+      return list.sort((a, b) =>
+        price(a) - price(b)
+        || relevance(b) - relevance(a)
+        || rating(b) - rating(a)
+      );
+    }
+    if (mode === 'most_trusted') {
+      return list.sort((a, b) =>
+        trust(b) - trust(a)
+        || rating(b) - rating(a)
+        || sold(b) - sold(a)
+        || review(b) - review(a)
+      );
+    }
+    return list.sort((a, b) =>
+      relevance(b) - relevance(a)
+      || rating(b) - rating(a)
+      || sold(b) - sold(a)
+      || price(a) - price(b)
+    );
+  }
+
+  getValidImageUrl(product) {
+    const url = product?.image || product?.image_url || product?.thumbnail || '';
+    if (!url || typeof url !== 'string') return null;
+    const cleaned = url.trim();
+    if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) return null;
+    return cleaned;
+  }
+
+  createImagePlaceholder(text) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'product-image-placeholder';
+    const icon = document.createElement('span');
+    icon.textContent = '📦';
+    const label = document.createElement('small');
+    label.textContent = text;
+    placeholder.append(icon, label);
+    return placeholder;
+  }
+
+  createProductImage(product) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'product-image-wrap';
+    const imageUrl = this.getValidImageUrl(product);
+    if (!imageUrl) {
+      wrapper.appendChild(this.createImagePlaceholder('Gambar tidak tersedia'));
+      return wrapper;
+    }
+
+    const img = document.createElement('img');
+    img.className = 'product-image';
+    img.src = imageUrl;
+    img.alt = product.title || 'Product image';
+    img.loading = 'lazy';
+    img.referrerPolicy = 'no-referrer';
+    img.onerror = () => {
+      wrapper.replaceChildren(this.createImagePlaceholder('Gambar gagal dimuat'));
+    };
+    wrapper.appendChild(img);
+    return wrapper;
+  }
+
+  appendText(parent, className, text, tagName = 'div') {
+    if (text == null || text === '') return null;
+    const el = document.createElement(tagName);
+    el.className = className;
+    el.textContent = String(text);
+    parent.appendChild(el);
+    return el;
+  }
+
+  createBadge(text) {
+    const badge = document.createElement('span');
+    badge.className = 'product-badge';
+    badge.textContent = text;
+    return badge;
   }
 
   createCard(product) {
     const card = document.createElement('div');
     card.className = 'product-card';
-    const id = product.id || '';
+    const id = String(product.id || product.url || product.title || '');
     card.dataset.id = id;
 
     const title = product.title || 'Produk Tokopedia';
     const url = product.url || '#';
-    const price = product.price_raw || product.price_text || '-';
-    const image = product.image || product.image_url || '';
+    const numericPrice = product.price_value ?? product.price;
+    const priceText = Number(numericPrice) > 0
+      ? this.formatRupiah(numericPrice)
+      : (product.price_text || product.price_raw || 'Harga tidak tersedia');
     const soldText = product.sold || product.sold_text || product.sold_count || '';
     const shopName = product.shop || product.shop_name || '';
     const shopLocation = product.location || product.shop_location || '';
-    const imgHtml = image
-      ? `<img src="${this.esc(image)}" alt="${this.esc(title)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\"product-img-placeholder\\">No image</div>'">`
-      : '<div class="product-img-placeholder">No image</div>';
     const aiValue = product.ai_confidence ?? product.relevance_score;
     const aiNumeric = Number(aiValue);
     const aiConfidenceLabel = product.ai_confidence_label
       || (aiNumeric >= 0.85 ? 'High' : aiNumeric >= 0.70 ? 'Medium' : 'Low');
-    const confidenceClass = aiConfidenceLabel.toLowerCase();
-    const confidence = aiValue != null && Number.isFinite(Number(aiValue))
-      ? `<span class="ai-score conf-${this.esc(confidenceClass)}">AI ${Number(aiValue).toFixed(2)} ${this.esc(aiConfidenceLabel)}</span>`
-      : '';
     const aiLabel = product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan');
     const aiReason = product.ai_confidence_explanation || product.ai_explanation || product.ai_reason || '';
-    const aiCategories = (product.ai_categories || []).length
-      ? `<div class="ai-cats">${product.ai_categories.map(c => `<span class="cat-tag">${this.esc(c)}</span>`).join('')}</div>`
-      : '';
 
-    card.innerHTML = `
-      <a href="${this.esc(url)}" target="_blank" rel="noopener" class="product-link">
-        <div class="product-img">${imgHtml}</div>
-        <div class="product-body">
-          <div class="product-title">${this.esc(title)}</div>
-          <div class="product-price">${this.esc(price)}</div>
-          <div class="product-stats">
-            ${product.rating ? `<span class="product-rating">&#9733; ${this.esc(product.rating)}</span>` : ''}
-            ${soldText ? `<span class="product-sold">${this.esc(soldText)}</span>` : ''}
-          </div>
-          ${shopName ? `<div class="product-shop">Shop: ${this.esc(shopName)}</div>` : ''}
-          ${shopLocation ? `<div class="product-location">Location: ${this.esc(shopLocation)}</div>` : ''}
-          ${product.source_engine ? `<div class="product-source">${this.esc(product.source_engine)}</div>` : ''}
-          <div class="ai-line"><span class="ai-label">AI label: ${this.esc(aiLabel)}</span>${confidence}</div>
-          ${aiCategories}
-          ${aiReason ? `<div class="ai-reason">${this.esc(aiReason)}</div>` : ''}
-        </div>
-      </a>
-      <div class="product-footer">
-        <button class="btn-feedback btn-benar" data-id="${this.esc(id)}" data-action="benar" title="Produk ini benar">Benar</button>
-        <button class="btn-feedback btn-salah" data-id="${this.esc(id)}" data-action="salah" title="Produk ini salah">Salah</button>
-      </div>
-    `;
+    const link = document.createElement('a');
+    link.href = url || '#';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.className = 'product-link';
+    link.appendChild(this.createProductImage(product));
+
+    const body = document.createElement('div');
+    body.className = 'product-body';
+    this.appendText(body, 'product-title', title);
+    this.appendText(body, 'product-price', priceText);
+
+    const meta = document.createElement('div');
+    meta.className = 'product-meta';
+    if (product.rating) this.appendText(meta, 'product-rating', `★ ${product.rating}`, 'span');
+    if (soldText) this.appendText(meta, 'product-sold', String(soldText), 'span');
+    if (shopName) this.appendText(meta, 'product-shop', shopName, 'span');
+    if (shopLocation) this.appendText(meta, 'product-location', shopLocation, 'span');
+    body.appendChild(meta);
+
+    const badges = document.createElement('div');
+    badges.className = 'product-badges';
+    if (aiValue != null && Number.isFinite(aiNumeric)) {
+      badges.appendChild(this.createBadge(`AI ${aiNumeric.toFixed(2)} ${aiConfidenceLabel}`));
+    }
+    badges.appendChild(this.createBadge(product.ai_source || product.decision_source || 'rule'));
+    if (product.source_engine) badges.appendChild(this.createBadge(product.source_engine));
+    body.appendChild(badges);
+
+    const labelLine = document.createElement('div');
+    labelLine.className = 'ai-line';
+    labelLine.appendChild(this.createBadge(aiLabel));
+    (product.ai_categories || []).slice(0, 3).forEach((cat) => labelLine.appendChild(this.createBadge(cat)));
+    body.appendChild(labelLine);
+
+    if (aiReason) this.appendText(body, 'ai-reason', aiReason);
+
+    link.appendChild(body);
+    card.appendChild(link);
+
+    const footer = document.createElement('div');
+    footer.className = 'product-footer feedback-row';
+    const positive = document.createElement('button');
+    positive.className = 'btn-feedback btn-benar feedback-positive';
+    positive.dataset.id = id;
+    positive.dataset.action = 'benar';
+    positive.type = 'button';
+    positive.title = 'Produk ini benar';
+    positive.textContent = 'Benar';
+    const negative = document.createElement('button');
+    negative.className = 'btn-feedback btn-salah feedback-negative';
+    negative.dataset.id = id;
+    negative.dataset.action = 'salah';
+    negative.type = 'button';
+    negative.title = 'Produk ini salah';
+    negative.textContent = 'Salah';
+    footer.append(positive, negative);
+    card.appendChild(footer);
 
     card.querySelectorAll('.btn-feedback').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -798,6 +985,7 @@ class ScraperApp {
         }
         this._submitFeedback(pid, {
           userAction: 'benar',
+          feedbackType: 'positive',
           selectedReasons: [],
           customReason: '',
           correctedLabel: 'relevan',
@@ -852,7 +1040,7 @@ class ScraperApp {
   }
 
   _openFeedbackModal(productId) {
-    const product = this.state.products.find((p) => p.id === productId);
+    const product = this.state.products.find((p) => String(p.id || p.url || p.title || '') === String(productId));
     if (!product) return;
 
     this._modalPid = productId;
@@ -888,7 +1076,7 @@ class ScraperApp {
   }
 
   async _submitFeedback(productId, feedback) {
-    const product = this.state.products.find((p) => p.id === productId);
+    const product = this.state.products.find((p) => String(p.id || p.url || p.title || '') === String(productId));
     if (!product) return;
 
     const payload = {
@@ -906,6 +1094,7 @@ class ScraperApp {
       ai_confidence: product.ai_confidence ?? product.relevance_score ?? 0,
       rule_score: product.rule_score ?? 0,
       sort_mode: this.state.sortMode || 'terbaik',
+      decision_source: product.ai_source || product.decision_source || '',
       query_intent: product.query_intent || this.state.metadata.query_intent || '',
       product: {
         id: product.id || '',
@@ -931,7 +1120,8 @@ class ScraperApp {
         console.warn('Feedback gagal:', data);
         return;
       }
-      const card = document.querySelector(`[data-id="${productId}"]`)?.closest('.product-card');
+      const card = Array.from(document.querySelectorAll('.product-card'))
+        .find((item) => item.dataset.id === String(productId));
       if (card) {
         card.classList.add('feedback-sent');
         card.title = `Feedback: ${feedback.userAction}`;

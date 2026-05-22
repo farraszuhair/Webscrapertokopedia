@@ -73,6 +73,25 @@ def _clean_url(url: str) -> str:
     return re.split(r"[?#]", url.strip(), maxsplit=1)[0]
 
 
+def normalize_image(raw: dict[str, Any]) -> str | None:
+    """Return the first valid http(s) image URL from common scraper fields."""
+    candidates = [
+        raw.get("image"),
+        raw.get("image_url"),
+        raw.get("thumbnail"),
+        raw.get("img"),
+        raw.get("picture"),
+        raw.get("url_gambar"),
+    ]
+    for url in candidates:
+        if not isinstance(url, str):
+            continue
+        cleaned = url.strip().strip('"').strip("'")
+        if cleaned.startswith("http://") or cleaned.startswith("https://"):
+            return cleaned
+    return None
+
+
 def _product_id(title: str, url: str, price_value: int | None) -> str:
     """Create a stable frontend id from fields that do not change per render."""
     raw = f"{title}|{url}|{price_value or ''}".encode("utf-8", errors="ignore")
@@ -133,6 +152,8 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         except ValueError:
             pass
 
+    image_url = normalize_image(raw)
+
     normalized = {
         "id": raw.get("id") or _product_id(title, url, parsed_price),
         "title": title,
@@ -151,8 +172,8 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "sold": sold_text, # backward compat
         "product_url": url,
         "url": url, # backward compat
-        "image_url": _first_text(raw, ("image", "image_url", "url_gambar", "thumbnail")),
-        "image": _first_text(raw, ("image", "image_url", "url_gambar", "thumbnail")), # backward compat
+        "image_url": image_url,
+        "image": image_url, # backward compat
         "source_engine": engine,
         "source_query": _first_text(raw, ("source_query", "query_variant")),
         "category_decision": raw.get("category_decision", ""),

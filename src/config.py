@@ -25,23 +25,40 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-AI_MODE = os.getenv("AI_MODE", "balanced").strip().lower() or "balanced"
+AI_ORCHESTRATION_ENABLED = os.getenv("AI_ORCHESTRATION_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 
-AI_MODELS = {
-    "fast": "llama3.2:3b",
-    "balanced": "gemma3:4b",
-    "json": "phi4-mini",
-    "accurate": "qwen2.5:14b",
+ALLOWED_OLLAMA_MODELS = [
+    "gemma3:4b",
+    "llama3.2:3b",
+    "phi4-mini",
+    "nomic-embed-text",
+]
+
+AI_MODEL_JOBS = {
+    "semantic": "nomic-embed-text",
+    "balanced_classifier": "gemma3:4b",
+    "fast_classifier": "llama3.2:3b",
+    "json_repair": "phi4-mini",
 }
 
-AI_FILTER_MODEL = os.getenv("AI_FILTER_MODEL", AI_MODELS["balanced"]).strip() or AI_MODELS["balanced"]
-AI_FAST_MODEL = os.getenv("AI_FAST_MODEL", AI_MODELS["fast"]).strip() or AI_MODELS["fast"]
-AI_JSON_MODEL = os.getenv("AI_JSON_MODEL", AI_MODELS["json"]).strip() or AI_MODELS["json"]
-AI_FALLBACK_MODEL = os.getenv("AI_FALLBACK_MODEL", AI_MODELS["fast"]).strip() or AI_MODELS["fast"]
+CLASSIFIER_PRIORITY = [
+    "gemma3:4b",
+    "llama3.2:3b",
+]
 
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text").strip() or "nomic-embed-text"
+AI_MODE = "auto"
+AI_MODELS = {
+    "balanced": AI_MODEL_JOBS["balanced_classifier"],
+    "fast": AI_MODEL_JOBS["fast_classifier"],
+    "json": AI_MODEL_JOBS["json_repair"],
+}
+AI_FILTER_MODEL = AI_MODEL_JOBS["balanced_classifier"]
+AI_FAST_MODEL = AI_MODEL_JOBS["fast_classifier"]
+AI_JSON_MODEL = AI_MODEL_JOBS["json_repair"]
+AI_FALLBACK_MODEL = AI_MODEL_JOBS["fast_classifier"]
+EMBEDDING_MODEL = AI_MODEL_JOBS["semantic"]
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip("/")
 OLLAMA_TIMEOUT_SECONDS = _env_int("OLLAMA_TIMEOUT_SECONDS", _env_int("AI_TIMEOUT_SECONDS", 12))
 
 TARGET_COUNT_DEFAULT = _env_int("TARGET_COUNT_DEFAULT", 50)
@@ -50,6 +67,7 @@ OVERFETCH_MULTIPLIER = _env_int("OVERFETCH_MULTIPLIER", _env_int("SCRAPER_OVERFE
 RULE_ACCEPT_THRESHOLD = _env_float("RULE_ACCEPT_THRESHOLD", 0.72)
 RULE_REVIEW_THRESHOLD = _env_float("RULE_REVIEW_THRESHOLD", 0.45)
 RULE_REJECT_THRESHOLD = _env_float("RULE_REJECT_THRESHOLD", 0.35)
+FALLBACK_EXPANSION_THRESHOLD = _env_float("FALLBACK_EXPANSION_THRESHOLD", 0.30)
 LLM_ACCEPT_THRESHOLD = _env_float("LLM_ACCEPT_THRESHOLD", 0.62)
 
 AI_BATCH_SIZE = max(1, _env_int("AI_BATCH_SIZE", 8))

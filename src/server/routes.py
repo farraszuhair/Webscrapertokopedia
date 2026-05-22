@@ -2,13 +2,11 @@
 routes.py - FastAPI routes for the Tokopedia scraper pipeline.
 
 Pipeline per spec:
-  preflight -> scrape raw -> normalize -> budget filter -> Qwen -> result -> feedback
+  preflight -> scrape raw -> normalize -> budget filter -> AI orchestrator -> result -> feedback
 
-Key changes:
-  - filter_relevance() now returns (products, qwen_status)
-  - qwen_status propagated to all result/compare payloads
-  - Compare mode runs BOTH engines independently, no silent fallback
-  - Qwen failure does NOT block result: raw/budget products returned with warning
+The active AI path is model-orchestrated: rules handle obvious products, the
+best installed small classifier checks borderline products, and rule fallback
+keeps searches useful when Ollama has no supported model installed.
 """
 from __future__ import annotations
 
@@ -22,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 
 from src.ai.learning import save_feedback
 from src.ai.memory_store import FEEDBACK_FILE as LEGACY_FEEDBACK_FILE, read_jsonl
+from src.ai.model_registry import get_orchestrator_status
 from src.ai.relevance import RELEVANCE_THRESHOLD, filter_relevance
 from src.ai.reset import reset_ai_memory
 from src.scraper.budget_filter import FilterResult, filter_by_budget
@@ -100,6 +99,12 @@ async def fetch_progress(search_id: str):
     return progress
 
 
+@router.get("/api/ai/status")
+async def ai_status():
+    """Return installed supported Ollama models and active orchestrator capabilities."""
+    return get_orchestrator_status()
+
+
 @router.get("/api/result/{search_id}")
 async def fetch_result(search_id: str):
     result = _results_store.get(search_id)
@@ -132,6 +137,7 @@ async def handle_feedback(req: FeedbackRequest):
             feedback_type=feedback_type,
             rule_score=req.rule_score,
             sort_mode=req.sort_mode,
+            decision_source=str(getattr(req, "decision_source", "") or product.get("decision_source") or product.get("ai_source") or ""),
         )
         if req.search_id:
             save_json_debug(req.search_id, "feedback_saved.json", req.model_dump())
@@ -388,7 +394,7 @@ async def _filter_pipeline(
 ) -> dict[str, Any]:
     """
     Full filter pipeline: normalize -> dedupe -> budget -> intent-aware AI -> sort.
-    Returns dict with all intermediate counts and qwen_status.
+    Returns dict with all intermediate counts and AI orchestrator status.
     """
     engine = engine_name or "selected"
     normalizer = normalize_products_with_report(raw_products, engine, search_id)
@@ -417,6 +423,7 @@ async def _filter_pipeline(
     budget_result = filter_by_budget(deduped, req.budget, req.tolerance)
     candidates = budget_result.kept
     budget_enabled = budget_result.budget_value is not None
+    orchestrator_status = get_orchestrator_status()
 
     log(
         "BUDGET",
@@ -437,13 +444,22 @@ async def _filter_pipeline(
         search_id,
         stage="ai_filtering",
         percent=70,
-        message="Filtering relevansi intent-aware..." if req.use_ai else "AI nonaktif: rule scoring...",
+        message="Filtering relevansi dengan AI Orchestrator..." if req.use_ai else "AI nonaktif: rule scoring...",
         found=len(deduped),
         valid=len(candidates),
         elapsed_seconds=eta_calc.get_elapsed(),
+        ai_orchestrator={
+            "enabled": bool(req.use_ai),
+            "classifier": orchestrator_status.get("classifier"),
+            "semantic_enabled": bool(orchestrator_status.get("capabilities", {}).get("semantic")),
+            "json_repair_enabled": bool(orchestrator_status.get("capabilities", {}).get("json_repair")),
+        },
     )
 
-    ai_result = await filter_relevance(req.query, candidates, req.use_ai, search_id, req.ai_mode)
+    for candidate in candidates:
+        candidate["_requested_target"] = req.target_count
+
+    ai_result = await filter_relevance(req.query, candidates, req.use_ai, search_id)
     ai_valid, qwen_status = ai_result
     ai_meta = getattr(ai_result, "meta", {}) or {}
 
@@ -485,15 +501,19 @@ async def _filter_pipeline(
         "displayed_count": len(final),
         "has_enough_results": has_enough,
         "limited_reason": limited,
+        "ai_status": qwen_status,
+        "ai_warning": ai_meta.get("warning", ""),
+        "ai_orchestrator": ai_meta.get("ai_orchestrator", orchestrator_status),
         "qwen_status": qwen_status,
         "qwen_warning": ai_meta.get("warning", ""),
-        "ai_mode": req.ai_mode,
         "ai_model": ai_meta.get("selected_model"),
         "query_intent": ai_meta.get("query_intent"),
         "sort_mode": req.sort_mode,
         "rule_accepted_count": ai_meta.get("rule_accepted_count", 0),
         "rule_rejected_count": ai_meta.get("rule_rejected_count", 0),
         "llm_checked_count": ai_meta.get("llm_checked_count", 0),
+        "fallback_expansion_count": ai_meta.get("fallback_expansion_count", 0),
+        "semantic_checked_count": ai_meta.get("semantic_checked_count", 0),
     }
 
     log(
@@ -516,7 +536,13 @@ async def _filter_pipeline(
         qwen_warning = "AI unavailable for borderline products; deterministic relevance fallback was used."
     elif qwen_status == "failed":
         qwen_warning = qwen_warning or "AI filtering failed. Products were displayed with explicit fallback."
+    elif ai_meta.get("fallback_expansion_count"):
+        qwen_warning = (
+            qwen_warning
+            or f"Beberapa produk confidence rendah ditambahkan agar mendekati target {req.target_count}. Produk obvious junk tetap dibuang."
+        )
     metadata["qwen_warning"] = qwen_warning
+    metadata["ai_warning"] = qwen_warning
 
     if not candidates and budget_result.budget_value is not None:
         error = (
@@ -578,7 +604,7 @@ async def _finish_compare(
     """
     Compare mode: run filter pipeline for BOTH engines independently.
     No silent fallback between engines.
-    Both results are returned regardless of Qwen status.
+    Both results are returned regardless of AI classifier status.
     """
     comparison: list[dict[str, Any]] = []
 
@@ -593,6 +619,7 @@ async def _finish_compare(
                 "budget_valid_count": 0,
                 "ai_count": 0,
                 "ai_valid_count": 0,
+                "ai_accepted_count": 0,
                 "qwen_accepted_count": 0,
                 "qwen_status": "skipped",
                 "qwen_warning": "",
@@ -638,7 +665,10 @@ async def _finish_compare(
             "budget_valid_count": len(budget_result.kept),
             "ai_count": len(filtered["ai_valid"]),
             "ai_valid_count": len(filtered["ai_valid"]),
+            "ai_accepted_count": len(filtered["ai_valid"]),
             "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
+            "ai_status": filtered["qwen_status"],
+            "ai_warning": filtered["qwen_warning"],
             "qwen_status": filtered["qwen_status"],
             "qwen_warning": filtered["qwen_warning"],
             "result_metadata": filtered["metadata"],
@@ -677,7 +707,6 @@ async def _finish_compare(
         "search_id": search_id,
         "query": req.query,
         "engine_mode": req.engine_mode,
-        "ai_mode": req.ai_mode,
         "sort_mode": req.sort_mode,
         "selected_engine": selected_engine,
         "count": len(final_data),
@@ -687,6 +716,8 @@ async def _finish_compare(
         "result_metadata": selected_metadata,
         "recommendations": (selected or {}).get("recommendations") or _build_recommendations(req.query, final_data),
         "qwen_status": (selected or {}).get("qwen_status", "skipped"),
+        "ai_status": (selected or {}).get("ai_status", (selected or {}).get("qwen_status", "skipped")),
+        "ai_warning": (selected or {}).get("ai_warning", (selected or {}).get("qwen_warning", "")),
         "qwen_warning": (selected or {}).get("qwen_warning", ""),
         "data": final_data,
         "engine_runs": comparison,     # ← also exposed as engine_runs for consistency
@@ -763,7 +794,10 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
                 "budget_valid_count": len(budget_result.kept),
                 "ai_count": len(filtered["ai_valid"]),
                 "ai_valid_count": len(filtered["ai_valid"]),
+                "ai_accepted_count": len(filtered["ai_valid"]),
                 "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
+                "ai_status": filtered["qwen_status"],
+                "ai_warning": filtered["qwen_warning"],
                 "qwen_status": filtered["qwen_status"],
                 "qwen_warning": filtered["qwen_warning"],
                 "result_metadata": filtered["metadata"],
@@ -778,7 +812,6 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "search_id": search_id,
         "query": req.query,
         "engine_mode": req.engine_mode,
-        "ai_mode": req.ai_mode,
         "sort_mode": req.sort_mode,
         "selected_engine": selection.selected_engine,
         "fallback_message": selection.fallback_message,
@@ -789,7 +822,10 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "budget_valid_count": len(budget_result.kept),
         "ai_count": len(filtered["ai_valid"]),
         "ai_valid_count": len(filtered["ai_valid"]),
+        "ai_accepted_count": len(filtered["ai_valid"]),
         "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
+        "ai_status": filtered["qwen_status"],
+        "ai_warning": filtered["qwen_warning"],
         "qwen_status": filtered["qwen_status"],
         "qwen_warning": filtered["qwen_warning"],
         "count": len(filtered["final"]),
@@ -806,6 +842,6 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
     log(
         f"[{search_id}]",
         f"Done. raw={len(selection.products)} ai={len(filtered['ai_valid'])} "
-        f"returned={len(filtered['final'])} qwen={filtered['qwen_status']}",
+        f"returned={len(filtered['final'])} ai_status={filtered['qwen_status']}",
         "OK",
     )
