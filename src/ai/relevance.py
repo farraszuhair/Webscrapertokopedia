@@ -7,9 +7,14 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import difflib
 import json
 import os
 import re
+import time
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Iterator, List, Tuple
 
@@ -22,11 +27,249 @@ from src.ai.qwen_client import (
     select_ollama_model,
 )
 from src.utils.logger import log
+from src.utils.currency import parse_rupiah
+from src.config import (
+    RULE_ACCEPT_THRESHOLD,
+    RULE_REJECT_THRESHOLD,
+    RULE_REVIEW_THRESHOLD,
+)
 
 
 RELEVANCE_THRESHOLD = float(os.getenv("AI_RELEVANCE_THRESHOLD", "0.55"))
 FALLBACK_SCORE = 0.5
 AI_BATCH_SIZE = max(1, int(os.getenv("AI_BATCH_SIZE", "20")))
+
+ACCESSORY_KEYWORDS = {
+    "case", "casing", "softcase", "hardcase", "charger", "kabel",
+    "adapter", "adaptor", "tempered glass", "screen protector",
+    "anti gores", "tas", "sleeve", "stand", "cooler", "keyboard",
+    "mouse", "headset", "earphone", "backpack", "magSafe".lower(),
+}
+SPAREPART_KEYWORDS = {
+    "sparepart", "lcd", "baterai", "battery", "ram", "ssd", "hdd",
+    "motherboard", "flexibel", "touchscreen", "speaker", "kamera",
+}
+GAMING_LAPTOP_HINTS = {
+    "rog", "legion", "nitro", "predator", "tuf", "omen", "victus",
+    "loq", "msi", "rtx", "gtx", "gaming", "ryzen 7", "intel i7",
+    "intel i9", "geforce", "katana", "alienware",
+}
+MAIN_PRODUCT_HINTS = {
+    "laptop", "notebook", "iphone", "ipad", "macbook", "samsung",
+    "xiaomi", "oppo", "vivo", "realme", "asus", "lenovo", "acer",
+    "hp", "dell", "msi", "pc", "monitor", "printer", "kamera",
+}
+ACCESSORY_GROUPS = {
+    "case": {"case", "casing", "softcase", "hardcase", "magsafe"},
+    "charger": {"charger", "kabel", "adapter", "adaptor"},
+    "screen": {"tempered glass", "screen protector", "anti gores"},
+    "bag": {"tas", "sleeve", "backpack"},
+    "stand": {"stand", "cooler"},
+    "input": {"keyboard", "mouse"},
+    "audio": {"headset", "earphone"},
+}
+
+
+def normalize_text(value: Any) -> str:
+    text = "" if value is None else str(value)
+    text = unicodedata.normalize("NFKC", text).lower()
+    text = text.replace("\u00a0", " ").replace("\u200b", "")
+    text = re.sub(r"[^a-z0-9+.#/ ]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def parse_price(value: Any) -> int | None:
+    return parse_rupiah(value)
+
+
+def parse_sold_count(value: Any) -> int:
+    text = normalize_text(value)
+    if not text:
+        return 0
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta)?", text)
+    if not match:
+        return 0
+    try:
+        number = float(match.group(1).replace(",", "."))
+    except ValueError:
+        return 0
+    unit = match.group(2)
+    if unit in {"rb", "ribu", "k"}:
+        number *= 1000
+    elif unit in {"jt", "juta"}:
+        number *= 1_000_000
+    return int(number)
+
+
+def _contains_any(text: str, keywords: set[str]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _word_tokens(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", normalize_text(text)))
+
+
+def _accessory_groups(text: str) -> set[str]:
+    normalized = normalize_text(text)
+    groups: set[str] = set()
+    for group, keywords in ACCESSORY_GROUPS.items():
+        if any(keyword in normalized for keyword in keywords):
+            groups.add(group)
+    return groups
+
+
+def detect_query_intent(query: str) -> str:
+    text = normalize_text(query)
+    if not text:
+        return "ambiguous"
+    if _contains_any(text, SPAREPART_KEYWORDS):
+        return "sparepart"
+    if _contains_any(text, ACCESSORY_KEYWORDS):
+        return "accessory"
+    if _contains_any(text, GAMING_LAPTOP_HINTS | MAIN_PRODUCT_HINTS):
+        return "main_product"
+    return "ambiguous"
+
+
+def detect_product_category(product: dict[str, Any] | str) -> str:
+    title = normalize_text(product.get("title") if isinstance(product, dict) else product)
+    if not title:
+        return "unknown"
+    if _contains_any(title, SPAREPART_KEYWORDS):
+        return "sparepart"
+    if _contains_any(title, ACCESSORY_KEYWORDS):
+        return "accessory"
+    if _contains_any(title, GAMING_LAPTOP_HINTS | MAIN_PRODUCT_HINTS):
+        return "main_product"
+    return "unknown"
+
+
+def _query_core_tokens(query: str) -> set[str]:
+    noise = ACCESSORY_KEYWORDS | SPAREPART_KEYWORDS | {
+        "original", "ori", "baru", "bekas", "termurah", "murah",
+        "gaming", "produk", "untuk", "dan",
+    }
+    return {token for token in _word_tokens(query) if token not in noise and len(token) > 1}
+
+
+def _semantic_bonus(query: str, title: str) -> float:
+    q = normalize_text(query)
+    t = normalize_text(title)
+    bonus = 0.0
+    if "laptop" in q and "gaming" in q and _contains_any(t, GAMING_LAPTOP_HINTS):
+        bonus += 0.38
+        if "laptop" in t or "notebook" in t:
+            bonus += 0.10
+    if "iphone" in q and "iphone" in t:
+        bonus += 0.28
+    return bonus
+
+
+def compute_rule_score(query: str, product: dict[str, Any], query_intent: str | None = None) -> float:
+    intent = query_intent or detect_query_intent(query)
+    title = normalize_text(product.get("title") or "")
+    if not title:
+        return 0.0
+
+    category = detect_product_category(product)
+    query_tokens = _query_core_tokens(query)
+    title_tokens = _word_tokens(title)
+    overlap = query_tokens & title_tokens
+    overlap_ratio = len(overlap) / max(1, len(query_tokens))
+    fuzzy = difflib.SequenceMatcher(None, normalize_text(query), title).ratio()
+    score = 0.20 + overlap_ratio * 0.36 + min(0.16, fuzzy * 0.16) + _semantic_bonus(query, title)
+
+    if intent == "main_product":
+        if category in {"accessory", "sparepart"}:
+            return min(0.30, 0.08 + overlap_ratio * 0.15)
+        if category == "main_product":
+            score += 0.18
+    elif intent == "accessory":
+        query_groups = _accessory_groups(query)
+        product_groups = _accessory_groups(title)
+        if category == "accessory" and (not query_groups or query_groups & product_groups):
+            score += 0.28
+        elif category == "accessory":
+            score -= 0.18
+        elif category == "main_product":
+            score -= 0.30
+        elif category == "sparepart":
+            score -= 0.25
+    elif intent == "sparepart":
+        if category == "sparepart":
+            score += 0.28
+        elif category in {"accessory", "main_product"}:
+            score -= 0.25
+    elif category == "unknown" and overlap:
+        score += 0.08
+
+    feedback_delta = get_feedback_score_adjustment(query, intent, category, title)
+    return round(max(0.0, min(0.98, score + feedback_delta)), 3)
+
+
+def is_obvious_junk_for_intent(query: str, product: dict[str, Any], query_intent: str | None = None) -> bool:
+    intent = query_intent or detect_query_intent(query)
+    category = detect_product_category(product)
+    title = normalize_text(product.get("title") or "")
+    if not title:
+        return True
+    if intent == "main_product" and category in {"accessory", "sparepart"}:
+        return True
+    if intent == "accessory":
+        if category == "main_product":
+            return True
+        query_groups = _accessory_groups(query)
+        product_groups = _accessory_groups(title)
+        return bool(query_groups and product_groups and not (query_groups & product_groups))
+    if intent == "sparepart" and category != "sparepart":
+        return True
+    return False
+
+
+def is_obvious_match_for_intent(query: str, product: dict[str, Any], query_intent: str | None = None) -> bool:
+    intent = query_intent or detect_query_intent(query)
+    score = compute_rule_score(query, product, intent)
+    if score < RULE_ACCEPT_THRESHOLD:
+        return False
+    return not is_obvious_junk_for_intent(query, product, intent)
+
+
+def should_call_llm(rule_score: float, obvious_junk: bool) -> bool:
+    if rule_score >= RULE_ACCEPT_THRESHOLD:
+        return False
+    if obvious_junk and rule_score < RULE_REJECT_THRESHOLD:
+        return False
+    if rule_score >= RULE_REVIEW_THRESHOLD:
+        return True
+    return False
+
+
+def get_feedback_score_adjustment(query: str, query_intent: str, product_category: str, title: str) -> float:
+    """Apply small, scoped feedback nudges without global category blacklists."""
+    try:
+        feedback_items = get_recent_feedback(query, limit=30)
+    except Exception:
+        return 0.0
+    title_tokens = _word_tokens(title)
+    delta = 0.0
+    for item in feedback_items:
+        item_intent = item.get("query_intent") or detect_query_intent(item.get("query", ""))
+        if item_intent != query_intent:
+            continue
+        item_category = item.get("product_category") or detect_product_category(item.get("product_title", ""))
+        if item_category != product_category:
+            continue
+        item_tokens = _word_tokens(item.get("product_title", ""))
+        if not item_tokens or not title_tokens:
+            continue
+        similarity = len(item_tokens & title_tokens) / max(1, len(item_tokens | title_tokens))
+        if similarity < 0.25:
+            continue
+        if item.get("feedback_type") == "positive" or item.get("user_action") == "benar":
+            delta += 0.035 * similarity
+        elif item.get("feedback_type") == "negative" or item.get("user_action") == "salah":
+            delta -= 0.05 * similarity
+    return max(-0.12, min(0.10, delta))
 
 STRONG_MAIN_PRODUCT_TERMS = {
     "laptop", "notebook", "rog", "legion", "nitro", "victus", "tuf",
@@ -269,58 +512,39 @@ def _confidence_explanation(query: str, product: dict[str, Any], signals: dict[s
 
 def _fallback_score(query: str, product: dict[str, Any]) -> dict[str, Any]:
     """
-    Offline fallback when Qwen cannot run.
+    Offline fallback used by tests and when AI is disabled.
 
-    This is intentionally conservative for accessory-looking titles. It keeps
-    obvious main products and drops obvious accessories unless the query asks
-    for that accessory.
+    It is intent-aware: accessories are rejected for main-product queries but
+    accepted when the query asks for that accessory class.
     """
-    title = str(product.get("title") or "").lower()
-    title_words = set(re.findall(r"\w+", title))
-    query_words = _query_terms(query)
+    intent = detect_query_intent(query)
+    category = detect_product_category(product)
+    score = compute_rule_score(query, product, intent)
+    obvious_junk = is_obvious_junk_for_intent(query, product, intent)
 
-    laptop_signals = {
-        "laptop", "notebook", "rog", "legion", "nitro", "predator",
-        "msi", "omen", "victus", "alienware", "tuf", "katana",
-        "rtx", "gtx", "geforce", "radeon", "ryzen", "intel",
-    }
-    accessory_signals = {
-        "mouse", "mice", "mousepad", "keyboard", "charger", "adaptor",
-        "adapter", "cooling", "cooler", "stand", "headset", "earphone",
-        "webcam", "sleeve", "tas", "bag", "ram", "ssd", "sticker",
-        "stickers", "sparepart", "spare", "parts", "baterai", "battery",
-    }
-    accessory_query_terms = accessory_signals | {"aksesoris", "accessory", "accessories"}
-
-    accessory_hits = accessory_signals & title_words
-    laptop_hits = laptop_signals & title_words
-    query_overlap = query_words & title_words
-    query_asks_accessory = bool(query_words & accessory_query_terms)
-
-    if accessory_hits and not query_asks_accessory:
+    if obvious_junk and score < RULE_REVIEW_THRESHOLD:
         return {
             "relevant": False,
-            "confidence": 0.15,
-            "categories": ["accessory"],
-            "reason": f"Fallback: accessory signals detected ({', '.join(sorted(accessory_hits))})",
+            "confidence": max(0.05, score),
+            "categories": [category],
+            "reason": f"Rule fallback: {category} does not match {intent}",
             "source": "fallback",
         }
 
-    if laptop_hits or query_overlap:
-        confidence = min(0.9, 0.52 + len(laptop_hits) * 0.08 + len(query_overlap) * 0.05)
+    if score >= RULE_REVIEW_THRESHOLD:
         return {
             "relevant": True,
-            "confidence": confidence,
-            "categories": ["gaming_laptop" if "gaming" in query_words else "main_product"],
-            "reason": f"Fallback: matched signals {sorted(laptop_hits | query_overlap)}",
+            "confidence": score,
+            "categories": [category],
+            "reason": f"Rule fallback: score={score:.2f} intent={intent} category={category}",
             "source": "fallback",
         }
 
     return {
-        "relevant": True,
-        "confidence": FALLBACK_SCORE,
-        "categories": ["unknown"],
-        "reason": "Fallback: no strong negative signal, kept by default",
+        "relevant": False,
+        "confidence": score,
+        "categories": [category],
+        "reason": f"Rule fallback: low score={score:.2f}",
         "source": "fallback",
     }
 
@@ -520,12 +744,71 @@ def _keep_prefiltered_batch(
     return kept
 
 
+async def _call_generate_with_ai_heartbeat(
+    *,
+    prompt: str,
+    model: str,
+    search_id: str | None,
+    batch_current: int,
+    batch_total: int,
+    batch_started_at_monotonic: float,
+    batch_started_at_epoch_ms: int,
+    completed_ai_batch_durations: list[float],
+    found: int,
+    valid_count: int,
+):
+    if not search_id:
+        return await call_ollama_generate(prompt, model, search_id)
+
+    from src.server.progress import update_ai_eta_progress
+
+    stop_event = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                update_ai_eta_progress(
+                    search_id=search_id,
+                    batch_current=batch_current,
+                    batch_total=batch_total,
+                    batch_started_at_monotonic=batch_started_at_monotonic,
+                    batch_started_at_epoch_ms=batch_started_at_epoch_ms,
+                    completed_ai_batch_durations=completed_ai_batch_durations,
+                    message=f"AI filtering batch {batch_current}/{batch_total}",
+                    found=found,
+                    valid=valid_count,
+                )
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        return await call_ollama_generate(prompt, model, search_id)
+    finally:
+        stop_event.set()
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
+
+
 async def ai_filter_products(
     query: str,
     products: list[dict[str, Any]],
     use_ai: bool = True,
     search_id: str | None = None,
+    ai_mode: str = "balanced",
 ) -> AiFilterResult:
+    from src.ai.ai_filter import filter_products as intent_filter_products
+
+    result = await intent_filter_products(
+        query,
+        list(products or []),
+        use_ai=use_ai,
+        search_id=search_id,
+        ai_mode=ai_mode,
+    )
+    return AiFilterResult(result.products, result.status, result.meta)
+
     if not products:
         warning = "AI skipped: products empty before AI"
         log("AI", warning, "WARN")
@@ -567,10 +850,11 @@ async def ai_filter_products(
     batches = build_ai_batches(products, batch_size=AI_BATCH_SIZE, max_prompt_chars=12000)
     log("AI", f"Qwen filter: products={len(products)} batches={len(batches)} batch_size={AI_BATCH_SIZE}", "INFO")
 
-    from src.server.progress import update_progress
+    from src.server.progress import update_ai_eta_progress
 
     valid: list[dict[str, Any]] = []
     decisions: list[dict[str, Any]] = []
+    completed_ai_batch_durations: list[float] = []
     batches_ok = 0
     batches_failed = 0
     qwen_accepted = 0
@@ -580,19 +864,36 @@ async def ai_filter_products(
         batch_current = batch_idx + 1
         batch_total = len(batches)
         log("AI", f"batch={batch_current}/{batch_total}", "INFO")
+        batch_started_at_monotonic = time.perf_counter()
+        batch_started_at_epoch_ms = int(time.time() * 1000)
 
         if search_id:
-            percent = 70 + int(18 * ((batch_current - 1) / max(1, batch_total)))
-            update_progress(
-                search_id,
-                stage="ai_filtering",
-                percent=percent,
+            update_ai_eta_progress(
+                search_id=search_id,
+                batch_current=batch_current,
+                batch_total=batch_total,
+                batch_started_at_monotonic=batch_started_at_monotonic,
+                batch_started_at_epoch_ms=batch_started_at_epoch_ms,
+                completed_ai_batch_durations=completed_ai_batch_durations,
                 message=f"AI filtering batch {batch_current}/{batch_total}",
                 found=len(products),
+                valid=len(valid),
             )
 
         prompt = _build_batch_prompt(query, batch, examples, feedback_items)
-        generate = await call_ollama_generate(prompt, selection.selected_model, search_id)
+        generate = await _call_generate_with_ai_heartbeat(
+            prompt=prompt,
+            model=selection.selected_model,
+            search_id=search_id,
+            batch_current=batch_current,
+            batch_total=batch_total,
+            batch_started_at_monotonic=batch_started_at_monotonic,
+            batch_started_at_epoch_ms=batch_started_at_epoch_ms,
+            completed_ai_batch_durations=completed_ai_batch_durations,
+            found=len(products),
+            valid_count=len(valid),
+        )
+        completed_ai_batch_durations.append(time.perf_counter() - batch_started_at_monotonic)
 
         if not generate.ok or not isinstance(generate.data, dict):
             batches_failed += 1
@@ -614,6 +915,19 @@ async def ai_filter_products(
                     "kept": True,
                     "reason": product.get("ai_reason"),
                 })
+            if search_id:
+                update_ai_eta_progress(
+                    search_id=search_id,
+                    batch_current=batch_current,
+                    batch_total=batch_total,
+                    batch_started_at_monotonic=batch_started_at_monotonic,
+                    batch_started_at_epoch_ms=batch_started_at_epoch_ms,
+                    completed_ai_batch_durations=completed_ai_batch_durations,
+                    message=f"AI filtering batch {batch_current}/{batch_total} done",
+                    found=len(products),
+                    valid=len(valid),
+                    batch_done=True,
+                )
             continue
 
         data = generate.data
@@ -625,6 +939,19 @@ async def ai_filter_products(
             log("AI", f"{reason}: missing valid_indexes", "WARN")
             fallback_products = _keep_prefiltered_batch(batch, reason, query) if AI_ALLOW_FALLBACK else []
             valid.extend(fallback_products)
+            if search_id:
+                update_ai_eta_progress(
+                    search_id=search_id,
+                    batch_current=batch_current,
+                    batch_total=batch_total,
+                    batch_started_at_monotonic=batch_started_at_monotonic,
+                    batch_started_at_epoch_ms=batch_started_at_epoch_ms,
+                    completed_ai_batch_durations=completed_ai_batch_durations,
+                    message=f"AI filtering batch {batch_current}/{batch_total} done",
+                    found=len(products),
+                    valid=len(valid),
+                    batch_done=True,
+                )
             continue
 
         product_decisions = _qwen_item_map(data.get("products"))
@@ -668,13 +995,17 @@ async def ai_filter_products(
             })
 
         if search_id:
-            progress = 70 + int(18 * (batch_current / max(1, batch_total)))
-            update_progress(
-                search_id,
-                stage="ai_filtering",
-                percent=progress,
+            update_ai_eta_progress(
+                search_id=search_id,
+                batch_current=batch_current,
+                batch_total=batch_total,
+                batch_started_at_monotonic=batch_started_at_monotonic,
+                batch_started_at_epoch_ms=batch_started_at_epoch_ms,
+                completed_ai_batch_durations=completed_ai_batch_durations,
                 message=f"AI filtering batch {batch_current}/{batch_total} done",
+                found=len(products),
                 valid=len(valid),
+                batch_done=True,
             )
 
     if batches_ok and not batches_failed:
@@ -710,9 +1041,10 @@ async def filter_relevance(
     products: List[dict[str, Any]],
     use_ai: bool = True,
     search_id: str | None = None,
+    ai_mode: str = "balanced",
 ) -> AiFilterResult:
     """Backward-compatible public entrypoint."""
-    return await ai_filter_products(query, list(products or []), use_ai, search_id)
+    return await ai_filter_products(query, list(products or []), use_ai, search_id, ai_mode)
 
 
 def _save_qwen_filter_debug(

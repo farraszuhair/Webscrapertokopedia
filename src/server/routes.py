@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from src.ai.learning import save_feedback
+from src.ai.memory_store import FEEDBACK_FILE as LEGACY_FEEDBACK_FILE, read_jsonl
 from src.ai.relevance import RELEVANCE_THRESHOLD, filter_relevance
 from src.ai.reset import reset_ai_memory
 from src.scraper.budget_filter import FilterResult, filter_by_budget
@@ -30,6 +31,7 @@ from src.scraper.normalizer import normalize_products_with_report
 from src.server.lifecycle import register_task, unregister_task
 from src.server.progress import complete_progress, fail_progress, get_progress, init_progress, update_progress
 from src.server.schemas import FeedbackRequest, ProgressResponse, SearchRequest
+from src.config import OVERFETCH_MULTIPLIER
 from src.utils.currency import format_rupiah
 from src.utils.debug import safe_save_debug, save_json_debug
 from src.utils.eta import ETACalculator
@@ -72,10 +74,7 @@ def cleanup_task(search_id: str, task: asyncio.Task) -> None:
 async def start_search(req: SearchRequest):
     search_id = str(uuid.uuid4())
     target_count = max(1, min(int(req.target_count), 100))
-    overfetch_multiplier = max(
-        1,
-        int(os.getenv("OVERFETCH_MULTIPLIER", os.getenv("SCRAPER_OVERFETCH_MULTIPLIER", "4"))),
-    )
+    overfetch_multiplier = max(1, int(OVERFETCH_MULTIPLIER))
     max_raw_candidates = max(target_count, int(os.getenv("MAX_RAW_CANDIDATES", "300")))
     raw_target = min(max_raw_candidates, max(100, target_count * overfetch_multiplier))
     req.target_count = target_count
@@ -113,23 +112,46 @@ async def fetch_result(search_id: str):
 async def handle_feedback(req: FeedbackRequest):
     """Save user feedback from Benar/Salah result-card actions."""
     try:
+        product = req.product or {"id": req.product_id, "title": req.product_title}
+        reasons = req.reasons or req.selected_reasons or []
+        feedback_type = req.feedback_type or ("positive" if req.user_action == "benar" else "negative")
+        user_action = req.user_action or ("benar" if feedback_type == "positive" else "salah")
+        corrected_label = req.corrected_label or ("relevan" if feedback_type == "positive" else "tidak_relevan")
         save_feedback(
             query=req.query,
-            product_id=req.product_id,
-            product_title=req.product_title,
-            user_action=req.user_action,
-            selected_reasons=req.selected_reasons,
-            custom_reason=req.custom_reason,
-            corrected_label=req.corrected_label,
+            product_id=req.product_id or str(product.get("id") or product.get("url") or "unknown"),
+            product_title=req.product_title or str(product.get("title") or ""),
+            user_action=user_action,
+            selected_reasons=reasons,
+            custom_reason=req.note or req.custom_reason,
+            corrected_label=corrected_label,
             ai_label=req.ai_label,
             ai_confidence=req.ai_confidence,
+            product=product,
+            query_intent=req.query_intent,
+            feedback_type=feedback_type,
+            rule_score=req.rule_score,
+            sort_mode=req.sort_mode,
         )
         if req.search_id:
             save_json_debug(req.search_id, "feedback_saved.json", req.model_dump())
-        return {"success": True, "message": "Feedback saved."}
+        return {"ok": True, "success": True, "message": "Feedback saved"}
     except Exception as exc:
         log("API", f"Feedback save error: {exc}", "ERROR")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/api/feedback/summary")
+async def feedback_summary():
+    records = read_jsonl(LEGACY_FEEDBACK_FILE, limit=500)
+    positives = sum(1 for item in records if item.get("feedback_type") == "positive" or item.get("user_action") == "benar")
+    negatives = sum(1 for item in records if item.get("feedback_type") == "negative" or item.get("user_action") == "salah")
+    return {
+        "ok": True,
+        "total": len(records),
+        "positive": positives,
+        "negative": negatives,
+    }
 
 
 @router.post("/api/ai/reset")
@@ -179,11 +201,30 @@ def _budget_info(filter_result: FilterResult) -> dict[str, Any] | None:
     }
 
 
-def _sort_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _sort_products(products: list[dict[str, Any]], sort_mode: str = "terbaik") -> list[dict[str, Any]]:
+    mode = sort_mode if sort_mode in {"terbaik", "termurah", "most_trusted"} else "terbaik"
+    if mode == "termurah":
+        return sorted(
+            products,
+            key=lambda p: (
+                p.get("price_value") if p.get("price_value") is not None else 10**18,
+                -float(p.get("relevance_score") or p.get("ai_confidence") or 0),
+            ),
+        )
+    if mode == "most_trusted":
+        return sorted(
+            products,
+            key=lambda p: (
+                -score_trusted_product(p),
+                -float(p.get("relevance_score") or p.get("ai_confidence") or 0),
+                p.get("price_value") if p.get("price_value") is not None else 10**18,
+            ),
+        )
     return sorted(
         products,
         key=lambda p: (
-            -float(p.get("relevance_score") or 0),
+            -float(p.get("relevance_score") or p.get("ai_confidence") or 0),
+            -score_best_product(p),
             p.get("price_value") if p.get("price_value") is not None else 10**18,
         ),
     )
@@ -330,9 +371,11 @@ def _build_recommendations(query: str, products: list[dict[str, Any]]) -> dict[s
     return build_recommendations(products, query)
 
 
-def _limited_reason(requested_count: int, displayed_count: int) -> str | None:
+def _limited_reason(requested_count: int, displayed_count: int, raw_count: int | None = None) -> str | None:
     if displayed_count >= requested_count:
         return None
+    if raw_count is not None:
+        return f"Only found {displayed_count} valid products from {raw_count} raw scraped products"
     return f"Only {displayed_count} products matched after scraping, dedupe, budget, and AI filtering."
 
 
@@ -344,7 +387,7 @@ async def _filter_pipeline(
     engine_name: str = "selected",
 ) -> dict[str, Any]:
     """
-    Full filter pipeline: normalize -> dedupe -> budget -> Qwen -> sort.
+    Full filter pipeline: normalize -> dedupe -> budget -> intent-aware AI -> sort.
     Returns dict with all intermediate counts and qwen_status.
     """
     engine = engine_name or "selected"
@@ -394,13 +437,13 @@ async def _filter_pipeline(
         search_id,
         stage="ai_filtering",
         percent=70,
-        message="Validasi relevansi (Qwen AI)..." if req.use_ai else "AI nonaktif: fallback scoring...",
+        message="Filtering relevansi intent-aware..." if req.use_ai else "AI nonaktif: rule scoring...",
         found=len(deduped),
         valid=len(candidates),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    ai_result = await filter_relevance(req.query, candidates, req.use_ai, search_id)
+    ai_result = await filter_relevance(req.query, candidates, req.use_ai, search_id, req.ai_mode)
     ai_valid, qwen_status = ai_result
     ai_meta = getattr(ai_result, "meta", {}) or {}
 
@@ -414,9 +457,9 @@ async def _filter_pipeline(
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    ranked = _sort_products(ai_valid)
+    ranked = _sort_products(ai_valid, req.sort_mode)
     final = ranked[: req.target_count]
-    limited = _limited_reason(req.target_count, len(final))
+    limited = _limited_reason(req.target_count, len(final), len(raw_products))
 
     update_progress(
         search_id,
@@ -444,6 +487,13 @@ async def _filter_pipeline(
         "limited_reason": limited,
         "qwen_status": qwen_status,
         "qwen_warning": ai_meta.get("warning", ""),
+        "ai_mode": req.ai_mode,
+        "ai_model": ai_meta.get("selected_model"),
+        "query_intent": ai_meta.get("query_intent"),
+        "sort_mode": req.sort_mode,
+        "rule_accepted_count": ai_meta.get("rule_accepted_count", 0),
+        "rule_rejected_count": ai_meta.get("rule_rejected_count", 0),
+        "llm_checked_count": ai_meta.get("llm_checked_count", 0),
     }
 
     log(
@@ -463,9 +513,9 @@ async def _filter_pipeline(
     qwen_warning = ai_meta.get("warning", "")
 
     if qwen_status == "unavailable" and not qwen_warning:
-        qwen_warning = "AI filter skipped because Ollama or model is unavailable."
+        qwen_warning = "AI unavailable for borderline products; deterministic relevance fallback was used."
     elif qwen_status == "failed":
-        qwen_warning = qwen_warning or "Qwen failed. Products were displayed with explicit fallback."
+        qwen_warning = qwen_warning or "AI filtering failed. Products were displayed with explicit fallback."
     metadata["qwen_warning"] = qwen_warning
 
     if not candidates and budget_result.budget_value is not None:
@@ -477,7 +527,7 @@ async def _filter_pipeline(
         if qwen_status in ("failed", "unavailable"):
             error = f"0 produk tersisa setelah fallback filter. {qwen_warning}"
         else:
-            error = "Semua produk ditolak Qwen AI. Disable AI atau tambah feedback."
+            error = "Semua produk ditolak filter relevansi. Disable AI atau tambah feedback."
     elif not final:
         error = "Tidak ada produk setelah filter final."
 
@@ -627,6 +677,8 @@ async def _finish_compare(
         "search_id": search_id,
         "query": req.query,
         "engine_mode": req.engine_mode,
+        "ai_mode": req.ai_mode,
+        "sort_mode": req.sort_mode,
         "selected_engine": selected_engine,
         "count": len(final_data),
         "requested_count": req.target_count,
@@ -726,6 +778,8 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "search_id": search_id,
         "query": req.query,
         "engine_mode": req.engine_mode,
+        "ai_mode": req.ai_mode,
+        "sort_mode": req.sort_mode,
         "selected_engine": selection.selected_engine,
         "fallback_message": selection.fallback_message,
         "engine_runs": engine_runs,

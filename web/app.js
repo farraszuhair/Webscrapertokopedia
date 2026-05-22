@@ -9,14 +9,14 @@
 
 const FEEDBACK_REASONS = [
   'Produk tidak relevan',
-  'Produk sebenarnya relevan',
-  'Kategori salah',
-  'AI salah paham judul',
   'Harga tidak sesuai',
-  'Bukan produk yang dicari',
-  'Aksesori dianggap produk utama',
-  'Produk utama dianggap tidak relevan',
-  'Gambar / data tidak sesuai',
+  'Nama produk salah',
+  'Bukan produk utama / cuma aksesoris',
+  'Duplikat',
+  'Toko tidak terpercaya',
+  'Gambar tidak sesuai',
+  'Produk kosong / data tidak lengkap',
+  'Bukan sesuai intent pencarian',
   'Lainnya',
 ];
 
@@ -32,8 +32,13 @@ class ScraperApp {
       recommendations: {},
       recommendationsOpen: false,
       metadata: {},
+      sortMode: 'terbaik',
       elapsedTimer: null,
       progressStartedAtMs: null,
+      estimatedCompletionEpochMs: null,
+      localElapsedSeconds: 0,
+      localEtaSeconds: null,
+      lastEtaFallbackSignature: null,
       lastProgress: null,
     };
 
@@ -47,6 +52,7 @@ class ScraperApp {
     this.bindBudgetInfo();
     this.bindEnter();
     this.bindResetAI();
+    this.bindQuickSort();
     this._createFeedbackModal();
   }
 
@@ -146,12 +152,21 @@ class ScraperApp {
     });
   }
 
+  bindQuickSort() {
+    document.querySelectorAll('.quick-sort-btn').forEach((btn) => {
+      btn.addEventListener('click', () => this.setSortMode(btn.dataset.sort || 'terbaik'));
+    });
+  }
+
   async startSearch() {
     const query = this.$('query')?.value.trim();
-    const target = Number.parseInt(this.$('target_count')?.value || '25', 10);
+    const targetRaw = this.$('target_count')?.value ?? '';
+    const parsedTarget = Number.parseInt(targetRaw, 10);
+    const target = Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : 50;
     const tolerance = Number.parseFloat(this.$('tolerance')?.value || '20');
     const ai = this.$('use_ai')?.checked ?? true;
     const engineMode = this.$('engine_mode')?.value || 'auto';
+    const aiMode = this.$('ai_mode')?.value || 'balanced';
     const budget = this.getBudgetText();
 
     if (!query) {
@@ -165,6 +180,7 @@ class ScraperApp {
     this.state.selectedEngine = null;
     this.state.recommendations = {};
     this.state.recommendationsOpen = false;
+    this.state.sortMode = this.activeSortMode();
     this.show('progress-panel');
     this.setStatus('Running', 'status-running');
     this.resetProgress();
@@ -182,6 +198,8 @@ class ScraperApp {
           ai,
           use_ai: ai,
           engine_mode: engineMode,
+          ai_mode: aiMode,
+          sort_mode: this.state.sortMode,
         }),
       });
       const data = await response.json();
@@ -212,8 +230,8 @@ class ScraperApp {
 
   startElapsedTimer() {
     this.stopElapsedTimer();
-    this.renderLiveElapsed();
-    this.state.elapsedTimer = setInterval(() => this.renderLiveElapsed(), 1000);
+    this.renderLiveTimers();
+    this.state.elapsedTimer = setInterval(() => this.renderLiveTimers(), 1000);
   }
 
   stopElapsedTimer() {
@@ -254,6 +272,10 @@ class ScraperApp {
     this.stopPolling();
     this.stopElapsedTimer();
     this.state.progressStartedAtMs = null;
+    this.state.estimatedCompletionEpochMs = null;
+    this.state.localElapsedSeconds = 0;
+    this.state.localEtaSeconds = null;
+    this.state.lastEtaFallbackSignature = null;
     this.state.lastProgress = null;
     this.renderProgress({
       percent: 0,
@@ -276,17 +298,72 @@ class ScraperApp {
   }
 
   formatDuration(seconds) {
-    const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (seconds == null || Number.isNaN(Number(seconds))) return 'calculating...';
+    const safe = Math.max(0, Math.floor(Number(seconds)));
     const minutes = Math.floor(safe / 60);
     const secs = safe % 60;
     return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }
 
-  renderLiveElapsed() {
-    const el = this.$('pm-elapsed');
-    if (!el || !this.state.progressStartedAtMs) return;
-    const seconds = (Date.now() - Number(this.state.progressStartedAtMs)) / 1000;
-    el.textContent = this.formatDuration(seconds);
+  computeLocalEta(estimatedCompletionEpochMs) {
+    if (!estimatedCompletionEpochMs) return null;
+    const remainingMs = Number(estimatedCompletionEpochMs) - Date.now();
+    if (remainingMs < -5000) return null;
+    return Math.max(0, Math.ceil(remainingMs / 1000));
+  }
+
+  updateEtaDeadline(progress) {
+    if (progress.done) {
+      this.state.estimatedCompletionEpochMs = progress.error ? null : Date.now();
+      this.state.localEtaSeconds = progress.error ? null : 0;
+      return;
+    }
+
+    const backendDeadline = Number(progress.estimated_completion_epoch_ms);
+    if (Number.isFinite(backendDeadline) && backendDeadline > 0) {
+      this.state.estimatedCompletionEpochMs = backendDeadline;
+      this.state.lastEtaFallbackSignature = null;
+      return;
+    }
+
+    if (progress.eta_seconds != null && Number.isFinite(Number(progress.eta_seconds))) {
+      const signature = `${progress.updated_at_epoch_ms || ''}:${progress.eta_seconds}`;
+      if (!this.state.estimatedCompletionEpochMs || signature !== this.state.lastEtaFallbackSignature) {
+        this.state.estimatedCompletionEpochMs = Date.now() + Math.max(0, Number(progress.eta_seconds)) * 1000;
+        this.state.lastEtaFallbackSignature = signature;
+      }
+      return;
+    }
+
+    this.state.estimatedCompletionEpochMs = null;
+    this.state.localEtaSeconds = null;
+    this.state.lastEtaFallbackSignature = null;
+  }
+
+  etaDisplayText() {
+    const progress = this.state.lastProgress || {};
+    if (progress.done) return progress.error ? '-' : '00:00';
+    if (!this.state.estimatedCompletionEpochMs) return 'ETA: calculating...';
+
+    const remainingMs = Number(this.state.estimatedCompletionEpochMs) - Date.now();
+    if (remainingMs < -5000) return 'ETA: calculating...';
+    if (remainingMs <= 0) return 'ETA: extending...';
+
+    const seconds = this.computeLocalEta(this.state.estimatedCompletionEpochMs);
+    this.state.localEtaSeconds = seconds;
+    return seconds == null ? 'ETA: calculating...' : this.formatDuration(seconds);
+  }
+
+  renderLiveTimers() {
+    const elapsedEl = this.$('pm-elapsed');
+    if (elapsedEl && this.state.progressStartedAtMs) {
+      const seconds = Math.floor((Date.now() - Number(this.state.progressStartedAtMs)) / 1000);
+      this.state.localElapsedSeconds = Math.max(0, seconds);
+      elapsedEl.textContent = this.formatDuration(this.state.localElapsedSeconds);
+    }
+
+    const etaEl = this.$('pm-eta');
+    if (etaEl) etaEl.textContent = this.etaDisplayText();
   }
 
   renderProgress(progress) {
@@ -295,6 +372,7 @@ class ScraperApp {
       this.state.progressStartedAtMs = Number(progress.started_at_epoch_ms);
       if (!this.state.elapsedTimer && !progress.done) this.startElapsedTimer();
     }
+    this.updateEtaDeadline(progress);
 
     const pct = Math.max(0, Math.min(100, Number(progress.progress_percent ?? progress.percent ?? 0)));
     this.$('progress-pct').textContent = `${Math.round(pct)}%`;
@@ -305,10 +383,12 @@ class ScraperApp {
     this.$('pm-found').textContent = progress.found ?? 0;
     this.$('pm-valid').textContent = progress.valid ?? 0;
     this.$('pm-target').textContent = progress.target ?? '-';
-    this.$('pm-elapsed').textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '-';
-    this.$('pm-eta').textContent = progress.eta_seconds != null
-      ? this.formatDuration(progress.eta_seconds)
-      : 'ETA: calculating...';
+    if (this.state.progressStartedAtMs) {
+      this.renderLiveTimers();
+    } else {
+      this.$('pm-elapsed').textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '-';
+      this.$('pm-eta').textContent = this.etaDisplayText();
+    }
     this.$('pm-engine').textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
     this.$('pm-attempt').textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
     this.updateStagePipeline(phase, pct);
@@ -367,8 +447,10 @@ class ScraperApp {
     this.state.products = data.data || [];
     this.state.recommendations = data.recommendations || {};
     this.state.metadata = data.result_metadata || {};
+    this.state.sortMode = data.sort_mode || this.state.metadata.sort_mode || this.state.sortMode || 'terbaik';
     this.state.recommendationsOpen = false;
 
+    this.applySortMode(this.state.sortMode, false);
     this.renderResultSummary(data);
     this.renderBudgetBar(data.budget_info);
     this.renderComparison(data);
@@ -610,6 +692,47 @@ class ScraperApp {
     }
   }
 
+  activeSortMode() {
+    return document.querySelector('.quick-sort-btn.active')?.dataset.sort || this.state.sortMode || 'terbaik';
+  }
+
+  setSortMode(mode) {
+    this.applySortMode(mode, true);
+  }
+
+  applySortMode(mode, rerender) {
+    const nextMode = ['most_trusted', 'termurah', 'terbaik'].includes(mode) ? mode : 'terbaik';
+    this.state.sortMode = nextMode;
+    document.querySelectorAll('.quick-sort-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.sort === nextMode);
+    });
+    this.state.products = this.sortProducts(this.state.products, nextMode);
+    if (rerender) {
+      this.renderProducts();
+      this.updateResultCount();
+    }
+  }
+
+  sortProducts(products, mode) {
+    const list = [...(products || [])];
+    const numeric = (value, fallback = 0) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    const price = (p) => numeric(p.price_value ?? p.price, Number.MAX_SAFE_INTEGER);
+    const relevance = (p) => numeric(p.relevance_score ?? p.ai_confidence, 0);
+    const rating = (p) => numeric(p.rating, 0);
+    const sold = (p) => numeric(p.sold_count, 0);
+    const trust = (p) => {
+      const shop = String(p.shop_name || p.shop || '').toLowerCase();
+      const shopBoost = /(official|mall|power merchant|pro)/.test(shop) ? 1 : shop ? 0.5 : 0;
+      return shopBoost + rating(p) / 5 + Math.min(sold(p), 1000) / 1000;
+    };
+    if (mode === 'termurah') return list.sort((a, b) => price(a) - price(b) || relevance(b) - relevance(a));
+    if (mode === 'most_trusted') return list.sort((a, b) => trust(b) - trust(a) || relevance(b) - relevance(a));
+    return list.sort((a, b) => relevance(b) - relevance(a) || rating(b) - rating(a) || sold(b) - sold(a));
+  }
+
   createCard(product) {
     const card = document.createElement('div');
     card.className = 'product-card';
@@ -693,23 +816,18 @@ class ScraperApp {
       <div class="modal-overlay" id="modal-overlay"></div>
       <div class="modal-box" role="dialog" aria-modal="true" aria-label="Feedback salah">
         <div class="modal-header">
-          <h3>Ini salah kenapa?</h3>
+          <h3>Kenapa data ini salah?</h3>
           <button class="modal-close" id="modal-close" aria-label="Tutup">x</button>
         </div>
         <div class="modal-product" id="modal-product-info"></div>
-        <p class="modal-question">Kenapa hasil ini salah?</p>
+        <p class="modal-question">Pilih satu atau lebih alasan.</p>
         <div class="modal-cats" id="modal-cats"></div>
         <div class="modal-note-wrap">
           <label for="modal-note">Penjelasan</label>
           <textarea id="modal-note" placeholder="Jelaskan kenapa AI salah..." maxlength="500"></textarea>
         </div>
-        <div class="modal-corrected-label" id="modal-corrected-label-wrap">
-          <p class="modal-label">Corrected label</p>
-          <label><input type="radio" name="corrected_label" value="relevan"> Relevan</label>
-          <label><input type="radio" name="corrected_label" value="tidak_relevan" checked> Tidak relevan</label>
-        </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" id="modal-submit">Kirim feedback</button>
+          <button class="btn btn-primary" id="modal-submit">Save</button>
           <button class="btn btn-ghost" id="modal-cancel">Batal</button>
         </div>
       </div>
@@ -741,9 +859,6 @@ class ScraperApp {
     const info = this._modal.querySelector('#modal-product-info');
     if (info) info.textContent = product.title || 'Produk';
     this._modal.querySelectorAll('input[name="reason"]').forEach((cb) => { cb.checked = false; });
-    this._modal.querySelectorAll('input[name="corrected_label"]').forEach((rb) => {
-      rb.checked = rb.value === 'tidak_relevan';
-    });
     const note = this._modal.querySelector('#modal-note');
     if (note) note.value = '';
 
@@ -762,13 +877,12 @@ class ScraperApp {
     const selectedReasons = Array.from(this._modal.querySelectorAll('input[name="reason"]:checked'))
       .map((cb) => cb.value);
     const customReason = this._modal.querySelector('#modal-note')?.value.trim() || '';
-    const corrected = this._modal.querySelector('input[name="corrected_label"]:checked')?.value || 'tidak_relevan';
-
     this._submitFeedback(this._modalPid, {
       userAction: 'salah',
+      feedbackType: 'negative',
       selectedReasons,
       customReason,
-      correctedLabel: corrected,
+      correctedLabel: 'tidak_relevan',
     });
     this._closeFeedbackModal();
   }
@@ -782,11 +896,26 @@ class ScraperApp {
       product_id: productId || 'unknown',
       product_title: product.title || '',
       user_action: feedback.userAction,
+      feedback_type: feedback.feedbackType || (feedback.userAction === 'benar' ? 'positive' : 'negative'),
       selected_reasons: feedback.selectedReasons || [],
+      reasons: feedback.selectedReasons || [],
       custom_reason: feedback.customReason || '',
+      note: feedback.customReason || '',
       corrected_label: feedback.correctedLabel,
       ai_label: product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan'),
       ai_confidence: product.ai_confidence ?? product.relevance_score ?? 0,
+      rule_score: product.rule_score ?? 0,
+      sort_mode: this.state.sortMode || 'terbaik',
+      query_intent: product.query_intent || this.state.metadata.query_intent || '',
+      product: {
+        id: product.id || '',
+        title: product.title || '',
+        price: product.price_value ?? product.price ?? 0,
+        store: product.shop_name || product.shop || '',
+        url: product.url || product.product_url || '',
+        image: product.image || product.image_url || '',
+        product_category: product.product_category || '',
+      },
       query: this.state.query || '',
       timestamp: new Date().toISOString(),
     };
@@ -819,6 +948,7 @@ class ScraperApp {
     }
     this._submitFeedback(productId, {
       userAction: 'benar',
+      feedbackType: 'positive',
       selectedReasons: [],
       customReason: '',
       correctedLabel: 'relevan',

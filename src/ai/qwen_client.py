@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from src.config import AI_FILTER_MODEL, OLLAMA_TIMEOUT_SECONDS
 from src.utils.logger import log
 
 
@@ -44,10 +45,10 @@ OLLAMA_GENERATE_URL = (
     .rstrip("/")
 )
 OLLAMA_TAGS_URL = f"{OLLAMA_BASE_URL}/api/tags"
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:14b").strip() or "qwen2.5:14b"
+MODEL_NAME = os.getenv("OLLAMA_MODEL", AI_FILTER_MODEL).strip() or AI_FILTER_MODEL
 AI_ALLOW_FALLBACK = _env_bool("AI_ALLOW_FALLBACK", True)
 
-TIMEOUT_S = int(os.getenv("AI_TIMEOUT_SECONDS", os.getenv("OLLAMA_TIMEOUT_SECONDS", "240")))
+TIMEOUT_S = int(os.getenv("AI_TIMEOUT_SECONDS", os.getenv("OLLAMA_TIMEOUT_SECONDS", str(OLLAMA_TIMEOUT_SECONDS))))
 HEALTH_TIMEOUT_S = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "4"))
 
 
@@ -173,8 +174,8 @@ async def check_model_loaded(model_name: str = MODEL_NAME) -> bool:
 
 
 async def select_ollama_model(preferred_model: str | None = None) -> OllamaModelSelection:
-    """Select the configured Qwen model. Default is intentionally qwen2.5:14b."""
-    preferred = (preferred_model or MODEL_NAME).strip() or "qwen2.5:14b"
+    """Select the configured legacy generate model. Realtime filtering defaults to gemma3:4b."""
+    preferred = (preferred_model or MODEL_NAME).strip() or AI_FILTER_MODEL
     tags = await get_ollama_tags()
     if not tags.reachable:
         warning = f"AI skipped: Ollama not reachable at {OLLAMA_BASE_URL}"
@@ -210,7 +211,7 @@ async def call_ollama_generate(
     search_id: str | None = None,
 ) -> GenerateResult:
     """Call POST /api/generate and parse the model's JSON object response."""
-    selected = (model or MODEL_NAME).strip() or "qwen2.5:14b"
+    selected = (model or MODEL_NAME).strip() or AI_FILTER_MODEL
     payload = {
         "model": selected,
         "prompt": prompt,

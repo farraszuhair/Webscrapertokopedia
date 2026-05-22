@@ -6,13 +6,14 @@ POST /api/ai/reset clears:
   data/ai_memory/examples.jsonl
   data/ai_memory/category_rules.json
 
-Does NOT touch Ollama or the qwen2.5:14b model.
+Does NOT touch Ollama or any local model.
 """
 from __future__ import annotations
 
 import json
 
 import src.ai.memory_store as memory_store
+from src.config import FEEDBACK_FILE as PRODUCT_FEEDBACK_FILE
 from src.utils.logger import log
 
 
@@ -27,6 +28,8 @@ def reset_ai_memory() -> bool:
         # Clear JSONL files
         memory_store.FEEDBACK_FILE.write_text("", encoding="utf-8")
         memory_store.EXAMPLES_FILE.write_text("", encoding="utf-8")
+        PRODUCT_FEEDBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PRODUCT_FEEDBACK_FILE.write_text("[]", encoding="utf-8")
 
         # Reset category rules to empty
         memory_store.CATEGORY_RULES_FILE.write_text(
@@ -34,7 +37,7 @@ def reset_ai_memory() -> bool:
             encoding="utf-8",
         )
 
-        log("AI_RESET", "AI memory cleared: feedback.jsonl, examples.jsonl, category_rules.json", "OK")
+        log("AI_RESET", "AI memory cleared: feedback.jsonl, product_feedback.json, examples.jsonl, category_rules.json", "OK")
         return True
 
     except Exception as exc:

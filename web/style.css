@@ -884,6 +884,35 @@ html, body {
   line-height: 1.4;
 }
 
+.quick-sort {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 16px;
+}
+
+.quick-sort-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 34px;
+  padding: 7px 12px;
+  transition: border-color var(--trans), color var(--trans), background var(--trans);
+}
+
+.quick-sort-btn:hover,
+.quick-sort-btn.active {
+  background: rgba(59,130,246,.10);
+  border-color: rgba(59,130,246,.35);
+  color: var(--accent);
+}
+
 /* Products grid */
 .products-grid {
   display: grid;

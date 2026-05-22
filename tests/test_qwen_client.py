@@ -35,14 +35,14 @@ from src.ai.qwen_client import (
 
 # ── Timeout constant ─────────────────────────────────────────────────────────
 
-def test_timeout_is_at_least_120_seconds():
-    """Root cause of Ollama 500: 14B model needs 60-120s cold start. Must not be 30s."""
-    assert TIMEOUT_S >= 120, f"TIMEOUT_S={TIMEOUT_S} is too low - Qwen 14B needs at least 120s"
+def test_timeout_is_laptop_realtime_friendly():
+    """Realtime filtering should use a short timeout; qwen 14B is optional accurate mode."""
+    assert TIMEOUT_S <= 30, f"TIMEOUT_S={TIMEOUT_S} is too slow for realtime borderline filtering"
 
 
-def test_default_model_is_qwen_14b():
-    """The project intentionally defaults to qwen2.5:14b."""
-    assert MODEL_NAME == "qwen2.5:14b"
+def test_default_model_is_balanced_gemma():
+    """The project intentionally defaults to the balanced small model."""
+    assert MODEL_NAME == "gemma3:4b"
 
 
 # ── ask_qwen: HTTP 500 ────────────────────────────────────────────────────────

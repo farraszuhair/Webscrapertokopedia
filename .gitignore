@@ -10,6 +10,8 @@ data/results/*
 !data/results/.gitkeep
 data/ai_memory/*
 !data/ai_memory/.gitkeep
+data/feedback/*
+!data/feedback/.gitkeep
 debug/scraper/*
 !debug/scraper/.gitkeep
 dist/

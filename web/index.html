@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tokopedia Scraper</title>
-  <meta name="description" content="Tokopedia scraper with Puppeteer, Selenium rollback, budget debug, and Qwen validation.">
+  <title>MarketSpy AI</title>
+  <meta name="description" content="MarketSpy AI scraper with Puppeteer, Selenium rollback, intent-aware filtering, and local Ollama validation.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -16,8 +16,8 @@
         <div class="logo">
           <span class="logo-icon">TS</span>
           <div>
-            <h1>Tokopedia Scraper</h1>
-            <p>Puppeteer + Rollback/Selenium + Qwen</p>
+            <h1>MarketSpy AI</h1>
+            <p>Puppeteer + Rollback/Selenium + local AI</p>
           </div>
         </div>
         <div id="status-badge" class="status-badge status-idle">Idle</div>
@@ -36,7 +36,7 @@
         <div class="form-row">
           <div class="form-group">
             <label for="target_count">Jumlah target <span class="required">*</span></label>
-            <input type="number" id="target_count" value="25" min="1" max="100">
+            <input type="number" id="target_count" value="50" min="0" max="100">
           </div>
 
           <div class="form-group">
@@ -52,6 +52,16 @@
             <option value="puppeteer">Puppeteer only</option>
             <option value="rollback">Rollback/Selenium only</option>
             <option value="compare">Compare both</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="ai_mode">AI Mode</label>
+          <select id="ai_mode">
+            <option value="balanced" selected>Balanced - gemma3:4b</option>
+            <option value="fast">Fast - llama3.2:3b</option>
+            <option value="json">JSON - phi4-mini</option>
+            <option value="accurate">Accurate - qwen2.5:14b</option>
           </select>
         </div>
 
@@ -81,8 +91,8 @@
         <div class="form-group checkbox-group">
           <label class="checkbox-label">
             <input type="checkbox" id="use_ai" checked>
-            <span>Gunakan Qwen AI Validator</span>
-            <small>(matikan jika Ollama tidak running)</small>
+            <span>Gunakan AI untuk produk borderline</span>
+            <small>(rules tetap berjalan jika Ollama mati)</small>
           </label>
         </div>
 
@@ -176,7 +186,7 @@
           <div><span>Scraped raw</span><b id="rs-raw">0</b></div>
           <div><span>After dedupe</span><b id="rs-deduped">0</b></div>
           <div><span>Budget valid</span><b id="rs-budget">0</b></div>
-          <div><span>Qwen accepted</span><b id="rs-qwen">0</b></div>
+          <div><span>AI accepted</span><b id="rs-qwen">0</b></div>
           <div><span>Displayed</span><b id="rs-displayed">0</b></div>
         </div>
 
@@ -185,6 +195,12 @@
         </div>
 
         <div id="r-warning" class="result-warning hidden"></div>
+
+        <div class="quick-sort" id="quick-sort">
+          <button class="quick-sort-btn" type="button" data-sort="most_trusted">Most Trusted</button>
+          <button class="quick-sort-btn" type="button" data-sort="termurah">Termurah</button>
+          <button class="quick-sort-btn active" type="button" data-sort="terbaik">Terbaik</button>
+        </div>
 
         <div id="comparison-panel" class="comparison-panel hidden">
           <h3>Engine Comparison</h3>
