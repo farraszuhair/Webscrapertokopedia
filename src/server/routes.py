@@ -21,7 +21,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from src.ai.learning import save_feedback
-from src.ai.relevance import filter_relevance
+from src.ai.relevance import RELEVANCE_THRESHOLD, filter_relevance
 from src.ai.reset import reset_ai_memory
 from src.scraper.budget_filter import FilterResult, filter_by_budget
 from src.scraper.dedupe import deduplicate_products
@@ -40,6 +40,23 @@ router = APIRouter()
 _results_store: dict[str, dict[str, Any]] = {}
 
 
+def _product_cache_key(product: dict[str, Any]) -> str:
+    url = str(product.get("url") or product.get("product_url") or "").strip().lower()
+    if url:
+        return f"url:{url.split('?')[0]}"
+    title = str(product.get("title") or "").strip().lower()
+    price = str(product.get("price_value") or product.get("price_raw") or "").strip().lower()
+    return f"title:{title}|price:{price}"
+
+
+def _is_ai_valid(product: dict[str, Any]) -> bool:
+    try:
+        confidence = float(product.get("relevance_score", product.get("ai_confidence", 0)) or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return bool(product.get("ai_decision", True)) and confidence >= RELEVANCE_THRESHOLD
+
+
 def cleanup_task(search_id: str, task: asyncio.Task) -> None:
     try:
         exc = task.exception()
@@ -55,14 +72,25 @@ def cleanup_task(search_id: str, task: asyncio.Task) -> None:
 async def start_search(req: SearchRequest):
     search_id = str(uuid.uuid4())
     target_count = max(1, min(int(req.target_count), 100))
-    overfetch_multiplier = max(1, int(os.getenv("SCRAPER_OVERFETCH_MULTIPLIER", "3")))
-    raw_target = max(100, target_count * overfetch_multiplier)
+    overfetch_multiplier = max(
+        1,
+        int(os.getenv("OVERFETCH_MULTIPLIER", os.getenv("SCRAPER_OVERFETCH_MULTIPLIER", "4"))),
+    )
+    max_raw_candidates = max(target_count, int(os.getenv("MAX_RAW_CANDIDATES", "300")))
+    raw_target = min(max_raw_candidates, max(100, target_count * overfetch_multiplier))
     req.target_count = target_count
     init_progress(search_id, target_count, raw_target, req.engine_mode)
+    progress = get_progress(search_id) or {}
     task = asyncio.create_task(run_scrape_job_wrapper(search_id, req, raw_target))
     register_task(search_id, task)
     task.add_done_callback(lambda t: cleanup_task(search_id, t))
-    return {"success": True, "search_id": search_id}
+    return {
+        "success": True,
+        "search_id": search_id,
+        "requested_count": target_count,
+        "raw_target": raw_target,
+        "started_at_epoch_ms": progress.get("started_at_epoch_ms"),
+    }
 
 
 @router.get("/api/progress/{search_id}", response_model=ProgressResponse)
@@ -305,7 +333,7 @@ def _build_recommendations(query: str, products: list[dict[str, Any]]) -> dict[s
 def _limited_reason(requested_count: int, displayed_count: int) -> str | None:
     if displayed_count >= requested_count:
         return None
-    return f"Requested {requested_count} products, but only {displayed_count} matched after filtering."
+    return f"Only {displayed_count} products matched after scraping, dedupe, budget, and AI filtering."
 
 
 async def _filter_pipeline(
@@ -401,18 +429,35 @@ async def _filter_pipeline(
     )
 
     recommendations = _build_recommendations(req.query, final)
+    has_enough = len(final) >= req.target_count
     metadata = {
         "requested_count": req.target_count,
+        "raw_scraped_count": len(raw_products),
         "raw_scraped": len(raw_products),
         "deduped_count": len(deduped),
         "budget_valid_count": len(candidates),
+        "ai_input_count": len(candidates),
         "ai_accepted_count": len(ai_valid),
         "qwen_accepted_count": ai_meta.get("qwen_accepted_count", len(ai_valid) if qwen_status in ("ok", "partial") else 0),
         "displayed_count": len(final),
+        "has_enough_results": has_enough,
         "limited_reason": limited,
         "qwen_status": qwen_status,
         "qwen_warning": ai_meta.get("warning", ""),
     }
+
+    log(
+        "COUNT",
+        (
+            f"requested={req.target_count} raw_target={get_progress(search_id).get('raw_target') if get_progress(search_id) else '?'} "
+            f"raw_scraped={len(raw_products)} deduped={len(deduped)} "
+            f"budget_valid={len(candidates)} ai_input={len(candidates)} "
+            f"ai_accepted={len(ai_valid)} displayed={len(final)} "
+            f"has_enough={str(has_enough).lower()}"
+            + (f' reason="{limited}"' if limited else "")
+        ),
+        "INFO",
+    )
 
     error = ""
     qwen_warning = ai_meta.get("warning", "")
@@ -503,12 +548,15 @@ async def _finish_compare(
                 "qwen_warning": "",
                 "result_metadata": {
                     "requested_count": req.target_count,
+                    "raw_scraped_count": run.raw_products_found,
                     "raw_scraped": run.raw_products_found,
                     "deduped_count": 0,
                     "budget_valid_count": 0,
+                    "ai_input_count": 0,
                     "ai_accepted_count": 0,
                     "qwen_accepted_count": 0,
                     "displayed_count": 0,
+                    "has_enough_results": False,
                     "limited_reason": _limited_reason(req.target_count, 0),
                 },
                 "recommendations": _build_recommendations(req.query, []),
@@ -562,12 +610,15 @@ async def _finish_compare(
     final_data = (selected or {}).get("data", [])
     selected_metadata = (selected or {}).get("result_metadata") or {
         "requested_count": req.target_count,
+        "raw_scraped_count": 0,
         "raw_scraped": 0,
         "deduped_count": 0,
         "budget_valid_count": 0,
+        "ai_input_count": 0,
         "ai_accepted_count": 0,
         "qwen_accepted_count": 0,
         "displayed_count": len(final_data),
+        "has_enough_results": len(final_data) >= req.target_count,
         "limited_reason": _limited_reason(req.target_count, len(final_data)),
     }
 
@@ -595,6 +646,8 @@ async def _finish_compare(
 
 async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) -> None:
     log(f"[{search_id}]", f"Starting '{req.query}' target={req.target_count} mode={req.engine_mode}", "INFO")
+    log("COUNT", f"requested={req.target_count}", "INFO")
+    log("COUNT", f"raw_target={raw_target}", "INFO")
     eta_calc = ETACalculator()
 
     selection = await run_scraper_engines(

@@ -79,6 +79,8 @@ class PuppeteerEngine:
                 str(min_price or ""),
                 "--max-price",
                 str(max_price or ""),
+                "--max-scrolls",
+                str(os.getenv("MAX_SCROLL_ATTEMPTS", os.getenv("PUPPETEER_MAX_SCROLL_ROUNDS", "30"))),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=1024 * 1024 * 10,

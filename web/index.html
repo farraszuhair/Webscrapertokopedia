@@ -167,8 +167,17 @@
         <div class="results-header">
           <h2 class="panel-title">Hasil Scraping</h2>
           <div class="results-meta">
-            <span class="results-count"><span id="r-count">0</span> dari <span id="r-target">0</span> produk</span>
+            <span class="results-count">Menampilkan <span id="r-count">0</span> dari <span id="r-target">0</span> produk diminta</span>
           </div>
+        </div>
+
+        <div id="result-summary" class="result-summary">
+          <div><span>Requested</span><b id="rs-requested">0</b></div>
+          <div><span>Scraped raw</span><b id="rs-raw">0</b></div>
+          <div><span>After dedupe</span><b id="rs-deduped">0</b></div>
+          <div><span>Budget valid</span><b id="rs-budget">0</b></div>
+          <div><span>Qwen accepted</span><b id="rs-qwen">0</b></div>
+          <div><span>Displayed</span><b id="rs-displayed">0</b></div>
         </div>
 
         <div id="r-budget-bar" class="r-budget-bar hidden">
@@ -184,7 +193,7 @@
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
           <button id="recommendations-trigger" class="recommendations-trigger" type="button" onclick="app.toggleRecommendations()" aria-expanded="false">
-            <span class="recommendation-trigger-title">🎯 Lihat Rekomendasi Cepat</span>
+            <span class="recommendation-trigger-title">&#127919; Lihat Rekomendasi Cepat</span>
             <span class="recommendation-trigger-subtitle">Termurah, Trusted, dan Terbaik dari hasil scraping</span>
             <span class="recommendation-trigger-state">Buka</span>
           </button>

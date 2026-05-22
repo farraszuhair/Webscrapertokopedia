@@ -570,6 +570,42 @@ html, body {
   font-weight: 700;
 }
 
+.result-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.result-summary div {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.result-summary div:last-child { border-right: none; }
+
+.result-summary span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+
+.result-summary b {
+  color: var(--text);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
 .badge {
   font-size: 11px;
   font-weight: 700;
@@ -1027,12 +1063,30 @@ html, body {
   display: inline-block;
   font-size: 11px;
   font-weight: 700;
-  color: var(--green);
-  background: rgba(34,197,94,.1);
-  border: 1px solid rgba(34,197,94,.2);
+  color: var(--text);
+  background: rgba(59,130,246,.10);
+  border: 1px solid rgba(59,130,246,.22);
   border-radius: 4px;
   padding: 2px 6px;
   margin-top: 4px;
+}
+
+.ai-score.conf-high {
+  color: var(--green);
+  background: rgba(34,197,94,.10);
+  border-color: rgba(34,197,94,.25);
+}
+
+.ai-score.conf-medium {
+  color: var(--amber);
+  background: rgba(245,158,11,.10);
+  border-color: rgba(245,158,11,.25);
+}
+
+.ai-score.conf-low {
+  color: var(--red);
+  background: rgba(239,68,68,.10);
+  border-color: rgba(239,68,68,.25);
 }
 
 .ai-reason {
@@ -1258,6 +1312,10 @@ body.modal-open { overflow: hidden; }
 
 @media (max-width: 600px) {
   .form-row { grid-template-columns: 1fr; }
+  .result-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .result-summary div { border-bottom: 1px solid var(--border); }
+  .result-summary div:nth-child(2n) { border-right: none; }
+  .result-summary div:nth-last-child(-n+2) { border-bottom: none; }
   .recommendations-grid { grid-template-columns: 1fr; }
   .products-grid { grid-template-columns: 1fr 1fr; }
   .stage-connector { width: 16px; }

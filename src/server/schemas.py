@@ -5,12 +5,14 @@ FeedbackRequest updated to support multi-category correction and ai_decision.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 EngineMode = Literal["auto", "puppeteer", "rollback", "compare"]
+REQUESTED_COUNT_DEFAULT = max(1, int(os.getenv("REQUESTED_COUNT_DEFAULT", "25")))
 
 
 class SearchRequest(BaseModel):
@@ -18,7 +20,7 @@ class SearchRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     query: str
-    target_count: int = Field(default=25, validation_alias=AliasChoices("target_count", "target"))
+    target_count: int = Field(default=REQUESTED_COUNT_DEFAULT, validation_alias=AliasChoices("target_count", "target"))
     budget: Optional[Any] = None
     tolerance: float = 20.0
     use_ai: bool = Field(default=True, validation_alias=AliasChoices("use_ai", "ai"))
@@ -43,14 +45,20 @@ class ProgressResponse(BaseModel):
     search_id: str
     engine_mode: str = "auto"
     active_engine: str = "none"
-    percent: int
+    percent: float
+    progress_percent: float = 0.0
     stage: str
+    phase: str = "initializing"
     message: str
     found: int
     valid: int
     target: int
     raw_target: int
-    elapsed_seconds: int
+    started_at_epoch_ms: int = 0
+    started_at_monotonic: float = 0.0
+    updated_at_epoch_ms: int = 0
+    server_now_epoch_ms: int = 0
+    elapsed_seconds: float
     eta_seconds: Optional[int] = None
     eta_label: str = "Calculating..."
     engine: str = "none"

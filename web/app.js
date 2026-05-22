@@ -32,6 +32,9 @@ class ScraperApp {
       recommendations: {},
       recommendationsOpen: false,
       metadata: {},
+      elapsedTimer: null,
+      progressStartedAtMs: null,
+      lastProgress: null,
     };
 
     this.$ = (id) => document.getElementById(id);
@@ -187,6 +190,8 @@ class ScraperApp {
         return;
       }
       this.state.searchId = data.search_id;
+      this.state.progressStartedAtMs = data.started_at_epoch_ms || null;
+      if (this.state.progressStartedAtMs) this.startElapsedTimer();
       this.startPolling();
     } catch (err) {
       this.showError('Gagal terhubung ke server: ' + err.message);
@@ -195,13 +200,26 @@ class ScraperApp {
 
   startPolling() {
     this.stopPolling();
-    this.state.pollTimer = setInterval(() => this.fetchProgress(), 1000);
+    this.fetchProgress();
+    this.state.pollTimer = setInterval(() => this.fetchProgress(), 750);
   }
 
   stopPolling() {
     if (!this.state.pollTimer) return;
     clearInterval(this.state.pollTimer);
     this.state.pollTimer = null;
+  }
+
+  startElapsedTimer() {
+    this.stopElapsedTimer();
+    this.renderLiveElapsed();
+    this.state.elapsedTimer = setInterval(() => this.renderLiveElapsed(), 1000);
+  }
+
+  stopElapsedTimer() {
+    if (!this.state.elapsedTimer) return;
+    clearInterval(this.state.elapsedTimer);
+    this.state.elapsedTimer = null;
   }
 
   async fetchProgress() {
@@ -213,6 +231,7 @@ class ScraperApp {
       this.renderProgress(progress);
       if (progress.done) {
         this.stopPolling();
+        this.stopElapsedTimer();
         progress.error ? this.showError(progress.error) : this.fetchResults();
       }
     } catch (err) {
@@ -232,13 +251,20 @@ class ScraperApp {
   }
 
   resetProgress() {
+    this.stopPolling();
+    this.stopElapsedTimer();
+    this.state.progressStartedAtMs = null;
+    this.state.lastProgress = null;
     this.renderProgress({
       percent: 0,
+      progress_percent: 0,
       stage: 'initializing',
+      phase: 'initializing',
       message: 'Initializing...',
       found: 0,
       valid: 0,
       target: 0,
+      started_at_epoch_ms: null,
       elapsed_seconds: 0,
       eta_seconds: null,
       engine_mode: this.$('engine_mode')?.value || 'auto',
@@ -249,20 +275,43 @@ class ScraperApp {
     document.querySelectorAll('.stage-item').forEach((el) => el.classList.remove('active', 'done'));
   }
 
+  formatDuration(seconds) {
+    const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+    const minutes = Math.floor(safe / 60);
+    const secs = safe % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+
+  renderLiveElapsed() {
+    const el = this.$('pm-elapsed');
+    if (!el || !this.state.progressStartedAtMs) return;
+    const seconds = (Date.now() - Number(this.state.progressStartedAtMs)) / 1000;
+    el.textContent = this.formatDuration(seconds);
+  }
+
   renderProgress(progress) {
-    const pct = Math.max(0, Math.min(100, progress.percent || 0));
-    this.$('progress-pct').textContent = `${pct}%`;
+    this.state.lastProgress = progress;
+    if (progress.started_at_epoch_ms) {
+      this.state.progressStartedAtMs = Number(progress.started_at_epoch_ms);
+      if (!this.state.elapsedTimer && !progress.done) this.startElapsedTimer();
+    }
+
+    const pct = Math.max(0, Math.min(100, Number(progress.progress_percent ?? progress.percent ?? 0)));
+    this.$('progress-pct').textContent = `${Math.round(pct)}%`;
     this.$('progress-bar').style.width = `${pct}%`;
-    this.$('progress-stage-label').textContent = this.stageLabel(progress.stage);
+    const phase = progress.phase || progress.stage;
+    this.$('progress-stage-label').textContent = this.stageLabel(phase);
     this.$('progress-message').textContent = progress.message || '';
     this.$('pm-found').textContent = progress.found ?? 0;
     this.$('pm-valid').textContent = progress.valid ?? 0;
     this.$('pm-target').textContent = progress.target ?? '-';
-    this.$('pm-elapsed').textContent = progress.elapsed_seconds != null ? `${progress.elapsed_seconds}s` : '-';
-    this.$('pm-eta').textContent = progress.eta_label || 'ETA: calculating...';
+    this.$('pm-elapsed').textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '-';
+    this.$('pm-eta').textContent = progress.eta_seconds != null
+      ? this.formatDuration(progress.eta_seconds)
+      : 'ETA: calculating...';
     this.$('pm-engine').textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
     this.$('pm-attempt').textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
-    this.updateStagePipeline(progress.stage, pct);
+    this.updateStagePipeline(phase, pct);
   }
 
   stageLabel(stage) {
@@ -320,7 +369,7 @@ class ScraperApp {
     this.state.metadata = data.result_metadata || {};
     this.state.recommendationsOpen = false;
 
-    this.$('r-target').textContent = data.requested_count ?? '-';
+    this.renderResultSummary(data);
     this.renderBudgetBar(data.budget_info);
     this.renderComparison(data);
     this.renderResultWarning(data);
@@ -333,7 +382,18 @@ class ScraperApp {
     const box = this.$('r-warning');
     if (!box) return;
     const messages = [];
-    if (data.limited_reason) messages.push(data.limited_reason);
+    const meta = data.result_metadata || this.state.metadata || {};
+    const requested = Number(meta.requested_count ?? data.requested_count ?? 0);
+    const displayed = Number(meta.displayed_count ?? data.displayed_count ?? this.state.products.length);
+    const limitedReason = meta.limited_reason || data.limited_reason;
+    if (requested && displayed < requested) {
+      messages.push(
+        `Produk yang tampil kurang dari permintaan. Diminta ${requested}, tetapi hanya ${displayed} yang lolos.`
+      );
+      messages.push(`Alasan: ${limitedReason || 'hanya produk tersebut yang lolos filter setelah scraping dan AI.'}`);
+    } else if (limitedReason) {
+      messages.push(limitedReason);
+    }
     if (data.qwen_warning) messages.push(data.qwen_warning);
     if (!messages.length) {
       box.classList.add('hidden');
@@ -420,12 +480,33 @@ class ScraperApp {
     this.state.recommendationsOpen = false;
     this.renderComparison({ engine_runs: this.state.comparison });
     this.renderRecommendations(this.state.recommendations);
+    this.renderResultSummary(item);
     this.renderResultWarning({
       limited_reason: this.state.metadata.limited_reason,
       qwen_warning: item.qwen_warning || '',
+      result_metadata: this.state.metadata,
     });
     this.updateResultCount();
     this.renderProducts();
+  }
+
+  renderResultSummary(data) {
+    const meta = data.result_metadata || this.state.metadata || {};
+    const requested = Number(meta.requested_count ?? data.requested_count ?? data.target_count ?? 0);
+    const displayed = Number(meta.displayed_count ?? data.displayed_count ?? this.state.products.length);
+    const raw = Number(meta.raw_scraped_count ?? meta.raw_scraped ?? data.raw_count ?? 0);
+    const deduped = Number(meta.deduped_count ?? data.deduped_count ?? 0);
+    const budget = Number(meta.budget_valid_count ?? data.budget_valid_count ?? data.budget_count ?? 0);
+    const qwen = Number(meta.qwen_accepted_count ?? meta.ai_accepted_count ?? data.qwen_accepted_count ?? data.ai_valid_count ?? 0);
+
+    this.setText('r-count', displayed || this.state.products.length || 0);
+    this.setText('r-target', requested || '-');
+    this.setText('rs-requested', requested || 0);
+    this.setText('rs-raw', raw || 0);
+    this.setText('rs-deduped', deduped || 0);
+    this.setText('rs-budget', budget || 0);
+    this.setText('rs-qwen', qwen || 0);
+    this.setText('rs-displayed', displayed || this.state.products.length || 0);
   }
 
   renderRecommendations(recommendations) {
@@ -491,7 +572,7 @@ class ScraperApp {
           <div class="recommendation-title">${this.esc(title)}</div>
           <div class="recommendation-price">${this.esc(product.price || '-')}</div>
           <div class="recommendation-meta">
-            ${product.rating ? `<span>★ ${this.esc(product.rating)}</span>` : ''}
+            ${product.rating ? `<span>&#9733; ${this.esc(product.rating)}</span>` : ''}
             ${product.sold ? `<span>${this.esc(product.sold)}</span>` : ''}
           </div>
           ${product.shop_name ? `<div class="recommendation-shop">${this.esc(product.shop_name)}</div>` : ''}
@@ -509,7 +590,12 @@ class ScraperApp {
   }
 
   updateResultCount() {
-    this.$('r-count').textContent = this.state.products.length;
+    const meta = this.state.metadata || {};
+    const displayed = Number(meta.displayed_count ?? this.state.products.length);
+    const requested = Number(meta.requested_count ?? this.$('r-target')?.textContent ?? displayed);
+    this.setText('r-count', displayed || this.state.products.length);
+    this.setText('r-target', requested || '-');
+    this.setText('rs-displayed', displayed || this.state.products.length);
   }
 
   renderProducts() {
@@ -534,15 +620,22 @@ class ScraperApp {
     const url = product.url || '#';
     const price = product.price_raw || product.price_text || '-';
     const image = product.image || product.image_url || '';
+    const soldText = product.sold || product.sold_text || product.sold_count || '';
+    const shopName = product.shop || product.shop_name || '';
+    const shopLocation = product.location || product.shop_location || '';
     const imgHtml = image
       ? `<img src="${this.esc(image)}" alt="${this.esc(title)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\"product-img-placeholder\\">No image</div>'">`
       : '<div class="product-img-placeholder">No image</div>';
     const aiValue = product.ai_confidence ?? product.relevance_score;
+    const aiNumeric = Number(aiValue);
+    const aiConfidenceLabel = product.ai_confidence_label
+      || (aiNumeric >= 0.85 ? 'High' : aiNumeric >= 0.70 ? 'Medium' : 'Low');
+    const confidenceClass = aiConfidenceLabel.toLowerCase();
     const confidence = aiValue != null && Number.isFinite(Number(aiValue))
-      ? `<span class="ai-score">AI confidence ${Number(aiValue).toFixed(2)}</span>`
+      ? `<span class="ai-score conf-${this.esc(confidenceClass)}">AI ${Number(aiValue).toFixed(2)} ${this.esc(aiConfidenceLabel)}</span>`
       : '';
     const aiLabel = product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan');
-    const aiReason = product.ai_reason || product.ai_explanation || '';
+    const aiReason = product.ai_confidence_explanation || product.ai_explanation || product.ai_reason || '';
     const aiCategories = (product.ai_categories || []).length
       ? `<div class="ai-cats">${product.ai_categories.map(c => `<span class="cat-tag">${this.esc(c)}</span>`).join('')}</div>`
       : '';
@@ -554,11 +647,11 @@ class ScraperApp {
           <div class="product-title">${this.esc(title)}</div>
           <div class="product-price">${this.esc(price)}</div>
           <div class="product-stats">
-            ${product.rating ? `<span class="product-rating">★ ${this.esc(product.rating)}</span>` : ''}
-            ${product.sold ? `<span class="product-sold">${this.esc(product.sold)}</span>` : ''}
+            ${product.rating ? `<span class="product-rating">&#9733; ${this.esc(product.rating)}</span>` : ''}
+            ${soldText ? `<span class="product-sold">${this.esc(soldText)}</span>` : ''}
           </div>
-          ${product.shop ? `<div class="product-shop">Shop: ${this.esc(product.shop)}</div>` : ''}
-          ${product.location ? `<div class="product-location">Location: ${this.esc(product.location)}</div>` : ''}
+          ${shopName ? `<div class="product-shop">Shop: ${this.esc(shopName)}</div>` : ''}
+          ${shopLocation ? `<div class="product-location">Location: ${this.esc(shopLocation)}</div>` : ''}
           ${product.source_engine ? `<div class="product-source">${this.esc(product.source_engine)}</div>` : ''}
           <div class="ai-line"><span class="ai-label">AI label: ${this.esc(aiLabel)}</span>${confidence}</div>
           ${aiCategories}
@@ -734,6 +827,7 @@ class ScraperApp {
 
   showError(message) {
     this.stopPolling();
+    this.stopElapsedTimer();
     this.setStatus('Error', 'status-error');
     this.show('error-panel');
     this.$('error-msg').textContent = message;
@@ -746,8 +840,14 @@ class ScraperApp {
 
   reset() {
     this.stopPolling();
+    this.stopElapsedTimer();
     this.setStatus('Idle', 'status-idle');
     this.show('search-panel');
+  }
+
+  setText(id, value) {
+    const el = this.$(id);
+    if (el) el.textContent = value;
   }
 
   esc(value) {
