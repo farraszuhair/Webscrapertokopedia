@@ -5,7 +5,7 @@ Key fixes:
 1. Preflight check FIRST - detects Chrome error pages before extraction.
 2. --disable-http2 via selenium_driver.py to reduce ERR_HTTP2_PROTOCOL_ERROR.
 3. If opened_real_page=false -> returns False with exact error_type. No fake "selector failed".
-4. No category filtering. Returns ALL raw products. Qwen filters later.
+4. No category filtering. Returns ALL raw products. AI Orchestrator filters later.
 """
 from __future__ import annotations
 
@@ -264,6 +264,7 @@ class RollbackEngine:
                     continue
 
             if products:
+                self._save_image_missing_debug(driver, query, urls_tried, products)
                 normalized = normalize_products(products, self.name)
                 if normalized:
                     log(f"[{self.search_id}]", f"[ROLLBACK] Extracted {len(normalized)} products", "OK")
@@ -295,6 +296,43 @@ class RollbackEngine:
             return False, [], f"Rollback/Selenium error: {error}"
         finally:
             safe_quit_driver(driver)
+
+    def _save_image_missing_debug(
+        self,
+        driver,
+        query: str,
+        urls_tried: list[str],
+        products: list[dict[str, Any]],
+    ) -> None:
+        total = len(products)
+        if total < 5:
+            return
+        missing = sum(1 for product in products if not product.get("image"))
+        missing_rate = missing / total
+        if missing_rate <= 0.70:
+            return
+
+        debug_dir = get_debug_dir(self.search_id)
+        payload = {
+            "engine": self.name,
+            "query": query,
+            "urls_tried": urls_tried,
+            "images_extracted_count": total - missing,
+            "images_missing_count": missing,
+            "missing_rate": round(missing_rate, 4),
+            "samples": products[:20],
+        }
+        try:
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            html_path = debug_dir / "rollback_image_missing_debug.html"
+            screenshot_path = debug_dir / "rollback_image_missing_debug.png"
+            html_path.write_text(driver.page_source or "", encoding="utf-8")
+            driver.save_screenshot(str(screenshot_path))
+            payload["html_saved"] = html_path.exists()
+            payload["screenshot_saved"] = screenshot_path.exists()
+        except Exception as exc:
+            payload["error"] = str(exc)
+        save_json_debug(self.search_id, "rollback_image_missing_debug.json", payload)
 
     def _scroll_and_extract(
         self,
@@ -379,6 +417,43 @@ class RollbackEngine:
               const match = String(text || '').match(/Rp\s*[\d.,]+(?:\s*(?:juta|jt|mio|rb|ribu|k))?/i);
               return match ? match[0].trim() : '';
             };
+            function getImageFromCard(card) {
+              const img =
+                card.querySelector('img[src]') ||
+                card.querySelector('img[data-src]') ||
+                card.querySelector('picture img');
+
+              const candidates = [];
+              if (img) {
+                candidates.push(img.currentSrc);
+                candidates.push(img.src);
+                candidates.push(img.getAttribute('src'));
+                candidates.push(img.getAttribute('data-src'));
+                candidates.push(img.getAttribute('data-original'));
+
+                const srcset = img.getAttribute('srcset');
+                if (srcset) {
+                  candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
+                }
+              }
+
+              const source = card.querySelector('source[srcset]');
+              if (source) {
+                const srcset = source.getAttribute('srcset');
+                if (srcset) {
+                  candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
+                }
+              }
+
+              return candidates.find((url) =>
+                typeof url === 'string' &&
+                url.startsWith('http') &&
+                !url.startsWith('data:image') &&
+                !url.toLowerCase().includes('base64') &&
+                !url.toLowerCase().includes('svg') &&
+                !['undefined', 'null', 'noimage'].includes(url.trim().toLowerCase().replace(/\s+/g, ''))
+              ) || null;
+            }
 
             const seen = new Set();
             const results = [];
@@ -410,6 +485,7 @@ class RollbackEngine:
                   card.querySelector('.prd_link-product-name');
                 const priceIndex = lines.findIndex(line => line.includes(priceRaw));
                 const imageNode = card.querySelector('img');
+                const imageUrl = getImageFromCard(card);
                 const title =
                   (selectorTitle && selectorTitle.textContent.trim()) ||
                   (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
@@ -429,9 +505,7 @@ class RollbackEngine:
                   rating: ratingMatch ? ratingMatch[1] : '',
                   sold: soldMatch ? soldMatch[0] : '',
                   url: cleanUrl(anchor ? anchor.href : ''),
-                  image: imageNode
-                    ? (imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || '')
-                    : '',
+                  image: imageUrl || '',
                   source_engine: 'rollback',
                 });
               }
@@ -461,7 +535,7 @@ class RollbackEngine:
                 lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                 'Produk Tokopedia';
               const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
-              const imageNode = card.querySelector('img');
+              const imageUrl = getImageFromCard(card);
               const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
               const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
               pushProduct({
@@ -473,9 +547,7 @@ class RollbackEngine:
                 rating: ratingMatch ? ratingMatch[1] : '',
                 sold: soldMatch ? soldMatch[0] : '',
                 url: cleanUrl(href),
-                image: imageNode
-                  ? (imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || '')
-                  : '',
+                image: imageUrl || '',
                 source_engine: 'rollback',
               });
             }

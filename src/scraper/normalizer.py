@@ -23,6 +23,8 @@ class NormalizerReport:
     output: list[dict[str, Any]] = field(default_factory=list)
     drop_reasons: dict[str, int] = field(default_factory=dict)
     dropped_samples: list[dict[str, Any]] = field(default_factory=list)
+    images_extracted_count: int = 0
+    images_missing_count: int = 0
     debug_path: str | None = None
 
     @property
@@ -41,6 +43,8 @@ class NormalizerReport:
             "output_count": self.output_count,
             "dropped_count": self.dropped_count,
             "drop_reasons": self.drop_reasons,
+            "images_extracted_count": self.images_extracted_count,
+            "images_missing_count": self.images_missing_count,
             "dropped_samples": self.dropped_samples[:30],
         }
 
@@ -87,7 +91,14 @@ def normalize_image(raw: dict[str, Any]) -> str | None:
         if not isinstance(url, str):
             continue
         cleaned = url.strip().strip('"').strip("'")
-        if cleaned.startswith("http://") or cleaned.startswith("https://"):
+        lowered = cleaned.lower()
+        if (
+            (cleaned.startswith("http://") or cleaned.startswith("https://"))
+            and not cleaned.startswith("data:image")
+            and "base64" not in lowered
+            and "svg" not in lowered
+            and lowered.replace(" ", "") not in {"undefined", "null", "noimage"}
+        ):
             return cleaned
     return None
 
@@ -157,12 +168,13 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
     normalized = {
         "id": raw.get("id") or _product_id(title, url, parsed_price),
         "title": title,
-        "price": parsed_price,
+        "price": parsed_price or 0,
         "price_text": price_text,
         "price_raw": price_text, # backward compat
         "price_value": parsed_price, # backward compat
         "shop_name": _first_text(raw, ("shop", "toko", "nama_toko", "store", "shop_name")),
         "shop": _first_text(raw, ("shop", "toko", "nama_toko", "store", "shop_name")), # backward compat
+        "store": _first_text(raw, ("shop", "toko", "nama_toko", "store", "shop_name")),
         "shop_location": _first_text(raw, ("location", "lokasi", "shop_location")),
         "location": _first_text(raw, ("location", "lokasi", "shop_location")), # backward compat
         "rating": rating_val if rating_val is not None else rating_text,
@@ -181,6 +193,8 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "budget_decision": raw.get("budget_decision", ""),
         "ai_decision": raw.get("ai_decision", None),
         "ai_reason": raw.get("ai_reason", ""),
+        "confidence": raw.get("confidence", 0) or 0,
+        "decision_source": raw.get("decision_source", ""),
     }
 
     # Compatibility aliases for old frontend/AI code. Old logic bad. Replaced.
@@ -226,6 +240,8 @@ def normalize_products_with_report(
         output=output,
         drop_reasons=dict(drop_reasons),
         dropped_samples=dropped_samples,
+        images_extracted_count=sum(1 for product in output if product.get("image")),
+        images_missing_count=sum(1 for product in output if not product.get("image")),
     )
 
     if search_id:

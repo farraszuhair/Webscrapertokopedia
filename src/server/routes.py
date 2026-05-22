@@ -377,12 +377,12 @@ def _build_recommendations(query: str, products: list[dict[str, Any]]) -> dict[s
     return build_recommendations(products, query)
 
 
-def _limited_reason(requested_count: int, displayed_count: int, raw_count: int | None = None) -> str | None:
+def _limited_reason(requested_count: int, displayed_count: int, candidate_count: int | None = None) -> str | None:
     if displayed_count >= requested_count:
         return None
-    if raw_count is not None:
-        return f"Only found {displayed_count} valid products from {raw_count} raw scraped products"
-    return f"Only {displayed_count} products matched after scraping, dedupe, budget, and AI filtering."
+    if candidate_count is not None:
+        return f"Diminta {requested_count}, tetapi hanya {displayed_count} produk aman yang bisa ditampilkan dari {candidate_count} kandidat valid."
+    return f"Diminta {requested_count}, tetapi hanya {displayed_count} produk aman yang bisa ditampilkan."
 
 
 async def _filter_pipeline(
@@ -400,6 +400,28 @@ async def _filter_pipeline(
     normalizer = normalize_products_with_report(raw_products, engine, search_id)
     normalized = normalizer.output
     deduped = deduplicate_products(normalized)
+    image_total = len(normalized)
+    missing_rate = (normalizer.images_missing_count / image_total) if image_total else 0.0
+    log(
+        "IMAGES",
+        (
+            f"engine={engine} images_extracted_count={normalizer.images_extracted_count} "
+            f"images_missing_count={normalizer.images_missing_count} missing_rate={missing_rate:.2%}"
+        ),
+        "INFO",
+    )
+    if image_total and missing_rate > 0.70:
+        save_json_debug(
+            search_id,
+            f"image_missing_debug_{engine}.json",
+            {
+                "engine": engine,
+                "images_extracted_count": normalizer.images_extracted_count,
+                "images_missing_count": normalizer.images_missing_count,
+                "missing_rate": round(missing_rate, 4),
+                "samples": normalized[:20],
+            },
+        )
 
     update_progress(
         search_id,
@@ -458,9 +480,13 @@ async def _filter_pipeline(
 
     for candidate in candidates:
         candidate["_requested_target"] = req.target_count
+        candidate["_scraped_raw"] = len(raw_products)
+        candidate["_after_dedupe"] = len(deduped)
+        candidate["_budget_valid"] = len(candidates)
+        candidate["_candidate_pool"] = len(candidates)
 
     ai_result = await filter_relevance(req.query, candidates, req.use_ai, search_id)
-    ai_valid, qwen_status = ai_result
+    ai_valid, ai_status = ai_result
     ai_meta = getattr(ai_result, "meta", {}) or {}
 
     update_progress(
@@ -475,7 +501,9 @@ async def _filter_pipeline(
 
     ranked = _sort_products(ai_valid, req.sort_mode)
     final = ranked[: req.target_count]
-    limited = _limited_reason(req.target_count, len(final), len(raw_products))
+    limited = _limited_reason(req.target_count, len(final), len(candidates))
+    if len(final) < req.target_count and ai_meta.get("warning"):
+        limited = ai_meta.get("warning")
 
     update_progress(
         search_id,
@@ -490,22 +518,36 @@ async def _filter_pipeline(
     recommendations = _build_recommendations(req.query, final)
     has_enough = len(final) >= req.target_count
     metadata = {
+        "requested": req.target_count,
         "requested_count": req.target_count,
+        "scraped_raw": len(raw_products),
         "raw_scraped_count": len(raw_products),
         "raw_scraped": len(raw_products),
+        "after_dedupe": len(deduped),
         "deduped_count": len(deduped),
+        "budget_valid": len(candidates),
         "budget_valid_count": len(candidates),
+        "candidate_pool": len(candidates),
         "ai_input_count": len(candidates),
-        "ai_accepted_count": len(ai_valid),
-        "qwen_accepted_count": ai_meta.get("qwen_accepted_count", len(ai_valid) if qwen_status in ("ok", "partial") else 0),
+        "rule_accepted": ai_meta.get("rule_accepted", ai_meta.get("rule_accepted_count", 0)),
+        "rule_rejected": ai_meta.get("rule_rejected", ai_meta.get("rule_rejected_count", 0)),
+        "borderline_candidates": ai_meta.get("borderline_candidates", 0),
+        "ai_checked": ai_meta.get("ai_checked", ai_meta.get("llm_checked_count", 0)),
+        "ai_calls_attempted": ai_meta.get("ai_calls_attempted", 0),
+        "ai_calls_succeeded": ai_meta.get("ai_calls_succeeded", 0),
+        "ai_accepted": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
+        "ai_accepted_count": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
+        "ai_rejected": ai_meta.get("ai_rejected", 0),
+        "ai_fallback": ai_meta.get("ai_fallback", 0),
+        "fallback_added": ai_meta.get("fallback_added", ai_meta.get("fallback_expansion_count", 0)),
         "displayed_count": len(final),
+        "displayed": len(final),
         "has_enough_results": has_enough,
         "limited_reason": limited,
-        "ai_status": qwen_status,
+        "ai_skip_reason": ai_meta.get("ai_skip_reason"),
+        "ai_status": ai_status,
         "ai_warning": ai_meta.get("warning", ""),
         "ai_orchestrator": ai_meta.get("ai_orchestrator", orchestrator_status),
-        "qwen_status": qwen_status,
-        "qwen_warning": ai_meta.get("warning", ""),
         "ai_model": ai_meta.get("selected_model"),
         "query_intent": ai_meta.get("query_intent"),
         "sort_mode": req.sort_mode,
@@ -530,19 +572,18 @@ async def _filter_pipeline(
     )
 
     error = ""
-    qwen_warning = ai_meta.get("warning", "")
+    ai_warning = ai_meta.get("warning", "")
 
-    if qwen_status == "unavailable" and not qwen_warning:
-        qwen_warning = "AI unavailable for borderline products; deterministic relevance fallback was used."
-    elif qwen_status == "failed":
-        qwen_warning = qwen_warning or "AI filtering failed. Products were displayed with explicit fallback."
+    if ai_status == "unavailable" and not ai_warning:
+        ai_warning = "AI unavailable for borderline products; deterministic relevance fallback was used."
+    elif ai_status == "failed":
+        ai_warning = ai_warning or "AI filtering failed. Products were displayed with explicit fallback."
     elif ai_meta.get("fallback_expansion_count"):
-        qwen_warning = (
-            qwen_warning
+        ai_warning = (
+            ai_warning
             or f"Beberapa produk confidence rendah ditambahkan agar mendekati target {req.target_count}. Produk obvious junk tetap dibuang."
         )
-    metadata["qwen_warning"] = qwen_warning
-    metadata["ai_warning"] = qwen_warning
+    metadata["ai_warning"] = ai_warning
 
     if not candidates and budget_result.budget_value is not None:
         error = (
@@ -550,8 +591,8 @@ async def _filter_pipeline(
             f"{format_rupiah(budget_result.max_price)}. Coba naikkan budget/tolerance."
         )
     elif not ai_valid:
-        if qwen_status in ("failed", "unavailable"):
-            error = f"0 produk tersisa setelah fallback filter. {qwen_warning}"
+        if ai_status in ("failed", "unavailable"):
+            error = f"0 produk tersisa setelah fallback filter. {ai_warning}"
         else:
             error = "Semua produk ditolak filter relevansi. Disable AI atau tambah feedback."
     elif not final:
@@ -565,8 +606,8 @@ async def _filter_pipeline(
         "ai_valid": ai_valid,
         "ranked": ranked,
         "final": final,
-        "qwen_status": qwen_status,
-        "qwen_warning": qwen_warning,
+        "ai_status": ai_status,
+        "ai_warning": ai_warning,
         "ai_meta": ai_meta,
         "metadata": metadata,
         "recommendations": recommendations,
@@ -620,9 +661,7 @@ async def _finish_compare(
                 "ai_count": 0,
                 "ai_valid_count": 0,
                 "ai_accepted_count": 0,
-                "qwen_accepted_count": 0,
-                "qwen_status": "skipped",
-                "qwen_warning": "",
+                "ai_status": "skipped",
                 "result_metadata": {
                     "requested_count": req.target_count,
                     "raw_scraped_count": run.raw_products_found,
@@ -631,7 +670,6 @@ async def _finish_compare(
                     "budget_valid_count": 0,
                     "ai_input_count": 0,
                     "ai_accepted_count": 0,
-                    "qwen_accepted_count": 0,
                     "displayed_count": 0,
                     "has_enough_results": False,
                     "limited_reason": _limited_reason(req.target_count, 0),
@@ -665,12 +703,9 @@ async def _finish_compare(
             "budget_valid_count": len(budget_result.kept),
             "ai_count": len(filtered["ai_valid"]),
             "ai_valid_count": len(filtered["ai_valid"]),
-            "ai_accepted_count": len(filtered["ai_valid"]),
-            "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
-            "ai_status": filtered["qwen_status"],
-            "ai_warning": filtered["qwen_warning"],
-            "qwen_status": filtered["qwen_status"],
-            "qwen_warning": filtered["qwen_warning"],
+            "ai_accepted_count": filtered["metadata"].get("ai_accepted_count", 0),
+            "ai_status": filtered["ai_status"],
+            "ai_warning": filtered["ai_warning"],
             "result_metadata": filtered["metadata"],
             "recommendations": filtered["recommendations"],
             "data": data,
@@ -696,7 +731,6 @@ async def _finish_compare(
         "budget_valid_count": 0,
         "ai_input_count": 0,
         "ai_accepted_count": 0,
-        "qwen_accepted_count": 0,
         "displayed_count": len(final_data),
         "has_enough_results": len(final_data) >= req.target_count,
         "limited_reason": _limited_reason(req.target_count, len(final_data)),
@@ -715,10 +749,8 @@ async def _finish_compare(
         "limited_reason": selected_metadata.get("limited_reason"),
         "result_metadata": selected_metadata,
         "recommendations": (selected or {}).get("recommendations") or _build_recommendations(req.query, final_data),
-        "qwen_status": (selected or {}).get("qwen_status", "skipped"),
-        "ai_status": (selected or {}).get("ai_status", (selected or {}).get("qwen_status", "skipped")),
-        "ai_warning": (selected or {}).get("ai_warning", (selected or {}).get("qwen_warning", "")),
-        "qwen_warning": (selected or {}).get("qwen_warning", ""),
+        "ai_status": (selected or {}).get("ai_status", "skipped"),
+        "ai_warning": (selected or {}).get("ai_warning", ""),
         "data": final_data,
         "engine_runs": comparison,     # ← also exposed as engine_runs for consistency
         "comparison": comparison,      # ← kept for frontend renderComparison()
@@ -738,7 +770,7 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         req.engine_mode, req.budget, req.tolerance
     )
 
-    if req.engine_mode == "compare" and selection.runs:
+    if req.engine_mode in {"compare", "compare_both"} and selection.runs:
         await _finish_compare(search_id, req, selection, eta_calc)
         return
 
@@ -794,12 +826,9 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
                 "budget_valid_count": len(budget_result.kept),
                 "ai_count": len(filtered["ai_valid"]),
                 "ai_valid_count": len(filtered["ai_valid"]),
-                "ai_accepted_count": len(filtered["ai_valid"]),
-                "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
-                "ai_status": filtered["qwen_status"],
-                "ai_warning": filtered["qwen_warning"],
-                "qwen_status": filtered["qwen_status"],
-                "qwen_warning": filtered["qwen_warning"],
+                "ai_accepted_count": filtered["metadata"].get("ai_accepted_count", 0),
+                "ai_status": filtered["ai_status"],
+                "ai_warning": filtered["ai_warning"],
                 "result_metadata": filtered["metadata"],
                 "recommendations": filtered["recommendations"],
                 "products": filtered["final"],
@@ -822,12 +851,9 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "budget_valid_count": len(budget_result.kept),
         "ai_count": len(filtered["ai_valid"]),
         "ai_valid_count": len(filtered["ai_valid"]),
-        "ai_accepted_count": len(filtered["ai_valid"]),
-        "qwen_accepted_count": filtered["metadata"].get("qwen_accepted_count", 0),
-        "ai_status": filtered["qwen_status"],
-        "ai_warning": filtered["qwen_warning"],
-        "qwen_status": filtered["qwen_status"],
-        "qwen_warning": filtered["qwen_warning"],
+        "ai_accepted_count": filtered["metadata"].get("ai_accepted_count", 0),
+        "ai_status": filtered["ai_status"],
+        "ai_warning": filtered["ai_warning"],
         "count": len(filtered["final"]),
         "requested_count": req.target_count,
         "displayed_count": len(filtered["final"]),
@@ -842,6 +868,6 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
     log(
         f"[{search_id}]",
         f"Done. raw={len(selection.products)} ai={len(filtered['ai_valid'])} "
-        f"returned={len(filtered['final'])} ai_status={filtered['qwen_status']}",
+        f"returned={len(filtered['final'])} ai_status={filtered['ai_status']}",
         "OK",
     )

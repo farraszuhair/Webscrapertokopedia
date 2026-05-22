@@ -2,15 +2,16 @@
 engine_selector.py - Run scraper engines in the requested mode.
 
 Clean pipeline per spec:
-  preflight -> scrape raw -> normalize -> optional budget filter -> Qwen -> result
+  preflight -> scrape raw -> normalize -> optional budget filter -> AI Orchestrator -> result
 
 Modes:
 - auto:      Puppeteer first, rollback if Puppeteer fails.
 - puppeteer: Puppeteer only.
 - rollback:  Selenium only.
-- compare:   Both engines, show comparison table with opened_real_page status.
+- selenium:  Selenium only alias.
+- compare_both: Both engines, show comparison table with opened_real_page status.
 
-Removed: category_filter import. Qwen is the semantic filter. Not hardcoded keywords.
+Removed: category_filter import. AI Orchestrator is the semantic filter. Not hardcoded keywords.
 """
 from __future__ import annotations
 
@@ -83,7 +84,7 @@ async def run_engine(
     """
     Run one engine and return raw extracted products.
     No budget passed to engine. Budget filter runs locally after raw products exist.
-    No category filter. Qwen handles semantic relevance.
+    No category filter. AI Orchestrator handles semantic relevance.
     """
     started = time.perf_counter()
     variants = expand_query_variants(query)
@@ -175,7 +176,9 @@ async def run_scraper_engines(
     tolerance: Any = 20,      # kept for API compat, not used here
 ) -> EngineSelectionResult:
     """Run scraper engines according to the requested mode."""
-    mode = engine_mode if engine_mode in {"auto", "puppeteer", "rollback", "compare"} else "auto"
+    aliases = {"selenium": "rollback", "compare": "compare_both"}
+    requested_mode = aliases.get(engine_mode, engine_mode)
+    mode = requested_mode if requested_mode in {"auto", "puppeteer", "rollback", "compare_both"} else "auto"
     update_progress(
         search_id,
         engine_mode=mode,
@@ -193,7 +196,7 @@ async def run_scraper_engines(
         run = await run_engine(search_id, "rollback", query, raw_target, eta_calc)
         return EngineSelectionResult(run.ok, mode, "rollback", run.products, run.error, runs=[run])
 
-    if mode == "compare":
+    if mode == "compare_both":
         # Run both and keep both results for the comparison table
         pup = await run_engine(search_id, "puppeteer", query, raw_target, eta_calc)
         roll = await run_engine(search_id, "rollback", query, raw_target, eta_calc)

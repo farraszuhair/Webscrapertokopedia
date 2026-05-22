@@ -6,7 +6,7 @@ Files:
   data/ai_memory/examples.jsonl     - confirmed good/bad examples for prompt
   data/ai_memory/category_rules.json - user-taught category rules
 
-These are read by relevance.py to build Qwen prompts.
+These are read by relevance.py to build AI Orchestrator prompts.
 """
 from __future__ import annotations
 

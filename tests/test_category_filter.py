@@ -1,10 +1,10 @@
 """
-test_category_filter.py - Replaced with Qwen relevance fallback tests.
+test_category_filter.py - Replaced with AI Orchestrator relevance fallback tests.
 
 category_filter.py was deleted because hardcoded keyword rules blocked raw products
-before Qwen ever saw them. Qwen is the semantic filter now.
+before the AI Orchestrator saw them. The AI Orchestrator is the semantic filter now.
 
-These tests verify the fallback scorer (used when Qwen is offline) correctly
+These tests verify the fallback scorer (used when Ollama is offline) correctly
 classifies obvious accessories vs laptops.
 """
 import pytest
@@ -35,7 +35,7 @@ LAPTOPS = [
 def test_fallback_rejects_pure_accessories():
     """
     Fallback scorer must reject obvious accessories when they have no laptop signal.
-    This prevents mouse/charger from appearing in laptop results even when Qwen is offline.
+    This prevents mouse/charger from appearing in laptop results even when Ollama is offline.
     """
     for title in ACCESSORIES:
         product = {"title": title, "price_raw": "Rp100.000", "url": f"https://tokopedia.test/{title[:10]}"}
@@ -57,8 +57,8 @@ def test_fallback_keeps_real_laptops():
         assert decision["confidence"] >= 0.5, f"'{title}' confidence {decision['confidence']} too low"
 
 
-def test_fallback_assigns_gaming_laptop_category():
-    """For 'laptop gaming' query, fallback should assign 'gaming_laptop' category."""
+def test_fallback_assigns_main_product_category():
+    """For 'laptop gaming' query, fallback should assign a main-product category."""
     product = {"title": "ASUS ROG Strix G16 RTX 4060", "url": "https://tokopedia.test/rog"}
     decision = _fallback_score("laptop gaming", product)
-    assert "gaming_laptop" in decision.get("categories", [])
+    assert "main_product" in decision.get("categories", [])

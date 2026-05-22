@@ -1,5 +1,5 @@
 """
-learning.py - Save and retrieve user feedback for Qwen learning.
+learning.py - Save and retrieve user feedback for AI Orchestrator learning.
 
 Feedback payload from frontend:
 {
@@ -13,7 +13,7 @@ Feedback payload from frontend:
 
 Saved to:
   data/ai_memory/feedback.jsonl     - all feedback
-  data/ai_memory/examples.jsonl     - examples used for Qwen prompts
+  data/ai_memory/examples.jsonl     - examples used for AI Orchestrator prompts
   data/ai_memory/category_rules.json - evolving category rules
 
 Reset via POST /api/ai/reset (clears these files, not the Ollama model).
@@ -124,7 +124,7 @@ def save_feedback(
     memory_store.append_jsonl(memory_store.FEEDBACK_FILE, record)
     _append_product_feedback_json(record)
 
-    # Save to examples.jsonl so Qwen prompts can reference these as few-shot examples
+    # Save to examples.jsonl so AI Orchestrator prompts can reference these as few-shot examples
     example = {
         "query": query,
         "title": record["product_title"],
@@ -190,7 +190,7 @@ def _update_category_rules(
 
 
 def get_recent_feedback(query: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Get recent feedback for a specific query to inject as few-shot examples into Qwen prompts."""
+    """Get recent feedback for a specific query to inject as few-shot examples into AI prompts."""
     all_feedback = memory_store.read_jsonl(memory_store.FEEDBACK_FILE)
     q_lower = query.lower()
     relevant = [r for r in all_feedback if r.get("query", "").lower() == q_lower]

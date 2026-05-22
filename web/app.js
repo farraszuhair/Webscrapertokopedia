@@ -41,6 +41,7 @@ class ScraperApp {
       lastEtaFallbackSignature: null,
       lastProgress: null,
       aiStatus: null,
+      engineMode: 'auto',
     };
 
     this.$ = (id) => document.getElementById(id);
@@ -70,6 +71,18 @@ class ScraperApp {
     if (!el) return;
     el.textContent = text;
     el.className = `status-badge ${cls}`;
+  }
+
+  showToast(message) {
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    window.setTimeout(() => toast.classList.add('is-visible'), 10);
+    window.setTimeout(() => {
+      toast.classList.remove('is-visible');
+      window.setTimeout(() => toast.remove(), 180);
+    }, 1800);
   }
 
   bindBudgetFormat() {
@@ -165,8 +178,8 @@ class ScraperApp {
   }
 
   bindQuickSort() {
-    document.querySelectorAll('.quick-sort-btn').forEach((btn) => {
-      btn.addEventListener('click', () => this.setSortMode(btn.dataset.sort || 'terbaik'));
+    document.querySelectorAll('[data-sort-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => this.setSortMode(btn.dataset.sortMode || 'terbaik'));
     });
   }
 
@@ -530,6 +543,8 @@ class ScraperApp {
     this.state.products = data.data || [];
     this.state.recommendations = data.recommendations || {};
     this.state.metadata = data.result_metadata || {};
+    this.state.engineMode = data.engine_mode || 'auto';
+    this.state.metadata.engine_mode = this.state.engineMode;
     this.state.sortMode = data.sort_mode || this.state.metadata.sort_mode || this.state.sortMode || 'terbaik';
     this.state.recommendationsOpen = false;
 
@@ -585,9 +600,12 @@ class ScraperApp {
     const grid = this.$('comparison-grid');
     if (!panel || !grid) return;
 
+    const engine_mode = data.engine_mode || this.state.engineMode || this.state.metadata.engine_mode || 'auto';
     const runs = data.engine_runs || this.state.comparison;
-    if (!runs || !runs.length) {
+    
+    if (engine_mode !== 'compare_both' || !runs || !runs.length) {
       panel.classList.add('hidden');
+      grid.innerHTML = '';
       return;
     }
 
@@ -643,7 +661,7 @@ class ScraperApp {
     this.state.recommendations = item.recommendations || {};
     this.state.metadata = item.result_metadata || {};
     this.state.recommendationsOpen = false;
-    this.renderComparison({ engine_runs: this.state.comparison });
+    this.renderComparison({ engine_mode: this.state.engineMode, engine_runs: this.state.comparison });
     this.renderRecommendations(this.state.recommendations);
     this.renderResultSummary(item);
     this.renderResultWarning({
@@ -670,7 +688,7 @@ class ScraperApp {
     this.setText('rs-raw', raw || 0);
     this.setText('rs-deduped', deduped || 0);
     this.setText('rs-budget', budget || 0);
-    this.setText('rs-qwen', aiAccepted || 0);
+    this.setText('rs-ai', aiAccepted || 0);
     this.setText('rs-displayed', displayed || this.state.products.length || 0);
   }
 
@@ -717,36 +735,73 @@ class ScraperApp {
   createRecommendationCard(label, product) {
     const card = document.createElement('div');
     card.className = 'recommendation-card';
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'recommendation-label';
+    labelEl.textContent = label;
+    card.appendChild(labelEl);
+
     if (!product) {
-      card.innerHTML = `
-        <div class="recommendation-label">${this.esc(label)}</div>
-        <div class="recommendation-empty">Belum cukup data untuk rekomendasi ini.</div>
-      `;
+      const empty = document.createElement('div');
+      empty.className = 'recommendation-empty';
+      empty.textContent = 'Belum cukup data untuk rekomendasi ini.';
+      card.appendChild(empty);
       return card;
     }
 
     const title = product.title || 'Produk Tokopedia';
-    const img = product.image
-      ? `<img src="${this.esc(product.image)}" alt="${this.esc(title)}" loading="lazy">`
-      : '<div class="recommendation-img-placeholder">No image</div>';
-    card.innerHTML = `
-      <div class="recommendation-label">${this.esc(label)}</div>
-      <div class="recommendation-main">
-        <div class="recommendation-img">${img}</div>
-        <div class="recommendation-body">
-          <div class="recommendation-title">${this.esc(title)}</div>
-          <div class="recommendation-price">${this.esc(product.price || '-')}</div>
-          <div class="recommendation-meta">
-            ${product.rating ? `<span>&#9733; ${this.esc(product.rating)}</span>` : ''}
-            ${product.sold ? `<span>${this.esc(product.sold)}</span>` : ''}
-          </div>
-          ${product.shop_name ? `<div class="recommendation-shop">${this.esc(product.shop_name)}</div>` : ''}
-          <div class="recommendation-reason">${this.esc(product.reason || '')}</div>
-          ${product.url ? `<a class="recommendation-link" href="${this.esc(product.url)}" target="_blank" rel="noopener">Buka produk</a>` : ''}
-        </div>
-      </div>
-    `;
+    const main = document.createElement('div');
+    main.className = 'recommendation-main';
+
+    const imageBox = document.createElement('div');
+    imageBox.className = 'recommendation-img';
+    const imageUrl = this.getValidImageUrl(product);
+    if (imageUrl) {
+      const img = document.createElement('img');
+      img.src = imageUrl;
+      img.alt = title;
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.onerror = () => {
+        imageBox.replaceChildren(this.createSmallImagePlaceholder('Gambar gagal dimuat'));
+      };
+      imageBox.appendChild(img);
+    } else {
+      imageBox.appendChild(this.createSmallImagePlaceholder('Gambar tidak tersedia'));
+    }
+
+    const body = document.createElement('div');
+    body.className = 'recommendation-body';
+    this.appendText(body, 'recommendation-title', title);
+    this.appendText(body, 'recommendation-price', product.price || '-');
+
+    const meta = document.createElement('div');
+    meta.className = 'recommendation-meta';
+    if (product.rating) this.appendText(meta, '', `\u2605 ${product.rating}`, 'span');
+    if (product.sold) this.appendText(meta, '', product.sold, 'span');
+    body.appendChild(meta);
+    if (product.shop_name) this.appendText(body, 'recommendation-shop', product.shop_name);
+    this.appendText(body, 'recommendation-reason', product.reason || '');
+    if (product.url) {
+      const link = document.createElement('a');
+      link.className = 'recommendation-link';
+      link.href = product.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Buka produk';
+      body.appendChild(link);
+    }
+
+    main.append(imageBox, body);
+    card.appendChild(main);
     return card;
+  }
+
+  createSmallImagePlaceholder(text) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'recommendation-img-placeholder';
+    placeholder.textContent = text;
+    return placeholder;
   }
 
   toggleRecommendations() {
@@ -776,18 +831,23 @@ class ScraperApp {
   }
 
   activeSortMode() {
-    return document.querySelector('.quick-sort-btn.active')?.dataset.sort || this.state.sortMode || 'terbaik';
+    return document.querySelector('.quick-sort-btn.active')?.dataset.sortMode || this.state.sortMode || 'terbaik';
   }
 
   setSortMode(mode) {
+    if (!this.state.products.length) {
+      this.showToast('Belum ada hasil untuk diurutkan');
+      this.applySortMode(mode, false);
+      return;
+    }
     this.applySortMode(mode, true);
   }
 
   applySortMode(mode, rerender) {
     const nextMode = ['most_trusted', 'termurah', 'terbaik'].includes(mode) ? mode : 'terbaik';
     this.state.sortMode = nextMode;
-    document.querySelectorAll('.quick-sort-btn').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.sort === nextMode);
+    document.querySelectorAll('[data-sort-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.sortMode === nextMode);
     });
     this.state.products = this.sortProducts(this.state.products, nextMode);
     if (rerender) {
@@ -798,7 +858,10 @@ class ScraperApp {
 
   sortProducts(products, mode) {
     const list = [...(products || [])];
-    const safeNumber = (value) => Number(value || 0);
+    const safeNumber = (value) => {
+      const parsed = Number(String(value ?? 0).replace(',', '.'));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
     const price = (p) => {
       const value = safeNumber(p.price_value ?? p.price);
       return value > 0 ? value : Number.MAX_SAFE_INTEGER;
@@ -841,6 +904,10 @@ class ScraperApp {
     if (!url || typeof url !== 'string') return null;
     const cleaned = url.trim();
     if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) return null;
+    if (cleaned.startsWith('data:image')) return null;
+    const lower = cleaned.toLowerCase();
+    if (lower.includes('svg') || lower.includes('base64')) return null;
+    if (['undefined', 'null', 'noimage'].includes(lower.replace(/\s+/g, ''))) return null;
     return cleaned;
   }
 

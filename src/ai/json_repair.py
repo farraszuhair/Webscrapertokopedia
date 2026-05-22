@@ -63,13 +63,15 @@ async def repair_json_or_fallback(raw_text: str, *, phi_available: bool = False,
     if phi_available:
         try:
             from src.ai.ollama_client import chat_raw_async
+            from src.ai.model_registry import get_installed_model_name
 
+            resolved_model = get_installed_model_name(model)
             prompt = (
                 "Repair this into valid JSON only. Required keys: "
                 "accepted, confidence, reason, category_match.\n\n"
                 f"{raw_text[:2000]}"
             )
-            result = await chat_raw_async(prompt, model=model, use_json_format=True)
+            result = await chat_raw_async(prompt, model=resolved_model, use_json_format=True)
             if result.get("parsed"):
                 return result["parsed"]
             parsed = parse_json_object(str(result.get("content") or ""))

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.ai.json_repair import FALLBACK_JSON, repair_json_or_fallback
-from src.ai.model_registry import get_orchestrator_status
+from src.ai.json_repair import repair_json_or_fallback
+from src.ai.model_registry import get_orchestrator_status, get_installed_model_name
 from src.ai.ollama_client import chat_raw_async
 from src.config import LLM_ACCEPT_THRESHOLD, RULE_ACCEPT_THRESHOLD, RULE_REJECT_THRESHOLD, RULE_REVIEW_THRESHOLD
 from src.utils.logger import log
@@ -39,7 +39,6 @@ rating: {product.get("rating") or product.get("rating_text") or ""}
 sold: {product.get("sold_count") or product.get("sold") or product.get("sold_text") or ""}
 
 Rules:
-- First understand what the user is actually searching for.
 - If user searches for a main product, reject accessories and spare parts.
 - If user searches for an accessory, accept matching accessories.
 - If user searches for a spare part, accept matching spare parts.
@@ -67,23 +66,37 @@ async def classify_borderline_product(
     product: dict[str, Any],
     rule_score: float,
     status: dict[str, Any] | None = None,
+    ai_enabled: bool = True,
 ) -> dict[str, Any]:
     status = status or get_orchestrator_status()
     classifier = status.get("classifier")
-    if not classifier:
-        fallback = dict(FALLBACK_JSON)
-        fallback["confidence"] = max(0.50, min(0.62, rule_score))
-        return fallback
 
+    if not ai_enabled or not classifier:
+        # Rule-based fallback: if rule_score >= 0.58, accept; else reject.
+        accepted = rule_score >= 0.58
+        return {
+            "accepted": accepted,
+            "confidence": rule_score,
+            "reason": "Included by rule fallback (AI disabled or classifier not installed)" if accepted else "Rejected by rule fallback (AI disabled or classifier not installed)",
+            "category_match": "rules",
+            "decision_source": "rule_fallback",
+            "_model": None,
+            "_fallback_used": True,
+            "_llm_accept_threshold": LLM_ACCEPT_THRESHOLD,
+        }
+
+    resolved_classifier = get_installed_model_name(str(classifier))
     prompt = build_classifier_prompt(query, query_intent, product)
-    result = await chat_raw_async(prompt, model=str(classifier), use_json_format=True)
+    result = await chat_raw_async(prompt, model=resolved_classifier, use_json_format=True)
+    
     if not result.get("ok"):
         supported = set(status.get("supported") or [])
         fallback_model = "llama3.2:3b"
+        resolved_fallback = get_installed_model_name(fallback_model)
         if classifier != fallback_model and fallback_model in supported:
-            log("AI_ORCH", f"classifier_fallback primary={classifier} fallback={fallback_model}", "WARN")
-            classifier = fallback_model
-            result = await chat_raw_async(prompt, model=fallback_model, use_json_format=True)
+            log("AI_ORCH", f"classifier_fallback primary={resolved_classifier} fallback={resolved_fallback}", "WARN")
+            resolved_classifier = resolved_fallback
+            result = await chat_raw_async(prompt, model=resolved_fallback, use_json_format=True)
 
     parsed = result.get("parsed")
     if not parsed:
@@ -93,7 +106,7 @@ async def classify_borderline_product(
         )
 
     if not result.get("ok") and parsed.get("decision_source") == "ai_fallback":
-        log("AI_ORCH", f"classifier_failed model={classifier} rule_score={rule_score}", "WARN")
+        log("AI_ORCH", f"classifier_failed model={resolved_classifier} rule_score={rule_score}", "WARN")
 
     accepted = bool(parsed.get("accepted", True))
     try:
@@ -104,8 +117,9 @@ async def classify_borderline_product(
     parsed["confidence"] = max(0.0, min(0.98, confidence))
     parsed.setdefault("reason", "AI Orchestrator classified borderline product")
     parsed.setdefault("category_match", "ai")
-    parsed.setdefault("decision_source", "ai_classifier" if result.get("ok") else "ai_fallback")
-    parsed["_model"] = classifier
+    parsed.setdefault("decision_source", "ai_orchestrator" if result.get("ok") else "ai_fallback")
+    parsed["_model"] = resolved_classifier
     parsed["_fallback_used"] = parsed.get("decision_source") == "ai_fallback"
+    parsed["_chat_ok"] = bool(result.get("ok"))
     parsed["_llm_accept_threshold"] = LLM_ACCEPT_THRESHOLD
     return parsed

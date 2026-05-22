@@ -11,7 +11,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from src.config import TARGET_COUNT_DEFAULT
 
 
-EngineMode = Literal["auto", "puppeteer", "rollback", "compare"]
+EngineMode = Literal["auto", "puppeteer", "rollback", "selenium", "compare", "compare_both"]
 SortMode = Literal["terbaik", "termurah", "most_trusted"]
 REQUESTED_COUNT_DEFAULT = max(1, int(TARGET_COUNT_DEFAULT))
 

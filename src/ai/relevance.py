@@ -35,7 +35,7 @@ ACCESSORY_KEYWORDS = {
     "case", "casing", "softcase", "hardcase", "charger", "kabel",
     "adapter", "adaptor", "tempered glass", "screen protector",
     "anti gores", "tas", "sleeve", "stand", "cooler", "keyboard",
-    "mouse", "headset", "earphone", "backpack", "magSafe".lower(),
+    "mouse", "mousepad", "webcam", "headset", "earphone", "backpack", "magSafe".lower(),
 }
 SPAREPART_KEYWORDS = {
     "sparepart", "lcd", "baterai", "battery", "ram", "ssd", "hdd",
@@ -303,13 +303,13 @@ ACCESSORY_QUERY_TERMS = ACCESSORY_TERMS | {"aksesoris", "accessory", "accessorie
 @dataclass
 class AiFilterResult:
     products: list[dict[str, Any]]
-    qwen_status: str
+    ai_status: str
     meta: dict[str, Any] = field(default_factory=dict)
 
     def __iter__(self) -> Iterator[Any]:
         # Backward compatible with: products, status = await filter_relevance(...)
         yield self.products
-        yield self.qwen_status
+        yield self.ai_status
 
 
 def _query_terms(query: str) -> set[str]:
@@ -445,7 +445,7 @@ def _accessory_penalty(query: str, product: dict[str, Any]) -> float:
     return _clamp(0.35 + min(len(hits), 3) * 0.08, 0.35, 0.60)
 
 
-def _infer_qwen_confidence(decision: dict[str, Any], query: str, product: dict[str, Any]) -> float:
+def _infer_ai_confidence(decision: dict[str, Any], query: str, product: dict[str, Any]) -> float:
     raw = decision.get("confidence")
     if raw is not None:
         parsed = _as_float(raw, -1.0)
@@ -458,12 +458,12 @@ def _infer_qwen_confidence(decision: dict[str, Any], query: str, product: dict[s
         score = _rule_relevance_score(query, product)
         return 0.72 if score >= 0.72 else 0.60
     reason = str(decision.get("reason") or "").strip()
-    return 0.82 if reason and reason.lower() not in {"qwen marked relevant", "relevant"} else 0.60
+    return 0.82 if reason and reason.lower() not in {"ai marked relevant", "relevant"} else 0.60
 
 
 def _calibrate_confidence(query: str, product: dict[str, Any], decision: dict[str, Any]) -> tuple[float, dict[str, float]]:
     relevant = bool(decision.get("relevant", True))
-    model_confidence = _infer_qwen_confidence(decision, query, product)
+    model_confidence = _infer_ai_confidence(decision, query, product)
     if not relevant and model_confidence > 0.5:
         model_confidence = max(0.05, 1.0 - model_confidence)
 
@@ -487,7 +487,7 @@ def _calibrate_confidence(query: str, product: dict[str, Any], decision: dict[st
         final = min(final, 0.49)
     final = _clamp(final)
     return round(final, 2), {
-        "qwen_confidence": round(model_confidence, 3),
+        "ai_model_confidence": round(model_confidence, 3),
         "rule_relevance_score": round(rule_score, 3),
         "category_match_score": round(category_score, 3),
         "trust_score": round(trust, 3),
@@ -694,7 +694,7 @@ def _rejected_reason_map(values: Any) -> dict[int, str]:
     return reasons
 
 
-def _qwen_item_map(values: Any) -> dict[int, dict[str, Any]]:
+def _ai_item_map(values: Any) -> dict[int, dict[str, Any]]:
     items: dict[int, dict[str, Any]] = {}
     if not isinstance(values, list):
         return items
@@ -711,7 +711,7 @@ def _qwen_item_map(values: Any) -> dict[int, dict[str, Any]]:
 
 def _mark_product(product: dict[str, Any], decision: dict[str, Any], query: str) -> None:
     final_confidence, signals = _calibrate_confidence(query, product, decision)
-    raw_model_confidence = _infer_qwen_confidence(decision, query, product)
+    raw_model_confidence = _infer_ai_confidence(decision, query, product)
     reason = str(decision.get("reason", ""))
 
     product["relevance_score"] = final_confidence
@@ -809,7 +809,6 @@ async def ai_filter_products(
     products: list[dict[str, Any]],
     use_ai: bool = True,
     search_id: str | None = None,
-    ai_mode: str = "balanced",
 ) -> AiFilterResult:
     from src.ai.ai_filter import filter_products as intent_filter_products
 
@@ -818,274 +817,15 @@ async def ai_filter_products(
         list(products or []),
         use_ai=use_ai,
         search_id=search_id,
-        ai_mode=ai_mode,
     )
     return AiFilterResult(result.products, result.status, result.meta)
-
-    if not products:
-        warning = "AI skipped: products empty before AI"
-        log("AI", warning, "WARN")
-        return AiFilterResult([], "ok", {"warning": warning, "skipped_reason": "products_empty_before_ai"})
-
-    if not use_ai:
-        warning = "AI skipped: AI disabled by config"
-        log("AI", warning, "WARN")
-        result = _apply_fallback_all(query, products, "fallback_ai_disabled")
-        return AiFilterResult(result, "disabled", {
-            "warning": warning,
-            "skipped_reason": "ai_disabled_by_config",
-            "fallback_used": True,
-            "accepted_count": len(result),
-        })
-
-    selection = await select_ollama_model()
-    meta: dict[str, Any] = {
-        "selected_model": selection.selected_model,
-        "available_models": selection.available_models,
-        "ollama_base_url": selection.base_url,
-        "ollama_generate_url": selection.generate_url,
-        "fallback_used": False,
-        "warning": selection.warning,
-        "skipped_reason": selection.reason,
-    }
-    if not selection.ok or not selection.selected_model:
-        if not AI_ALLOW_FALLBACK:
-            meta.update({"fallback_used": False, "accepted_count": 0})
-            _save_qwen_filter_debug(search_id, query, products, [], "unavailable", 0, 0, [], meta)
-            return AiFilterResult([], "unavailable", meta)
-        result = _apply_fallback_all(query, products, f"fallback_{selection.reason or 'ollama_unavailable'}")
-        meta.update({"fallback_used": True, "accepted_count": len(result)})
-        _save_qwen_filter_debug(search_id, query, products, result, "unavailable", 0, 0, [], meta)
-        return AiFilterResult(result, "unavailable", meta)
-
-    examples = get_recent_examples(query)
-    feedback_items = get_recent_feedback(query)
-    batches = build_ai_batches(products, batch_size=AI_BATCH_SIZE, max_prompt_chars=12000)
-    log("AI", f"Qwen filter: products={len(products)} batches={len(batches)} batch_size={AI_BATCH_SIZE}", "INFO")
-
-    from src.server.progress import update_ai_eta_progress
-
-    valid: list[dict[str, Any]] = []
-    decisions: list[dict[str, Any]] = []
-    completed_ai_batch_durations: list[float] = []
-    batches_ok = 0
-    batches_failed = 0
-    qwen_accepted = 0
-    invalid_response_used = False
-
-    for batch_idx, batch in enumerate(batches):
-        batch_current = batch_idx + 1
-        batch_total = len(batches)
-        log("AI", f"batch={batch_current}/{batch_total}", "INFO")
-        batch_started_at_monotonic = time.perf_counter()
-        batch_started_at_epoch_ms = int(time.time() * 1000)
-
-        if search_id:
-            update_ai_eta_progress(
-                search_id=search_id,
-                batch_current=batch_current,
-                batch_total=batch_total,
-                batch_started_at_monotonic=batch_started_at_monotonic,
-                batch_started_at_epoch_ms=batch_started_at_epoch_ms,
-                completed_ai_batch_durations=completed_ai_batch_durations,
-                message=f"AI filtering batch {batch_current}/{batch_total}",
-                found=len(products),
-                valid=len(valid),
-            )
-
-        prompt = _build_batch_prompt(query, batch, examples, feedback_items)
-        generate = await _call_generate_with_ai_heartbeat(
-            prompt=prompt,
-            model=selection.selected_model,
-            search_id=search_id,
-            batch_current=batch_current,
-            batch_total=batch_total,
-            batch_started_at_monotonic=batch_started_at_monotonic,
-            batch_started_at_epoch_ms=batch_started_at_epoch_ms,
-            completed_ai_batch_durations=completed_ai_batch_durations,
-            found=len(products),
-            valid_count=len(valid),
-        )
-        completed_ai_batch_durations.append(time.perf_counter() - batch_started_at_monotonic)
-
-        if not generate.ok or not isinstance(generate.data, dict):
-            batches_failed += 1
-            invalid_response_used = invalid_response_used or generate.error.startswith("invalid_json")
-            reason = (
-                "AI fallback used because response was invalid"
-                if generate.error.startswith("invalid_json")
-                else f"AI fallback used because generate failed: {generate.error}"
-            )
-            log("AI", reason, "WARN")
-            fallback_products = _keep_prefiltered_batch(batch, reason, query) if AI_ALLOW_FALLBACK else []
-            valid.extend(fallback_products)
-            for idx, product, _ in batch:
-                decisions.append({
-                    "index": idx,
-                    "title": product.get("title", "")[:80],
-                    "decision": product.get("ai_label"),
-                    "source": product.get("ai_source"),
-                    "kept": True,
-                    "reason": product.get("ai_reason"),
-                })
-            if search_id:
-                update_ai_eta_progress(
-                    search_id=search_id,
-                    batch_current=batch_current,
-                    batch_total=batch_total,
-                    batch_started_at_monotonic=batch_started_at_monotonic,
-                    batch_started_at_epoch_ms=batch_started_at_epoch_ms,
-                    completed_ai_batch_durations=completed_ai_batch_durations,
-                    message=f"AI filtering batch {batch_current}/{batch_total} done",
-                    found=len(products),
-                    valid=len(valid),
-                    batch_done=True,
-                )
-            continue
-
-        data = generate.data
-        valid_indexes = _int_set(data.get("valid_indexes"))
-        if "valid_indexes" not in data or not isinstance(data.get("valid_indexes"), list):
-            batches_failed += 1
-            invalid_response_used = True
-            reason = "AI fallback used because response was invalid"
-            log("AI", f"{reason}: missing valid_indexes", "WARN")
-            fallback_products = _keep_prefiltered_batch(batch, reason, query) if AI_ALLOW_FALLBACK else []
-            valid.extend(fallback_products)
-            if search_id:
-                update_ai_eta_progress(
-                    search_id=search_id,
-                    batch_current=batch_current,
-                    batch_total=batch_total,
-                    batch_started_at_monotonic=batch_started_at_monotonic,
-                    batch_started_at_epoch_ms=batch_started_at_epoch_ms,
-                    completed_ai_batch_durations=completed_ai_batch_durations,
-                    message=f"AI filtering batch {batch_current}/{batch_total} done",
-                    found=len(products),
-                    valid=len(valid),
-                    batch_done=True,
-                )
-            continue
-
-        product_decisions = _qwen_item_map(data.get("products"))
-        rejected_items = _qwen_item_map(data.get("rejected"))
-        rejected_map = _rejected_reason_map(data.get("rejected"))
-        notes = str(data.get("notes") or "")
-        batches_ok += 1
-
-        for idx, product, _ in batch:
-            is_valid = idx in valid_indexes
-            qwen_item = product_decisions.get(idx) if is_valid else rejected_items.get(idx)
-            if qwen_item is None:
-                qwen_item = product_decisions.get(idx) or rejected_items.get(idx) or {}
-
-            qwen_label = str(qwen_item.get("label") or ("relevan" if is_valid else "tidak_relevan")).lower()
-            relevant_label = qwen_label in {"relevan", "relevant", "valid", "true", "yes"}
-            is_relevant = is_valid or relevant_label
-            qwen_confidence = qwen_item.get("confidence")
-            if qwen_confidence is not None and not is_relevant:
-                parsed_reject_confidence = _as_float(qwen_confidence, -1.0)
-                if 0.0 <= parsed_reject_confidence <= 1.0:
-                    qwen_confidence = max(0.05, 1.0 - parsed_reject_confidence)
-            reason = str(qwen_item.get("reason") or "")
-            decision = {
-                "relevant": is_relevant,
-                "confidence": qwen_confidence,
-                "categories": ["qwen_relevant"] if is_relevant else ["qwen_not_relevant"],
-                "reason": reason or notes or ("Qwen marked relevant" if is_relevant else rejected_map.get(idx, "Qwen rejected")),
-                "source": "qwen",
-            }
-            _mark_product(product, decision, query)
-            kept = is_relevant and product["relevance_score"] >= RELEVANCE_THRESHOLD
-            if kept:
-                valid.append(product)
-                qwen_accepted += 1
-            decisions.append({
-                "index": idx,
-                "title": product.get("title", "")[:80],
-                "decision": decision,
-                "kept": kept,
-            })
-
-        if search_id:
-            update_ai_eta_progress(
-                search_id=search_id,
-                batch_current=batch_current,
-                batch_total=batch_total,
-                batch_started_at_monotonic=batch_started_at_monotonic,
-                batch_started_at_epoch_ms=batch_started_at_epoch_ms,
-                completed_ai_batch_durations=completed_ai_batch_durations,
-                message=f"AI filtering batch {batch_current}/{batch_total} done",
-                found=len(products),
-                valid=len(valid),
-                batch_done=True,
-            )
-
-    if batches_ok and not batches_failed:
-        qwen_status = "ok"
-    elif batches_ok and batches_failed:
-        qwen_status = "partial"
-    else:
-        qwen_status = "failed"
-
-    warning = ""
-    if invalid_response_used:
-        warning = "AI fallback used because response was invalid"
-    elif batches_failed:
-        warning = "AI fallback used because generate failed"
-
-    meta.update({
-        "batch_count": len(batches),
-        "batches_ok": batches_ok,
-        "batches_failed": batches_failed,
-        "qwen_accepted_count": qwen_accepted,
-        "accepted_count": len(valid),
-        "fallback_used": batches_failed > 0,
-        "warning": warning or selection.warning,
-    })
-
-    _save_qwen_filter_debug(search_id, query, products, valid, qwen_status, batches_ok, batches_failed, decisions, meta)
-    log("AI", f"accepted={len(valid)} qwen_accepted={qwen_accepted} status={qwen_status}", "OK")
-    return AiFilterResult(valid, qwen_status, meta)
 
 
 async def filter_relevance(
     query: str,
-    products: List[dict[str, Any]],
+    products: list[dict[str, Any]],
     use_ai: bool = True,
     search_id: str | None = None,
-    ai_mode: str = "balanced",
 ) -> AiFilterResult:
     """Backward-compatible public entrypoint."""
-    return await ai_filter_products(query, list(products or []), use_ai, search_id, ai_mode)
-
-
-def _save_qwen_filter_debug(
-    search_id: str | None,
-    query: str,
-    products: list,
-    valid: list,
-    qwen_status: str,
-    ok_count: int,
-    fail_count: int,
-    decisions: list | None = None,
-    meta: dict[str, Any] | None = None,
-) -> None:
-    if not search_id:
-        return
-    try:
-        from src.utils.debug import save_json_debug
-
-        save_json_debug(search_id, "qwen_filter_debug.json", {
-            "query": query,
-            "total_input": len(products),
-            "total_kept": len(valid),
-            "threshold": RELEVANCE_THRESHOLD,
-            "qwen_status": qwen_status,
-            "qwen_ok_count": ok_count,
-            "qwen_fail_count": fail_count,
-            "decisions": decisions or [],
-            "meta": meta or {},
-        })
-    except Exception:
-        pass
+    return await ai_filter_products(query, list(products or []), use_ai, search_id)

@@ -18,6 +18,9 @@ from src.config import OLLAMA_BASE_URL, OLLAMA_TIMEOUT_SECONDS
 from src.utils.logger import log
 
 
+CHAT_CALLS_ATTEMPTED = 0
+CHAT_CALLS_SUCCEEDED = 0
+
 FALLBACK_RESPONSE = {
     "accepted": True,
     "confidence": 0.50,
@@ -46,18 +49,15 @@ def _parse_chat_content(response_payload: dict[str, Any]) -> dict[str, Any] | No
         return None
 
     try:
-        parsed = json.loads(content)
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                parsed = json.loads(content[start : end + 1])
-                return parsed if isinstance(parsed, dict) else None
-            except json.JSONDecodeError:
-                return None
-    return None
+        from src.ai.json_repair import parse_json_object
+
+        return parse_json_object(content)
+    except Exception:
+        try:
+            parsed = json.loads(content)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
 
 
 def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_format: bool) -> dict[str, Any]:
@@ -98,6 +98,7 @@ def chat_raw(
     timeout: int | None = None,
     use_json_format: bool = True,
 ) -> dict[str, Any]:
+    global CHAT_CALLS_ATTEMPTED, CHAT_CALLS_SUCCEEDED
     payload: dict[str, Any] = {
         "model": model,
         "stream": False,
@@ -112,7 +113,8 @@ def chat_raw(
         payload["format"] = "json"
 
     try:
-        log("AI_ORCH", f"chat_model={model}", "INFO")
+        CHAT_CALLS_ATTEMPTED += 1
+        log("AI_ORCH", f"POST /api/chat selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED}", "INFO")
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json=payload,
@@ -128,6 +130,8 @@ def chat_raw(
         if isinstance(envelope, dict):
             message = envelope.get("message")
             content = str((message or {}).get("content") or envelope.get("response") or "")
+        CHAT_CALLS_SUCCEEDED += 1
+        log("AI_ORCH", f"chat_ok selected_model={model} ai_calls_succeeded={CHAT_CALLS_SUCCEEDED}", "INFO")
         return {
             "ok": True,
             "model": model,
@@ -136,7 +140,11 @@ def chat_raw(
             "error": "",
         }
     except Exception as exc:
-        log("AI_ORCH", f"chat_failed model={model} error={exc}", "WARN")
+        log(
+            "AI_ORCH",
+            f"chat_failed selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED} ai_calls_succeeded={CHAT_CALLS_SUCCEEDED} error={exc}",
+            "WARN",
+        )
         return {"ok": False, "model": model, "content": "", "parsed": None, "error": str(exc)}
 
 
@@ -148,18 +156,22 @@ def chat_json(
 ) -> dict[str, Any]:
     selected_model = model or "gemma3:4b"
 
+    from src.ai.model_registry import get_installed_model_name
+    resolved_model = get_installed_model_name(selected_model)
+
     try:
-        return _post_chat(prompt, selected_model, timeout, use_json_format)
+        return _post_chat(prompt, resolved_model, timeout, use_json_format)
     except Exception as exc:
-        log("AI", f"Ollama chat failed with {selected_model}: {exc}", "WARN")
+        log("AI", f"Ollama chat failed with {resolved_model} (base: {selected_model}): {exc}", "WARN")
         fallback_model = "llama3.2:3b"
-        if selected_model == fallback_model:
-            return _fallback(str(exc), selected_model)
+        resolved_fallback = get_installed_model_name(fallback_model)
+        if resolved_model == resolved_fallback:
+            return _fallback(str(exc), resolved_model)
         try:
-            return _post_chat(prompt, fallback_model, timeout, use_json_format)
+            return _post_chat(prompt, resolved_fallback, timeout, use_json_format)
         except Exception as fallback_exc:
-            log("AI", f"Ollama fallback chat failed with {fallback_model}: {fallback_exc}", "WARN")
-            return _fallback(str(fallback_exc), fallback_model)
+            log("AI", f"Ollama fallback chat failed with {resolved_fallback} (base: {fallback_model}): {fallback_exc}", "WARN")
+            return _fallback(str(fallback_exc), resolved_fallback)
 
 
 async def chat_json_async(
@@ -182,9 +194,11 @@ async def chat_raw_async(
 
 def get_embedding(text: str, model: str = "nomic-embed-text") -> list[float] | None:
     try:
+        from src.ai.model_registry import get_installed_model_name
+        resolved_model = get_installed_model_name(model)
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/embeddings",
-            json={"model": model, "prompt": text},
+            json={"model": resolved_model, "prompt": text},
             timeout=OLLAMA_TIMEOUT_SECONDS,
         )
         response.raise_for_status()

@@ -6,7 +6,7 @@
  * 2. Disable HTTP/2 (--disable-http2) to reduce ERR_HTTP2_PROTOCOL_ERROR.
  * 3. Use real browser User-Agent to reduce bot detection.
  * 4. opened_real_page=false stops extraction immediately with clear error.
- * 5. No category filtering here. Raw products only. Qwen filters later.
+ * 5. No category filtering here. Raw products only. AI Orchestrator filters later.
  */
 
 const fs = require('fs');
@@ -186,6 +186,45 @@ async function extractProducts(page, knownKeys, sourceQuery) {
       return anchor;
     };
 
+    function getImageFromCard(card) {
+      const img =
+        card.querySelector('img[src]') ||
+        card.querySelector('img[data-src]') ||
+        card.querySelector('picture img');
+
+      const candidates = [];
+
+      if (img) {
+        candidates.push(img.currentSrc);
+        candidates.push(img.src);
+        candidates.push(img.getAttribute('src'));
+        candidates.push(img.getAttribute('data-src'));
+        candidates.push(img.getAttribute('data-original'));
+
+        const srcset = img.getAttribute('srcset');
+        if (srcset) {
+          candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
+        }
+      }
+
+      const source = card.querySelector('source[srcset]');
+      if (source) {
+        const srcset = source.getAttribute('srcset');
+        if (srcset) {
+          candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
+        }
+      }
+
+      return candidates.find((url) =>
+        typeof url === 'string' &&
+        url.startsWith('http') &&
+        !url.startsWith('data:image') &&
+        !url.toLowerCase().includes('base64') &&
+        !url.toLowerCase().includes('svg') &&
+        !['undefined', 'null', 'noimage'].includes(url.trim().toLowerCase().replace(/\s+/g, ''))
+      ) || null;
+    }
+
     const productFromContainer = (container, sourceAnchor = null) => {
       const text = container.innerText || sourceAnchor?.innerText || '';
       const priceRaw = priceFromText(text);
@@ -195,12 +234,11 @@ async function extractProducts(page, knownKeys, sourceQuery) {
         container.querySelector?.("[data-testid*='ProdName']") ||
         container.querySelector?.('.prd_link-product-name');
       const anchor = sourceAnchor || container.querySelector?.("a[href*='tokopedia.com']");
-      const imageNode = container.querySelector?.('img');
+      const imageUrl = getImageFromCard(container);
       const priceIndex = lines.findIndex((line) => priceRaw && line.includes(priceRaw));
       const fallbackTitle =
         (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
         anchor?.getAttribute('title') ||
-        imageNode?.getAttribute('alt') ||
         lines.find((line) => !line.startsWith('Rp') && line.length > 4) ||
         '';
       const title = (titleNode?.textContent || fallbackTitle || '').trim();
@@ -219,9 +257,7 @@ async function extractProducts(page, knownKeys, sourceQuery) {
         rating: truncateText(rating, 10),
         sold: truncateText(sold, 30),
         url: truncateText(url, 500),
-        image: truncateText(imageNode
-          ? imageNode.currentSrc || imageNode.src || imageNode.getAttribute('data-src') || ''
-          : '', 500),
+        image: truncateText(imageUrl || '', 500),
         source_engine: 'puppeteer',
       };
     };
@@ -316,7 +352,45 @@ async function saveEngineErrorDebug({
   return payload;
 }
 
-async function scrapeUrl(page, url, query, targetRemaining, knownKeys) {
+async function saveImageMissingDebug({ searchId, query, url, products, page, engineName }) {
+  const total = products.length;
+  if (total < 5) return;
+  const missing = products.filter((product) => !product.image).length;
+  const missingRate = missing / total;
+  if (missingRate <= 0.70) return;
+
+  const debugDir = path.join(PROJECT_ROOT, 'data', 'debug', searchId);
+  const payload = {
+    engine: engineName,
+    query,
+    url,
+    images_extracted_count: total - missing,
+    images_missing_count: missing,
+    missing_rate: Number(missingRate.toFixed(4)),
+    samples: products.slice(0, 20),
+  };
+
+  try {
+    fs.mkdirSync(debugDir, { recursive: true });
+    const htmlPath = path.join(debugDir, `${engineName}_image_missing_debug.html`);
+    const screenshotPath = path.join(debugDir, `${engineName}_image_missing_debug.png`);
+    fs.writeFileSync(htmlPath, await page.content(), 'utf8');
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    payload.html_saved = fs.existsSync(htmlPath);
+    payload.screenshot_saved = fs.existsSync(screenshotPath);
+    fs.writeFileSync(
+      path.join(debugDir, `${engineName}_image_missing_debug.json`),
+      JSON.stringify(payload, null, 2),
+      'utf8'
+    );
+  } catch (error) {
+    payload.error = error && error.message ? error.message : String(error);
+  }
+
+  send({ type: 'debug', data: payload });
+}
+
+async function scrapeUrl(page, url, query, targetRemaining, knownKeys, searchId) {
   setPhase('opening_page');
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
   await page.waitForSelector('body', { timeout: 10000 });
@@ -334,6 +408,14 @@ async function scrapeUrl(page, url, query, targetRemaining, knownKeys) {
     await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.85))).catch(() => {});
     await sleep(700);
   }
+  await saveImageMissingDebug({
+    searchId,
+    query,
+    url,
+    products,
+    page,
+    engineName: 'puppeteer',
+  });
   return products;
 }
 
@@ -426,7 +508,7 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
         await page.waitForSelector('body', { timeout: 5000 });
         const before = products.length;
         setPhase('scrolling');
-        const extracted = await scrapeUrl(page, url, variant, target - products.length, knownKeys);
+        const extracted = await scrapeUrl(page, url, variant, target - products.length, knownKeys, searchId);
         products.push(...extracted);
         if (products.length === before) {
           errors.push(`zero products for ${url} (page opened OK, selectors found nothing)`);
