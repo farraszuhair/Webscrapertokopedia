@@ -80,6 +80,10 @@ def test_chat_raw_posts_to_ollama_chat(monkeypatch):
     assert captured["payload"]["messages"][0]["role"] == "system"
     assert captured["payload"]["messages"][1]["role"] == "user"
     assert captured["payload"]["options"]["temperature"] == 0
+    assert captured["payload"]["options"]["num_ctx"] == 1024
+    assert captured["payload"]["options"]["num_predict"] == 80
+    assert captured["payload"]["keep_alive"] == "10m"
+    assert captured["timeout"] == 25
 
 
 @pytest.mark.asyncio
@@ -108,3 +112,119 @@ async def test_fallback_expansion_fills_toward_candidate_pool(monkeypatch):
     assert len(result.products) == 45
     assert result.meta["displayed"] == 45
     assert result.meta["fallback_added"] == 26
+
+
+@pytest.mark.asyncio
+async def test_classifier_limit_sends_only_top_twelve_borderline_products(monkeypatch):
+    monkeypatch.setattr(
+        ai_filter,
+        "get_orchestrator_status",
+        lambda: {
+            "ok": True,
+            "installed": ["llama3.2:3b"],
+            "supported": ["llama3.2:3b"],
+            "missing": [],
+            "capabilities": {"semantic": False, "balanced_classifier": False, "fast_classifier": True, "json_repair": False},
+            "classifier": "llama3.2:3b",
+            "message": "AI Orchestrator ready",
+        },
+    )
+    monkeypatch.setattr(relevance, "detect_query_intent", lambda query: "main_product")
+    monkeypatch.setattr(relevance, "detect_product_category", lambda product: "main_product")
+    monkeypatch.setattr(relevance, "compute_rule_score", lambda query, product, intent=None: product["score"])
+    monkeypatch.setattr(relevance, "is_obvious_junk_for_intent", lambda query, product, intent=None: False)
+    monkeypatch.setattr(relevance, "is_obvious_match_for_intent", lambda query, product, intent=None: False)
+
+    calls = []
+
+    async def fake_classify(*args, **kwargs):
+        calls.append(args[2]["id"])
+        return {
+            "accepted": True,
+            "confidence": 0.70,
+            "reason": "classified",
+            "category_match": "main",
+            "decision_source": "ai_orchestrator",
+            "_chat_ok": True,
+            "_fallback_used": False,
+        }
+
+    monkeypatch.setattr(ai_filter, "classify_borderline_product", fake_classify)
+    candidates = [
+        {
+            "id": f"p-{index}",
+            "title": f"Budget laptop {index}",
+            "price": 9_500_000 + index,
+            "price_value": 9_500_000 + index,
+            "url": f"https://tokopedia.test/limit-{index}",
+            "_requested_target": 20,
+            "score": 0.55 - index * 0.001,
+        }
+        for index in range(20)
+    ]
+
+    result = await filter_relevance("laptop gaming", candidates, use_ai=True)
+
+    assert len(calls) == 12
+    assert result.meta["classifier_checked"] == 12
+    assert result.meta["ai_calls_attempted"] == 12
+    assert result.meta["fallback_added"] == 8
+    assert result.meta["displayed"] == 20
+    assert any(product["decision_source"] == "fallback_not_classified_cpu_limit" for product in result.products)
+
+
+@pytest.mark.asyncio
+async def test_classifier_circuit_breaker_turns_timeouts_into_fallback(monkeypatch):
+    monkeypatch.setattr(
+        ai_filter,
+        "get_orchestrator_status",
+        lambda: {
+            "ok": True,
+            "installed": ["llama3.2:3b"],
+            "supported": ["llama3.2:3b"],
+            "missing": [],
+            "capabilities": {"semantic": False, "balanced_classifier": False, "fast_classifier": True, "json_repair": False},
+            "classifier": "llama3.2:3b",
+            "message": "AI Orchestrator ready",
+        },
+    )
+    monkeypatch.setattr(relevance, "detect_query_intent", lambda query: "main_product")
+    monkeypatch.setattr(relevance, "detect_product_category", lambda product: "main_product")
+    monkeypatch.setattr(relevance, "compute_rule_score", lambda query, product, intent=None: 0.55)
+    monkeypatch.setattr(relevance, "is_obvious_junk_for_intent", lambda query, product, intent=None: False)
+    monkeypatch.setattr(relevance, "is_obvious_match_for_intent", lambda query, product, intent=None: False)
+
+    async def fake_classify(*args, **kwargs):
+        return {
+            "accepted": True,
+            "confidence": 0.50,
+            "reason": "Classifier unavailable, accepted by safe fallback to avoid empty results",
+            "category_match": "fallback",
+            "decision_source": "ai_fallback",
+            "_chat_ok": False,
+            "_fallback_used": True,
+            "_timeout": True,
+        }
+
+    monkeypatch.setattr(ai_filter, "classify_borderline_product", fake_classify)
+    candidates = [
+        {
+            "id": f"p-{index}",
+            "title": f"Budget laptop {index}",
+            "price": 9_500_000 + index,
+            "price_value": 9_500_000 + index,
+            "url": f"https://tokopedia.test/timeout-{index}",
+            "_requested_target": 10,
+        }
+        for index in range(10)
+    ]
+
+    result = await filter_relevance("laptop gaming", candidates, use_ai=True)
+
+    assert result.meta["classifier_checked"] == 3
+    assert result.meta["ai_calls_attempted"] == 3
+    assert result.meta["ai_timeouts"] == 3
+    assert result.meta["ai_circuit_open"] is True
+    assert result.meta["ai_skip_reason"] == "AI classifier circuit breaker opened after repeated timeouts"
+    assert result.meta["displayed"] == 10
+    assert len(result.products) == 10

@@ -14,7 +14,14 @@ from typing import Any
 
 import requests
 
-from src.config import OLLAMA_BASE_URL, OLLAMA_TIMEOUT_SECONDS
+from src.config import (
+    AI_CPU_MODE,
+    AI_CHAT_NUM_CTX,
+    AI_CHAT_NUM_PREDICT,
+    AI_CHAT_TIMEOUT_SECONDS,
+    OLLAMA_BASE_URL,
+    OLLAMA_TIMEOUT_SECONDS,
+)
 from src.utils.logger import log
 
 
@@ -68,15 +75,16 @@ def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_f
         "messages": [
             {
                 "role": "system",
-                "content": "You are an intent-aware marketplace product classifier. Return JSON only.",
+                "content": "You classify marketplace products. Return JSON only.",
             },
             {"role": "user", "content": prompt},
         ],
         "options": {
             "temperature": 0,
-            "num_ctx": 2048,
-            "num_predict": 160,
+            "num_ctx": AI_CHAT_NUM_CTX,
+            "num_predict": AI_CHAT_NUM_PREDICT,
         },
+        "keep_alive": "10m",
     }
     if use_json_format:
         payload["format"] = "json"
@@ -84,7 +92,7 @@ def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_f
     response = requests.post(
         f"{OLLAMA_BASE_URL}/api/chat",
         json=payload,
-        timeout=timeout or OLLAMA_TIMEOUT_SECONDS,
+        timeout=timeout or AI_CHAT_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
     parsed = _parse_chat_content(response.json())
@@ -112,15 +120,16 @@ def chat_raw(
         "messages": [
             {
                 "role": "system",
-                "content": "You are an intent-aware marketplace product classifier. Return JSON only.",
+                "content": "You classify marketplace products. Return JSON only.",
             },
             {"role": "user", "content": prompt},
         ],
         "options": {
             "temperature": 0,
-            "num_ctx": 2048,
-            "num_predict": 160,
+            "num_ctx": AI_CHAT_NUM_CTX,
+            "num_predict": AI_CHAT_NUM_PREDICT,
         },
+        "keep_alive": "10m",
     }
     if use_json_format:
         payload["format"] = "json"
@@ -131,12 +140,12 @@ def chat_raw(
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json=payload,
-            timeout=timeout or OLLAMA_TIMEOUT_SECONDS,
+            timeout=timeout or AI_CHAT_TIMEOUT_SECONDS,
         )
         if response.status_code == 404 or (
             response.status_code == 400 and "not found" in response.text.lower()
         ):
-            return {"ok": False, "model": model, "content": "", "parsed": None, "error": f"model not found: {model}"}
+            return {"ok": False, "model": model, "content": "", "parsed": None, "error": f"model not found: {model}", "timeout": False}
         response.raise_for_status()
         envelope = response.json()
         content = ""
@@ -151,14 +160,16 @@ def chat_raw(
             "content": content,
             "parsed": _parse_chat_content(envelope),
             "error": "",
+            "timeout": False,
         }
     except Exception as exc:
+        is_timeout = isinstance(exc, (requests.exceptions.Timeout, requests.exceptions.ReadTimeout)) or "timed out" in str(exc).lower()
         log(
             "AI_ORCH",
             f"chat_failed selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED} ai_calls_succeeded={CHAT_CALLS_SUCCEEDED} error={exc}",
             "WARN",
         )
-        return {"ok": False, "model": model, "content": "", "parsed": None, "error": str(exc)}
+        return {"ok": False, "model": model, "content": "", "parsed": None, "error": str(exc), "timeout": is_timeout}
 
 
 def chat_json(
@@ -167,7 +178,7 @@ def chat_json(
     timeout: int | None = None,
     use_json_format: bool = True,
 ) -> dict[str, Any]:
-    selected_model = model or "gemma3:4b"
+    selected_model = model or ("llama3.2:3b" if AI_CPU_MODE else "gemma3:4b")
 
     from src.ai.model_registry import get_installed_model_name
     resolved_model = get_installed_model_name(selected_model)
@@ -176,6 +187,8 @@ def chat_json(
         return _post_chat(prompt, resolved_model, timeout, use_json_format)
     except Exception as exc:
         log("AI", f"Ollama chat failed with {resolved_model} (base: {selected_model}): {exc}", "WARN")
+        if AI_CPU_MODE:
+            return _fallback(str(exc), resolved_model)
         fallback_model = "llama3.2:3b"
         resolved_fallback = get_installed_model_name(fallback_model)
         if resolved_model == resolved_fallback:

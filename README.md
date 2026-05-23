@@ -16,12 +16,22 @@ Open http://127.0.0.1:3000.
 
 Only these models are supported:
 
-- `gemma3:4b` - balanced classifier, highest priority
-- `llama3.2:3b` - fast classifier fallback
+- `llama3.2:3b` - primary classifier in CPU mode
+- `gemma3:4b` - balanced classifier, used when CPU mode is disabled or llama is missing
 - `phi4-mini` - JSON repair only
 - `nomic-embed-text` - semantic scoring only
 
-Model selection is automatic. The app detects installed models with `GET /api/tags`, and `:latest` tags such as `phi4-mini:latest` and `nomic-embed-text:latest` satisfy their supported base names. Unsupported legacy large classifier models were removed and are ignored.
+Model selection is automatic. The app detects installed models with `GET /api/tags`, caches that registry for 60 seconds, and `:latest` tags such as `phi4-mini:latest` and `nomic-embed-text:latest` satisfy their supported base names. Unsupported legacy large classifier models were removed and are ignored.
+
+Default CPU-friendly settings:
+
+- `AI_CPU_MODE=true`
+- `AI_CLASSIFIER_MAX_PRODUCTS=12`
+- `AI_CHAT_TIMEOUT_SECONDS=25`
+- `AI_CHAT_NUM_CTX=1024`
+- `AI_CHAT_NUM_PREDICT=80`
+- `AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK=3`
+- `AI_MODEL_CACHE_TTL_SECONDS=60`
 
 ## AI Orchestrator Behavior
 
@@ -31,7 +41,7 @@ The active search pipeline is:
 scrape raw -> normalize -> dedupe -> budget filter -> rules -> AI borderline check -> fallback expansion -> rank
 ```
 
-Rules handle obvious accepts and rejects first. Ollama `POST /api/chat` is called only for borderline products when AI is enabled and a supported classifier is installed. If no AI model is available, deterministic rules and fallback expansion still work.
+Rules handle obvious accepts and rejects first. Semantic embeddings can improve scoring, but they do not count as classifier acceptance. Ollama `POST /api/chat` is called only for the top borderline products when AI is enabled and a supported classifier is installed. If no AI model is available, deterministic rules and fallback expansion still work.
 
 If `ai_checked` is `0`, result metadata includes one exact `ai_skip_reason`:
 
@@ -41,7 +51,7 @@ If `ai_checked` is `0`, result metadata includes one exact `ai_skip_reason`:
 - `All products handled by rules`
 - `Candidate pool empty`
 
-If AI is enabled, a classifier is installed, and `borderline_candidates > 0`, backend logs should include `POST /api/chat` and `ai_calls_attempted > 0`.
+If AI is enabled, a classifier is installed, and `borderline_candidates > 0`, backend logs should include `POST /api/chat` and `ai_calls_attempted > 0`. On slow CPU-only machines, classifier timeouts are counted as `ai_fallback`; those products remain eligible for safe fallback expansion instead of being rejected.
 
 ## Result Count Behavior
 
@@ -55,7 +65,7 @@ Filtering runs only on the candidate pool:
 When fallback expansion is used, the response warning is:
 
 ```text
-Beberapa produk confidence rendah ditambahkan agar mendekati target. Produk obvious junk tetap dibuang.
+{fallback_added} produk fallback ditambahkan agar hasil mendekati target.
 ```
 
 If the app still cannot reach the target, the warning explains how many safe products were available from the valid candidate pool.
@@ -107,9 +117,14 @@ Example search:
 ### AI Accepted is 0
 
 1. Call `/api/ai/status`.
-2. Confirm `classifier` is `gemma3:4b` or `llama3.2:3b`.
+2. Confirm `classifier` is `llama3.2:3b` in CPU mode, or `gemma3:4b` if CPU mode is disabled or llama is missing.
 3. Check `result_metadata.ai_skip_reason`.
 4. If `borderline_candidates > 0`, confirm logs show `POST /api/chat`.
+5. If `semantic_checked` is greater than `0` but `classifier_checked` is `0`, only embeddings ran; check `ai_skip_reason`.
+
+### Local AI is timing out
+
+The classifier timeout is 25 seconds by default. After 3 classifier failures in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_circuit_open`, `ai_fallback`, and `fallback_added` in `result_metadata`.
 
 ### Displayed is much lower than requested
 

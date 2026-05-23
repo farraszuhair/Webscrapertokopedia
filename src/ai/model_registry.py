@@ -1,11 +1,24 @@
 """Detect installed Ollama models and expose AI Orchestrator capabilities."""
 from __future__ import annotations
 
+import time
 from typing import Any
 import requests
 
-from src.config import ALLOWED_OLLAMA_MODELS, AI_MODEL_JOBS, CLASSIFIER_PRIORITY, OLLAMA_BASE_URL
+from src.config import (
+    AI_MODEL_CACHE_TTL_SECONDS,
+    ALLOWED_OLLAMA_MODELS,
+    AI_MODEL_JOBS,
+    CLASSIFIER_PRIORITY,
+    OLLAMA_BASE_URL,
+)
 from src.utils.logger import log
+
+
+_MODEL_CACHE: dict[str, Any] = {
+    "timestamp": 0.0,
+    "models": [],
+}
 
 
 def normalize_model_name(name: str) -> str:
@@ -33,36 +46,35 @@ def _extract_model_names(payload: dict[str, Any]) -> list[str]:
     return sorted(names)
 
 
-def get_installed_tag_map() -> dict[str, str]:
+def get_installed_tag_map(force_refresh: bool = False) -> dict[str, str]:
     """Map normalized model names to the exact installed Ollama tags."""
-    try:
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
-        response.raise_for_status()
-        detected = _extract_model_names(response.json())
-        mapping = {}
-        for tag in detected:
-            norm = normalize_model_name(tag)
-            mapping[norm] = tag
-        return mapping
-    except Exception as exc:
-        log("AI_ORCH", f"Ollama tag mapping failed: {exc}", "WARN")
-        return {}
+    mapping = {}
+    for tag in get_installed_ollama_models(force_refresh=force_refresh):
+        mapping[normalize_model_name(tag)] = tag
+    return mapping
 
 
-def get_installed_model_name(wanted: str) -> str:
+def get_installed_model_name(wanted: str, installed: list[str] | None = None) -> str:
     """
     Resolves an allowed model name (e.g., 'phi4-mini') to the exact installed name
     found in Ollama (e.g., 'phi4-mini:latest'). If not found or mapping fails,
     returns the original wanted name.
     """
     norm_wanted = normalize_model_name(wanted)
-    mapping = get_installed_tag_map()
+    source = get_installed_ollama_models() if installed is None else installed
+    mapping = {normalize_model_name(tag): tag for tag in source}
     if norm_wanted in mapping:
         return mapping[norm_wanted]
     return wanted
 
 
-def get_installed_ollama_models() -> list[str]:
+def get_installed_ollama_models(force_refresh: bool = False) -> list[str]:
+    now = time.time()
+    cached = list(_MODEL_CACHE.get("models") or [])
+    timestamp = float(_MODEL_CACHE.get("timestamp") or 0.0)
+    if not force_refresh and timestamp > 0 and now - timestamp < AI_MODEL_CACHE_TTL_SECONDS:
+        return cached
+
     try:
         response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
         response.raise_for_status()
@@ -72,33 +84,36 @@ def get_installed_ollama_models() -> list[str]:
         if ignored:
             log("AI_ORCH", f"ignored_unsupported_models={ignored}", "INFO")
         log("AI_ORCH", f"installed_models={models}", "INFO")
-        return models
+        _MODEL_CACHE["timestamp"] = now
+        _MODEL_CACHE["models"] = list(models)
+        return list(models)
     except Exception as exc:
         log("AI_ORCH", f"Ollama model detection unavailable: {exc}", "WARN")
-        return []
+        _MODEL_CACHE["timestamp"] = now
+        return cached
 
 
-def get_supported_installed_models(installed: list[str] | None = None) -> list[str]:
-    installed_models = get_installed_ollama_models() if installed is None else installed
+def get_supported_installed_models(installed: list[str] | None = None, force_refresh: bool = False) -> list[str]:
+    installed_models = get_installed_ollama_models(force_refresh=force_refresh) if installed is None else installed
     supported = [allowed for allowed in ALLOWED_OLLAMA_MODELS if has_model(installed_models, allowed)]
     log("AI_ORCH", f"supported_models={supported}", "INFO")
     return supported
 
 
-def is_model_installed(model: str) -> bool:
-    return has_model(get_installed_ollama_models(), model)
+def is_model_installed(model: str, force_refresh: bool = False) -> bool:
+    return has_model(get_installed_ollama_models(force_refresh=force_refresh), model)
 
 
-def get_best_classifier_model(installed: list[str] | None = None) -> str | None:
-    installed_models = get_installed_ollama_models() if installed is None else installed
+def get_best_classifier_model(installed: list[str] | None = None, force_refresh: bool = False) -> str | None:
+    installed_models = get_installed_ollama_models(force_refresh=force_refresh) if installed is None else installed
     for model in CLASSIFIER_PRIORITY:
         if has_model(installed_models, model):
             return model
     return None
 
 
-def get_orchestrator_status() -> dict[str, Any]:
-    installed = get_installed_ollama_models()
+def get_orchestrator_status(force_refresh: bool = False) -> dict[str, Any]:
+    installed = get_installed_ollama_models(force_refresh=force_refresh)
     supported = get_supported_installed_models(installed)
     supported_set = set(supported)
     missing = [model for model in ALLOWED_OLLAMA_MODELS if model not in supported_set]

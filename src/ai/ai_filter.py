@@ -16,6 +16,8 @@ from src.ai.ai_orchestrator import classify_borderline_product
 from src.ai.model_registry import get_orchestrator_status
 from src.config import (
     AI_BATCH_SIZE,
+    AI_CLASSIFIER_MAX_PRODUCTS,
+    AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK,
     FALLBACK_EXPANSION_THRESHOLD,
     LLM_ACCEPT_THRESHOLD,
     RULE_ACCEPT_THRESHOLD,
@@ -114,6 +116,9 @@ def _decision_priority(product: dict[str, Any]) -> int:
         "rule_accept": 1,
         "fallback_expansion": 2,
         "fallback_after_ai_reject": 3,
+        "fallback_ai_timeout": 4,
+        "fallback_ai_circuit_open": 5,
+        "fallback_not_classified_cpu_limit": 6,
     }
     return priority.get(str(product.get("decision_source") or product.get("ai_source") or ""), 9)
 
@@ -137,6 +142,20 @@ def _price_sort_value(product: dict[str, Any]) -> float:
 
 
 def _sort_fallback_candidates(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        products,
+        key=lambda product: (
+            -_as_number(product.get("confidence", product.get("relevance_score", product.get("ai_confidence", 0)))),
+            -_as_number(product.get("rule_score", (product.get("_rule_context") or {}).get("rule_score"))),
+            -_as_number(product.get("semantic_score", (product.get("_rule_context") or {}).get("semantic_score"))),
+            -_as_number(product.get("rating")),
+            -_as_number(product.get("sold_count")),
+            _price_sort_value(product),
+        ),
+    )
+
+
+def _sort_borderline_candidates(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         products,
         key=lambda product: (
@@ -243,6 +262,10 @@ async def filter_products(
     ai_fallback = 0
     ai_calls_attempted = 0
     ai_calls_succeeded = 0
+    ai_timeouts = 0
+    ai_failure_count = 0
+    ai_circuit_open = False
+    ai_circuit_reason: str | None = None
 
     query_embedding = None
     semantic_enabled = bool(orchestrator_status.get("capabilities", {}).get("semantic"))
@@ -361,6 +384,7 @@ async def filter_products(
             ctx = product.get("_rule_context") or {}
             score = float(ctx.get("rule_score") or product.get("rule_score") or FALLBACK_EXPANSION_THRESHOLD)
             semantic = _as_number(ctx.get("semantic_score", product.get("semantic_score")), 0.0)
+            existing_confidence = _as_number(product.get("confidence", product.get("relevance_score", product.get("ai_confidence", 0))), 0.0)
             if is_obvious_junk_for_intent(query, product, query_intent):
                 continue
             product_category = str(ctx.get("product_category") or detect_product_category(product))
@@ -368,8 +392,8 @@ async def filter_products(
             marked = _mark_product(
                 product,
                 accepted=True,
-                confidence=max(score, semantic, 0.35),
-                reason="Included by fallback expansion to approach requested count",
+                confidence=max(existing_confidence, score, semantic, 0.35),
+                reason=str(product.get("reason") or product.get("ai_reason") or "Included by fallback expansion to approach requested count"),
                 source=source,
                 query_intent=query_intent,
                 product_category=product_category,
@@ -383,6 +407,8 @@ async def filter_products(
         return expanded
 
     def _ai_skip_reason(checked: int) -> str | None:
+        if ai_circuit_open:
+            return ai_circuit_reason or "AI classifier circuit breaker opened after repeated timeouts"
         if checked:
             return None
         if not use_ai:
@@ -397,11 +423,13 @@ async def filter_products(
 
     def _warning_text(fallback_expanded: int) -> str:
         warnings: list[str] = []
-        displayed = min(len(accepted), target_display)
-        if displayed < target_display:
-            warnings.append(f"Ditampilkan {displayed} produk aman dari {len(products)} kandidat valid.")
+        budget_valid = int(products[0].get("_budget_valid", len(products)) or 0) if products else 0
+        if budget_valid and budget_valid < target_count:
+            warnings.append(f"Diminta {target_count}, tetapi hanya {budget_valid} kandidat sesuai budget.")
+        if ai_timeouts > 0:
+            warnings.append(f"AI lokal timeout pada {ai_timeouts} produk, beberapa hasil diisi dari fallback aman.")
         if fallback_expanded:
-            warnings.append(f"{fallback_expanded} produk confidence rendah ditambahkan agar hasil mendekati target.")
+            warnings.append(f"{fallback_expanded} produk fallback ditambahkan agar hasil mendekati target.")
         return " ".join(dict.fromkeys(warnings))
 
     def _build_meta(
@@ -442,8 +470,11 @@ async def filter_products(
             "classifier_checked": checked,
             "ai_checked": checked,
             "llm_checked_count": checked,
+            "classifier_limit": AI_CLASSIFIER_MAX_PRODUCTS,
             "ai_calls_attempted": ai_calls_attempted,
             "ai_calls_succeeded": ai_calls_succeeded,
+            "ai_timeouts": ai_timeouts,
+            "ai_circuit_open": ai_circuit_open,
             "ai_accepted": accepted_by_classifier,
             "ai_accepted_count": accepted_by_classifier,
             "ai_rejected": rejected_by_classifier,
@@ -475,8 +506,10 @@ async def filter_products(
             (
                 f"raw={len(products)} target_display={target_display} intent={query_intent} "
                 f"classifier_installed={classifier_installed} selected_classifier={selected_model or 'none'} "
+                f"classifier_limit={AI_CLASSIFIER_MAX_PRODUCTS} "
                 f"rule_accept={rule_accepted} rule_reject={rule_rejected} semantic_checked={semantic_checked} "
                 f"borderline_candidates=0 classifier_checked=0 ai_calls_attempted=0 "
+                f"ai_timeouts=0 ai_circuit_open=false "
                 f"fallback_candidates={len(fallback_candidates)} fallback_added={fallback_expanded} final_displayed={len(accepted)} "
                 f"ai_skip_reason={_ai_skip_reason(0)}"
             ),
@@ -493,9 +526,29 @@ async def filter_products(
         )
         return IntentFilterResult(_rank_final_products(accepted)[:target_display], status, meta)
 
-    batches = _chunks(borderline, AI_BATCH_SIZE)
+    borderline = _sort_borderline_candidates(borderline)
+    to_classify = borderline[:AI_CLASSIFIER_MAX_PRODUCTS]
+    not_classified = borderline[AI_CLASSIFIER_MAX_PRODUCTS:]
+    for product in not_classified:
+        ctx = product.get("_rule_context", {})
+        rule_score = float(ctx.get("rule_score") or product.get("rule_score") or 0.0)
+        obvious_junk = bool(ctx.get("obvious_junk"))
+        if _is_safe_fallback_candidate(product, rule_score, obvious_junk):
+            product["rule_score"] = round(rule_score, 3)
+            product["decision_source"] = "fallback_not_classified_cpu_limit"
+            product["reason"] = "Classifier limit reached, included as fallback candidate"
+            fallback_candidates.append(product)
+
+    batches = _chunks(to_classify, AI_BATCH_SIZE)
     completed_batch_durations: list[float] = []
-    log("AI_ORCH", f"borderline_candidates={len(borderline)} batches={len(batches)} ai_calls_attempted={len(borderline)}", "INFO")
+    log(
+        "AI_ORCH",
+        (
+            f"borderline_candidates={len(borderline)} classifier_limit={AI_CLASSIFIER_MAX_PRODUCTS} "
+            f"classifier_selected={len(to_classify)} skipped_by_limit={len(not_classified)} batches={len(batches)}"
+        ),
+        "INFO",
+    )
 
     for batch_index, batch in enumerate(batches, 1):
         batch_started = time.perf_counter()
@@ -518,8 +571,20 @@ async def filter_products(
             ctx = product.get("_rule_context", {})
             product_category = str(ctx.get("product_category") or "unknown")
             rule_score = float(ctx.get("rule_score") or 0.0)
+            semantic_score = _as_number(ctx.get("semantic_score", product.get("semantic_score")), 0.0)
             obvious_junk = bool(ctx.get("obvious_junk"))
+
+            if ai_circuit_open:
+                if _is_safe_fallback_candidate(product, rule_score, obvious_junk):
+                    product["rule_score"] = round(rule_score, 3)
+                    product["confidence"] = round(max(rule_score, semantic_score, 0.35), 3)
+                    product["decision_source"] = "fallback_ai_circuit_open"
+                    product["reason"] = "AI circuit breaker opened, included as fallback candidate"
+                    fallback_candidates.append(product)
+                continue
             
+            classifier_checked += 1
+            ai_calls_attempted += 1
             response = await _run_with_ai_heartbeat(
                 coro=classify_borderline_product(
                     query,
@@ -539,18 +604,52 @@ async def filter_products(
                 valid_count=len(accepted),
             )
             
-            classifier_checked += 1
-            ai_calls_attempted += 1
             if response.get("_chat_ok"):
                 ai_calls_succeeded += 1
             fallback_used = bool(response.get("_fallback_used"))
+            timed_out = bool(response.get("_timeout"))
+            failed = fallback_used or not bool(response.get("_chat_ok"))
             if fallback_used:
                 ai_fallback += 1
-                
+            if timed_out:
+                ai_timeouts += 1
+            if failed:
+                ai_failure_count += 1
+                if ai_failure_count >= AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK and not ai_circuit_open:
+                    ai_circuit_open = True
+                    ai_circuit_reason = "AI classifier circuit breaker opened after repeated timeouts"
+                    log(
+                        "AI_ORCH",
+                        f"circuit_open failures={ai_failure_count} reason={'timeout' if timed_out else 'classifier_error'}",
+                        "WARN",
+                    )
+
             ai_confidence = _as_float(response.get("confidence"), 0.5)
+            if fallback_used:
+                if _is_safe_fallback_candidate(product, rule_score, obvious_junk):
+                    product["rule_score"] = round(rule_score, 3)
+                    product["semantic_score"] = round(semantic_score, 3) if semantic_score else product.get("semantic_score")
+                    product["confidence"] = round(max(rule_score, semantic_score, 0.35), 3)
+                    product["decision_source"] = "fallback_ai_timeout" if timed_out else "ai_fallback"
+                    product["reason"] = "AI timeout, included as fallback candidate" if timed_out else str(response.get("reason") or "Classifier unavailable, included as fallback candidate")
+                    fallback_candidates.append(product)
+                else:
+                    rejected.append(_mark_product(
+                        product,
+                        accepted=False,
+                        confidence=rule_score,
+                        reason="AI fallback skipped because product is obvious junk",
+                        source="ai_fallback_reject",
+                        query_intent=query_intent,
+                        product_category=product_category,
+                        rule_score=rule_score,
+                        category_match="fallback_reject",
+                    ))
+                continue
+
             llm_accepts = bool(response.get("accepted", True)) and (
-                fallback_used or ai_confidence >= LLM_ACCEPT_THRESHOLD
-            ) and not (fallback_used and obvious_junk)
+                ai_confidence >= LLM_ACCEPT_THRESHOLD
+            )
             
             confidence = max(rule_score, ai_confidence if llm_accepts else min(ai_confidence, rule_score))
             marked = _mark_product(
@@ -565,8 +664,7 @@ async def filter_products(
                 category_match=str(response.get("category_match") or "ai"),
             )
             if llm_accepts:
-                if not fallback_used:
-                    ai_accepted += 1
+                ai_accepted += 1
                 accepted.append(marked)
             else:
                 ai_rejected += 1
@@ -597,7 +695,9 @@ async def filter_products(
 
     fallback_expanded = apply_fallback_expansion()
 
-    if ai_fallback and ai_fallback == classifier_checked:
+    if ai_circuit_open:
+        status = "partial"
+    elif ai_fallback and ai_fallback == classifier_checked:
         status = "unavailable"
     elif ai_fallback:
         status = "partial"
@@ -624,9 +724,11 @@ async def filter_products(
         (
             f"raw={len(products)} target_display={target_display} intent={query_intent} "
             f"classifier_installed={classifier_installed} selected_classifier={selected_model or 'none'} "
+            f"classifier_limit={AI_CLASSIFIER_MAX_PRODUCTS} "
             f"rule_accept={rule_accepted} rule_reject={rule_rejected} semantic_checked={semantic_checked} "
             f"borderline_candidates={len(borderline)} classifier_checked={classifier_checked} "
             f"ai_calls_attempted={ai_calls_attempted} ai_calls_succeeded={ai_calls_succeeded} "
+            f"ai_timeouts={ai_timeouts} ai_circuit_open={str(ai_circuit_open).lower()} "
             f"ai_accepted={ai_accepted} ai_rejected={ai_rejected} ai_fallback={ai_fallback} "
             f"fallback_candidates={len(fallback_candidates)} fallback_added={fallback_expanded} final_displayed={len(accepted)}"
         ),

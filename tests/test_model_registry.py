@@ -17,9 +17,11 @@ class DummyResponse:
 
 
 def test_ai_status_when_no_models(monkeypatch):
+    model_registry._MODEL_CACHE["timestamp"] = 0
+    model_registry._MODEL_CACHE["models"] = []
     monkeypatch.setattr(model_registry.requests, "get", lambda *args, **kwargs: DummyResponse({"models": []}))
 
-    status = model_registry.get_orchestrator_status()
+    status = model_registry.get_orchestrator_status(force_refresh=True)
 
     assert status["ok"] is False
     assert status["classifier"] is None
@@ -29,6 +31,8 @@ def test_ai_status_when_no_models(monkeypatch):
 
 
 def test_ai_status_filters_to_allowed_models(monkeypatch):
+    model_registry._MODEL_CACHE["timestamp"] = 0
+    model_registry._MODEL_CACHE["models"] = []
     payload = {
         "models": [
             {"name": "gemma3:4b"},
@@ -38,19 +42,21 @@ def test_ai_status_filters_to_allowed_models(monkeypatch):
     }
     monkeypatch.setattr(model_registry.requests, "get", lambda *args, **kwargs: DummyResponse(payload))
 
-    status = model_registry.get_orchestrator_status()
+    status = model_registry.get_orchestrator_status(force_refresh=True)
 
     assert status["ok"] is True
-    assert status["classifier"] == "gemma3:4b"
+    assert status["classifier"] == "llama3.2:3b"
     assert status["supported"] == ["gemma3:4b", "llama3.2:3b"]
     assert "unsupported-large:latest" not in status["supported"]
 
 
 def test_ai_status_uses_llama_when_gemma_missing(monkeypatch):
+    model_registry._MODEL_CACHE["timestamp"] = 0
+    model_registry._MODEL_CACHE["models"] = []
     payload = {"models": [{"name": "llama3.2:3b"}, {"name": "nomic-embed-text"}]}
     monkeypatch.setattr(model_registry.requests, "get", lambda *args, **kwargs: DummyResponse(payload))
 
-    status = model_registry.get_orchestrator_status()
+    status = model_registry.get_orchestrator_status(force_refresh=True)
 
     assert status["classifier"] == "llama3.2:3b"
     assert status["capabilities"]["semantic"] is True
@@ -58,6 +64,8 @@ def test_ai_status_uses_llama_when_gemma_missing(monkeypatch):
 
 
 def test_ai_status_normalizes_latest_tags(monkeypatch):
+    model_registry._MODEL_CACHE["timestamp"] = 0
+    model_registry._MODEL_CACHE["models"] = []
     payload = {
         "models": [
             {"name": "nomic-embed-text:latest"},
@@ -68,10 +76,10 @@ def test_ai_status_normalizes_latest_tags(monkeypatch):
     }
     monkeypatch.setattr(model_registry.requests, "get", lambda *args, **kwargs: DummyResponse(payload))
 
-    status = model_registry.get_orchestrator_status()
+    status = model_registry.get_orchestrator_status(force_refresh=True)
 
     assert status["ok"] is True
-    assert status["classifier"] == "gemma3:4b"
+    assert status["classifier"] == "llama3.2:3b"
     assert status["missing"] == []
     assert status["capabilities"] == {
         "semantic": True,
@@ -79,3 +87,23 @@ def test_ai_status_normalizes_latest_tags(monkeypatch):
         "fast_classifier": True,
         "json_repair": True,
     }
+
+
+def test_model_registry_caches_tags(monkeypatch):
+    model_registry._MODEL_CACHE["timestamp"] = 0
+    model_registry._MODEL_CACHE["models"] = []
+    calls = []
+    payload = {"models": [{"name": "llama3.2:3b"}]}
+
+    def fake_get(*args, **kwargs):
+        calls.append((args, kwargs))
+        return DummyResponse(payload)
+
+    monkeypatch.setattr(model_registry.requests, "get", fake_get)
+
+    first = model_registry.get_installed_ollama_models(force_refresh=True)
+    second = model_registry.get_installed_ollama_models()
+
+    assert first == ["llama3.2:3b"]
+    assert second == ["llama3.2:3b"]
+    assert len(calls) == 1

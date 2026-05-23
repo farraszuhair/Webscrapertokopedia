@@ -8,7 +8,7 @@ from typing import Any
 from src.ai.json_repair import repair_json_or_fallback
 from src.ai.model_registry import get_orchestrator_status, get_installed_model_name
 from src.ai.ollama_client import chat_raw_async
-from src.config import LLM_ACCEPT_THRESHOLD, RULE_ACCEPT_THRESHOLD, RULE_REJECT_THRESHOLD, RULE_REVIEW_THRESHOLD
+from src.config import AI_CPU_MODE, LLM_ACCEPT_THRESHOLD, RULE_ACCEPT_THRESHOLD, RULE_REJECT_THRESHOLD, RULE_REVIEW_THRESHOLD
 from src.utils.logger import log
 
 
@@ -23,40 +23,24 @@ def should_call_llm(rule_score: float, obvious_junk: bool) -> bool:
 
 
 def build_classifier_prompt(query: str, query_intent: str, product: dict[str, Any]) -> str:
-    return f"""You are an intent-aware product relevance classifier for marketplace search.
-
-User query:
-{query}
-
-Detected query intent:
-{query_intent}
+    return f"""Query: {query}
+Intent: {query_intent}
 
 Product:
-title: {product.get("title", "")}
-price: {product.get("price_raw") or product.get("price_text") or product.get("price", "")}
-store: {product.get("shop_name") or product.get("shop") or ""}
-rating: {product.get("rating") or product.get("rating_text") or ""}
-sold: {product.get("sold_count") or product.get("sold") or product.get("sold_text") or ""}
+Title: {product.get("title", "")}
+Price: {product.get("price_raw") or product.get("price_text") or product.get("price", "")}
+Store: {product.get("shop_name") or product.get("shop") or ""}
 
-Rules:
-- If user searches for a main product, reject accessories and spare parts.
-- If user searches for an accessory, accept matching accessories.
-- If user searches for a spare part, accept matching spare parts.
-- Do not globally reject accessories.
-- Reject only when product category does not match query intent.
-- Accept semantic matches even if exact words are different.
-- For "laptop gaming", accept ASUS ROG, Lenovo Legion, Acer Nitro, MSI, HP Victus, ASUS TUF, RTX/GTX laptops.
-- For "casing iphone 13", accept case, casing, softcase, hardcase, MagSafe case for iPhone 13.
-- Return JSON only.
-- No markdown.
+Decision rules:
+- Main product query rejects accessories/spare parts.
+- Accessory query accepts matching accessories.
+- Sparepart query accepts matching spare parts.
+- laptop gaming accepts ROG, Legion, Nitro, TUF, Victus, LOQ, RTX, GTX, MSI.
+- casing iphone accepts case/casing/softcase/hardcase for that iPhone.
 
-JSON format:
-{{
-  "accepted": true,
-  "confidence": 0.0,
-  "reason": "...",
-  "category_match": "..."
-}}
+Return exactly:
+{{"accepted":true,"confidence":0.0,"reason":"short","category_match":"main/accessory/sparepart/no"}}
+No markdown.
 """
 
 
@@ -85,21 +69,29 @@ async def classify_borderline_product(
             "_llm_accept_threshold": LLM_ACCEPT_THRESHOLD,
         }
 
-    resolved_classifier = get_installed_model_name(str(classifier))
+    resolved_classifier = get_installed_model_name(str(classifier), status.get("installed") or None)
     prompt = build_classifier_prompt(query, query_intent, product)
     result = await chat_raw_async(prompt, model=resolved_classifier, use_json_format=True)
     
-    if not result.get("ok"):
+    if not result.get("ok") and not AI_CPU_MODE:
         supported = set(status.get("supported") or [])
         fallback_model = "llama3.2:3b"
-        resolved_fallback = get_installed_model_name(fallback_model)
+        resolved_fallback = get_installed_model_name(fallback_model, status.get("installed") or None)
         if classifier != fallback_model and fallback_model in supported:
             log("AI_ORCH", f"classifier_fallback primary={resolved_classifier} fallback={resolved_fallback}", "WARN")
             resolved_classifier = resolved_fallback
             result = await chat_raw_async(prompt, model=resolved_fallback, use_json_format=True)
 
     parsed = result.get("parsed")
-    if not parsed:
+    if not result.get("ok"):
+        parsed = {
+            "accepted": True,
+            "confidence": 0.50,
+            "reason": "Classifier unavailable, accepted by safe fallback to avoid empty results",
+            "category_match": "fallback",
+            "decision_source": "ai_fallback",
+        }
+    elif not parsed:
         parsed = await repair_json_or_fallback(
             str(result.get("content") or result.get("error") or ""),
             phi_available=bool(status.get("capabilities", {}).get("json_repair")),
@@ -121,5 +113,7 @@ async def classify_borderline_product(
     parsed["_model"] = resolved_classifier
     parsed["_fallback_used"] = parsed.get("decision_source") == "ai_fallback"
     parsed["_chat_ok"] = bool(result.get("ok"))
+    parsed["_timeout"] = bool(result.get("timeout"))
+    parsed["_error"] = str(result.get("error") or "")
     parsed["_llm_accept_threshold"] = LLM_ACCEPT_THRESHOLD
     return parsed

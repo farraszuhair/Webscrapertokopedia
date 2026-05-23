@@ -562,17 +562,13 @@ class ScraperApp {
     const box = this.$('r-warning');
     if (!box) return;
     const meta = data.result_metadata || this.state.metadata || {};
-    const messages = [data.ai_warning, meta.ai_warning, meta.limited_reason, data.limited_reason]
-      .filter(Boolean)
-      .map((message) => String(message).trim())
-      .filter(Boolean);
-    const uniqueMessages = [...new Set(messages)];
-    if (!uniqueMessages.length) {
+    const warning = String(data.ai_warning || meta.ai_warning || data.limited_reason || meta.limited_reason || '').trim();
+    if (!warning) {
       box.classList.add('hidden');
       box.textContent = '';
       return;
     }
-    box.textContent = uniqueMessages.join(' ');
+    box.textContent = warning;
     box.classList.remove('hidden');
   }
 

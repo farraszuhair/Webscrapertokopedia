@@ -102,7 +102,7 @@ async def fetch_progress(search_id: str):
 @router.get("/api/ai/status")
 async def ai_status():
     """Return installed supported Ollama models and active orchestrator capabilities."""
-    return get_orchestrator_status()
+    return get_orchestrator_status(force_refresh=True)
 
 
 @router.get("/api/result/{search_id}")
@@ -388,22 +388,17 @@ def _limited_reason(requested_count: int, displayed_count: int, candidate_count:
 def _build_result_warning(
     *,
     requested: int,
-    displayed: int,
-    candidate_pool_count: int,
-    budget_enabled: bool,
     budget_valid_count: int,
     fallback_added: int,
+    ai_timeouts: int,
 ) -> str:
     warnings: list[str] = []
-    target_display = min(requested, candidate_pool_count)
-    if budget_enabled and budget_valid_count < requested:
+    if budget_valid_count < requested:
         warnings.append(f"Diminta {requested}, tetapi hanya {budget_valid_count} kandidat sesuai budget.")
-    elif candidate_pool_count < requested:
-        warnings.append(f"Diminta {requested}, tetapi hanya {candidate_pool_count} kandidat valid.")
-    if displayed < target_display:
-        warnings.append(f"Ditampilkan {displayed} produk aman dari {candidate_pool_count} kandidat valid.")
+    if ai_timeouts > 0:
+        warnings.append(f"AI lokal timeout pada {ai_timeouts} produk, beberapa hasil diisi dari fallback aman.")
     if fallback_added > 0:
-        warnings.append(f"{fallback_added} produk confidence rendah ditambahkan agar hasil mendekati target.")
+        warnings.append(f"{fallback_added} produk fallback ditambahkan agar hasil mendekati target.")
     return " ".join(dict.fromkeys(warnings))
 
 
@@ -525,13 +520,12 @@ async def _filter_pipeline(
     ranked = list(ai_valid)
     final = ranked[:target_display]
     fallback_added = int(ai_meta.get("fallback_added", ai_meta.get("fallback_expansion_count", 0)) or 0)
+    ai_timeouts = int(ai_meta.get("ai_timeouts", 0) or 0)
     final_warning = _build_result_warning(
         requested=req.target_count,
-        displayed=len(final),
-        candidate_pool_count=len(candidates),
-        budget_enabled=budget_enabled,
         budget_valid_count=len(candidates),
         fallback_added=fallback_added,
+        ai_timeouts=ai_timeouts,
     )
     limited = final_warning or None
 
@@ -570,6 +564,9 @@ async def _filter_pipeline(
         "ai_checked": classifier_checked,
         "ai_calls_attempted": ai_meta.get("ai_calls_attempted", 0),
         "ai_calls_succeeded": ai_meta.get("ai_calls_succeeded", 0),
+        "ai_timeouts": ai_timeouts,
+        "ai_circuit_open": bool(ai_meta.get("ai_circuit_open", False)),
+        "classifier_limit": ai_meta.get("classifier_limit"),
         "ai_accepted": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
         "ai_accepted_count": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
         "ai_rejected": ai_meta.get("ai_rejected", 0),
@@ -600,6 +597,7 @@ async def _filter_pipeline(
             f"budget_valid={len(candidates)} candidate_pool={len(candidates)} target_display={target_display} "
             f"semantic_checked={semantic_checked} classifier_checked={classifier_checked} "
             f"ai_calls_attempted={metadata['ai_calls_attempted']} ai_calls_succeeded={metadata['ai_calls_succeeded']} "
+            f"ai_timeouts={metadata['ai_timeouts']} ai_circuit_open={str(metadata['ai_circuit_open']).lower()} "
             f"ai_accepted={metadata['ai_accepted']} ai_rejected={metadata['ai_rejected']} ai_fallback={metadata['ai_fallback']} "
             f"fallback_added={fallback_added} displayed={len(final)} "
             f"ai_skip_reason={metadata['ai_skip_reason']} "
