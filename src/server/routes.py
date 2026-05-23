@@ -381,24 +381,30 @@ def _limited_reason(requested_count: int, displayed_count: int, candidate_count:
     if displayed_count >= requested_count:
         return None
     if candidate_count is not None:
-        return f"Diminta {requested_count}, tetapi hanya {displayed_count} produk aman yang bisa ditampilkan dari {candidate_count} kandidat valid."
-    return f"Diminta {requested_count}, tetapi hanya {displayed_count} produk aman yang bisa ditampilkan."
+        return f"Diminta {requested_count}, tetapi hanya {displayed_count} produk bisa ditampilkan dari {candidate_count} kandidat valid."
+    return f"Diminta {requested_count}, tetapi hanya {displayed_count} produk bisa ditampilkan."
 
 
 def _build_result_warning(
     *,
     requested: int,
-    budget_valid_count: int,
+    candidate_pool_count: int,
     fallback_added: int,
-    ai_timeouts: int,
+    ai_skip_reason: str | None,
+    displayed: int,
+    target_display: int,
 ) -> str:
     warnings: list[str] = []
-    if budget_valid_count < requested:
-        warnings.append(f"Diminta {requested}, tetapi hanya {budget_valid_count} kandidat sesuai budget.")
-    if ai_timeouts > 0:
-        warnings.append(f"AI lokal timeout pada {ai_timeouts} produk, beberapa hasil diisi dari fallback aman.")
+    if candidate_pool_count < requested:
+        warnings.append(f"Diminta {requested}, tetapi hanya {candidate_pool_count} kandidat sesuai budget.")
     if fallback_added > 0:
         warnings.append(f"{fallback_added} produk fallback ditambahkan agar hasil mendekati target.")
+    if ai_skip_reason:
+        warnings.append(f"AI classifier: {ai_skip_reason}.")
+    if displayed < target_display:
+        warnings.append(
+            f"Ditampilkan {displayed} dari target aman {target_display}. Cek log pipeline untuk alasan produk dibuang."
+        )
     return " ".join(dict.fromkeys(warnings))
 
 
@@ -521,11 +527,14 @@ async def _filter_pipeline(
     final = ranked[:target_display]
     fallback_added = int(ai_meta.get("fallback_added", ai_meta.get("fallback_expansion_count", 0)) or 0)
     ai_timeouts = int(ai_meta.get("ai_timeouts", 0) or 0)
-    final_warning = _build_result_warning(
+    ai_skip_reason = ai_meta.get("ai_skip_reason")
+    final_warning = str(ai_meta.get("warning") or "").strip() or _build_result_warning(
         requested=req.target_count,
-        budget_valid_count=len(candidates),
+        candidate_pool_count=len(candidates),
         fallback_added=fallback_added,
-        ai_timeouts=ai_timeouts,
+        ai_skip_reason=str(ai_skip_reason) if ai_skip_reason else None,
+        displayed=len(final),
+        target_display=target_display,
     )
     limited = final_warning or None
 
@@ -555,6 +564,7 @@ async def _filter_pipeline(
         "budget_valid_count": len(candidates),
         "candidate_pool": len(candidates),
         "ai_input_count": len(candidates),
+        "target_display": target_display,
         "rule_accepted": ai_meta.get("rule_accepted", ai_meta.get("rule_accepted_count", 0)),
         "rule_rejected": ai_meta.get("rule_rejected", ai_meta.get("rule_rejected_count", 0)),
         "borderline_candidates": ai_meta.get("borderline_candidates", 0),
@@ -571,12 +581,23 @@ async def _filter_pipeline(
         "ai_accepted_count": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
         "ai_rejected": ai_meta.get("ai_rejected", 0),
         "ai_fallback": ai_meta.get("ai_fallback", 0),
+        "fallback_candidates": ai_meta.get("fallback_candidates", 0),
+        "fallback_candidates_count": ai_meta.get("fallback_candidates_count", ai_meta.get("fallback_candidates", 0)),
+        "weak_fallback_candidates": ai_meta.get("weak_fallback_candidates", 0),
+        "weak_fallback_candidates_count": ai_meta.get("weak_fallback_candidates_count", ai_meta.get("weak_fallback_candidates", 0)),
+        "fallback_rejected_as_junk": ai_meta.get("fallback_rejected_as_junk", 0),
         "fallback_added": fallback_added,
+        "accepted_before_fallback": ai_meta.get("accepted_before_fallback", 0),
+        "rejected_as_obvious_junk": ai_meta.get("rejected_as_obvious_junk", 0),
+        "rejected_as_obvious_junk_count": ai_meta.get("rejected_as_obvious_junk_count", ai_meta.get("rejected_as_obvious_junk", 0)),
+        "rejected_reasons_histogram": ai_meta.get("rejected_reasons_histogram", {}),
+        "pipeline_debug_path": ai_meta.get("pipeline_debug_path"),
+        "why_remaining_products_were_not_displayed": ai_meta.get("why_remaining_products_were_not_displayed"),
         "displayed_count": len(final),
         "displayed": len(final),
         "has_enough_results": has_enough,
         "limited_reason": limited,
-        "ai_skip_reason": ai_meta.get("ai_skip_reason"),
+        "ai_skip_reason": ai_skip_reason,
         "ai_status": ai_status,
         "ai_warning": final_warning,
         "ai_orchestrator": ai_meta.get("ai_orchestrator", orchestrator_status),
@@ -599,6 +620,8 @@ async def _filter_pipeline(
             f"ai_calls_attempted={metadata['ai_calls_attempted']} ai_calls_succeeded={metadata['ai_calls_succeeded']} "
             f"ai_timeouts={metadata['ai_timeouts']} ai_circuit_open={str(metadata['ai_circuit_open']).lower()} "
             f"ai_accepted={metadata['ai_accepted']} ai_rejected={metadata['ai_rejected']} ai_fallback={metadata['ai_fallback']} "
+            f"accepted_before_fallback={metadata['accepted_before_fallback']} "
+            f"fallback_candidates={metadata['fallback_candidates']} weak_fallback_candidates={metadata['weak_fallback_candidates']} "
             f"fallback_added={fallback_added} displayed={len(final)} "
             f"ai_skip_reason={metadata['ai_skip_reason']} "
             f"has_enough={str(has_enough).lower()}"
@@ -606,6 +629,22 @@ async def _filter_pipeline(
         ),
         "INFO",
     )
+
+    if len(candidates) >= req.target_count and len(final) < req.target_count:
+        log(
+            "PIPELINE",
+            (
+                f"target_not_met target={target_display} displayed={len(final)} "
+                f"accepted_count_before_fallback={metadata['accepted_before_fallback']} "
+                f"fallback_candidates_count={metadata['fallback_candidates_count']} "
+                f"weak_fallback_candidates_count={metadata['weak_fallback_candidates_count']} "
+                f"fallback_added={fallback_added} "
+                f"rejected_as_obvious_junk_count={metadata['rejected_as_obvious_junk_count']} "
+                f"rejected_reasons_histogram={metadata['rejected_reasons_histogram']} "
+                f"reason={metadata.get('why_remaining_products_were_not_displayed')}"
+            ),
+            "ERROR",
+        )
 
     error = ""
     ai_warning = final_warning

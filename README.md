@@ -26,11 +26,11 @@ Model selection is automatic. The app detects installed models with `GET /api/ta
 Default CPU-friendly settings:
 
 - `AI_CPU_MODE=true`
-- `AI_CLASSIFIER_MAX_PRODUCTS=12`
-- `AI_CHAT_TIMEOUT_SECONDS=25`
+- `AI_CLASSIFIER_MAX_PRODUCTS=6`
+- `AI_CHAT_TIMEOUT_SECONDS=20`
 - `AI_CHAT_NUM_CTX=1024`
 - `AI_CHAT_NUM_PREDICT=80`
-- `AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK=3`
+- `AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK=2`
 - `AI_MODEL_CACHE_TTL_SECONDS=60`
 
 ## AI Orchestrator Behavior
@@ -124,7 +124,7 @@ Example search:
 
 ### Local AI is timing out
 
-The classifier timeout is 25 seconds by default. After 3 classifier failures in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_circuit_open`, `ai_fallback`, and `fallback_added` in `result_metadata`.
+The classifier timeout is 20 seconds by default. After 2 classifier failures in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_circuit_open`, `ai_fallback`, and `fallback_added` in `result_metadata`.
 
 ### Displayed is much lower than requested
 

@@ -1,0 +1,166 @@
+{
+  "query": "laptop gaming",
+  "search_id": "87aae29d-2617-441e-aadf-cced528a4209",
+  "requested": 50,
+  "candidate_pool_count": 50,
+  "target_display": 50,
+  "accepted_before_fallback": 18,
+  "fallback_candidates_count": 2,
+  "weak_fallback_candidates_count": 0,
+  "fallback_added": 2,
+  "final_displayed": 20,
+  "rejected_as_obvious_junk_count": 27,
+  "rejected_reasons_histogram": {
+    "obvious_junk": 27,
+    "invalid_product_data": 3
+  },
+  "semantic_checked": 50,
+  "classifier_checked": 5,
+  "ai_checked": 5,
+  "ai_calls_attempted": 5,
+  "ai_calls_succeeded": 5,
+  "ai_accepted": 0,
+  "ai_rejected": 5,
+  "ai_skip_reason": null,
+  "decision_histogram": {
+    "rule_accept": 18,
+    "fallback_after_ai_reject": 2
+  },
+  "sample_rejected": [
+    {
+      "id": "b62fb0e15eef56cb",
+      "title": "Laptop Lenovo LOQ 15 Intel Core i7 13650HX 32GB DDR5 1TB SSD RTX4050-6GB FHD IPS 100%sRGB Win 11 + OHS",
+      "price_value": 10000000,
+      "url": "https://www.tokopedia.com/jayn-stark/laptop-lenovo-loq-15-intel-core-i7-13650hx-32gb-ddr5-1tb-ssd-rtx4050-6gb-fhd-ips-100-srgb-win-11-ohs-1734445964071240802",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.23,
+      "semantic_score": 0.727,
+      "combined_score": 0.618
+    },
+    {
+      "id": "68638de52c484a77",
+      "title": "HP VICTUS 15 RYZEN 5 8645HS RTX4050 6GB 8GB DDR5 512GB SSD W11+OHS21 15.6FHD 144HZ BLIT 2Y+ADP SLV -FB2666AX",
+      "price_value": 11750000,
+      "url": "https://www.tokopedia.com/pratama-24/hp-victus-15-ryzen-5-8645hs-rtx4050-6gb-8gb-ddr5-512gb-ssd-w11-ohs21-15-6fhd-144hz-blit-2y-adp-slv-fb2666ax",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.08,
+      "semantic_score": 0.691,
+      "combined_score": 0.587
+    },
+    {
+      "id": "fd4be9018b894a23",
+      "title": "ASUS TUF A15 FA506NFR RYZEN 7 7435HS RTX2050 4GB 16GB LPDDR5 512GB SSD W11+OHS 15.6FHD 144HZ RGB BLK -R725B6T-O 2YRS",
+      "price_value": 10550000,
+      "url": "https://www.tokopedia.com/pratama-24/asus-tuf-a15-fa506nfr-ryzen-7-7435hs-rtx2050-4gb-16gb-lpddr5-512gb-ssd-w11-ohs-15-6fhd-144hz-rgb-blk-r725b6t-o-2yrs",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.08,
+      "semantic_score": 0.697,
+      "combined_score": 0.593
+    },
+    {
+      "id": "9ea05e89c955c375",
+      "title": "Acer Nitro V 15 ANV15 41 R99D R5 6600H 8GB 512GB SSD RTX3050 6GB 15.6\u2033 FHD 165Hz Win 11 Home+OHM 2024+M365",
+      "price_value": 10299000,
+      "url": "https://www.tokopedia.com/abadi-notebook/acer-nitro-v-15-anv15-41-r99d-r5-6600h-8gb-512gb-ssd-rtx3050-6gb-15-6-fhd-165hz-win-11-home-ohm-2024-m365-1731071601169106548",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.08,
+      "semantic_score": 0.709,
+      "combined_score": 0.602
+    },
+    {
+      "id": "2fa81cec6993badd",
+      "title": "ASUS TUF GAMING A15 FA506NF Ryzen 5 7535H Ram DDR5 16GB RTX2050 4GB Garansi 2th",
+      "price_value": 10989000,
+      "url": "https://www.tokopedia.com/bcomputer-6/asus-tuf-gaming-a15-fa506nf-ryzen-5-7535h-ram-ddr5-16gb-rtx2050-4gb-garansi-2th",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.08,
+      "semantic_score": 0.684,
+      "combined_score": 0.581
+    },
+    {
+      "id": "44bbc8edf2fec721",
+      "title": "Laptop Asus TUF Core i5 GEN 10 RAM 32GB SSD 512GB NVIDIA GTX 1650 - Siap pakai",
+      "price_value": 8599000,
+      "url": "https://www.tokopedia.com/zigzag88/laptop-asus-tuf-core-i5-gen-10-ram-32gb-ssd-512gb-nvidia-gtx-1650-siap-pakai-1732966675438339106",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.23,
+      "semantic_score": 0.726,
+      "combined_score": 0.617
+    },
+    {
+      "id": "dff61d9756d3bc3a",
+      "title": "LOQ 15IRX9 83DV00A8ID i5-13450HX NVIDIA GeForce RTX 3050 6GB 12GB 512GB SSD Windows 11 Home OHS Lenovo",
+      "price_value": 11245000,
+      "url": "https://www.tokopedia.com/authorizedtechnology/loq-15irx9-83dv00a8id-i5-13450hx-nvidia-geforce-rtx-3050-6gb-12gb-512gb-ssd-windows-11-home-ohs-lenovo-1730804164378068928",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.08,
+      "semantic_score": 0.711,
+      "combined_score": 0.604
+    },
+    {
+      "id": "317d8839d97e9bdc",
+      "title": "ACER Nitro V 15 ANV15 41 R99D RTX3050 AMD Ryzen 5 6600H 8/512GB SSD W11 OHS 15.6\" FHD 165Hz Black - LAPTOP, 8/512GB SSD",
+      "price_value": 10700000,
+      "url": "https://www.tokopedia.com/avemedia/acer-nitro-v-15-anv15-41-r99d-rtx3050-amd-ryzen-5-6600h-8-512gb-ssd-w11-ohs-15-6-fhd-165hz-black-laptop-8-512gb-ssd-1730851942710936868",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.23,
+      "semantic_score": 0.71,
+      "combined_score": 0.604
+    },
+    {
+      "id": "06e4dce6804bf168",
+      "title": "HP Victus 15 FA2716TX I5-13420H/16GB DDR4/RTX3050 6GB/512GB SSD/15,6\" FHD IPS 144Hz/Win11+OHS",
+      "price_value": 12000000,
+      "url": "https://www.tokopedia.com/cvkana/hp-victus-15-fa2716tx-i5-13420h-16gb-ddr4-rtx3050-6gb-512gb-ssd-15-6-fhd-ips-144hz-win11-ohs-1734232637550003990",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.08,
+      "semantic_score": 0.689,
+      "combined_score": 0.586
+    },
+    {
+      "id": "ae7174be181d6e26",
+      "title": "Lenovo LOQ Essential 15 i5-12450HX RTX 2050 4GB 12GB 512GB SSD 15.6\" FHD 144Hz Win11 + OHS",
+      "price_value": 10900000,
+      "url": "https://www.tokopedia.com/indexcom/lenovo-loq-essential-15-i5-12450hx-rtx-2050-4gb-12gb-512gb-ssd-15-6-fhd-144hz-win11-ohs-1730962211825616038",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by obvious junk",
+      "rule_score": 0.08,
+      "semantic_score": 0.718,
+      "combined_score": 0.61
+    }
+  ],
+  "sample_fallback": [
+    {
+      "id": "d2f228159f741c49",
+      "title": "MSI THIN 15 B12UCX i5-12450H RTX 2050 8GB 512GB 15.6\" FHD 144Hz W11",
+      "price_value": 9660000,
+      "url": "https://www.tokopedia.com/edycom/msi-thin-15-b12ucx-i5-12450h-rtx-2050-8gb-512gb-15-6-fhd-144hz-w11-1730962388698432823",
+      "decision_source": "fallback_after_ai_reject",
+      "reason": "Included by fallback expansion to satisfy requested count",
+      "rule_score": 0.776,
+      "semantic_score": 0.722,
+      "combined_score": 0.776
+    },
+    {
+      "id": "1b7ffc15ce2f7141",
+      "title": "MSI THIN 15 - INTEL I7 12650H RTX2050 4GB/ 8GB 512GB W11 15.6FHD 144HZ",
+      "price_value": 9850000,
+      "url": "https://www.tokopedia.com/laptopstoresurabaya/msi-thin-15-intel-i7-12650h-rtx2050-4gb-8gb-512gb-w11-15-6fhd-144hz-1730997213825565866",
+      "decision_source": "fallback_after_ai_reject",
+      "reason": "Included by fallback expansion to satisfy requested count",
+      "rule_score": 0.776,
+      "semantic_score": 0.678,
+      "combined_score": 0.776
+    }
+  ],
+  "why_remaining_products_were_not_displayed": "fallback pool exhausted after excluding invalid/duplicate/obvious junk products; missing=30"
+}

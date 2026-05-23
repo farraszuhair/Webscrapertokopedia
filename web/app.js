@@ -623,6 +623,7 @@ class ScraperApp {
         <div class="compare-stats">
           <span>Raw scraped: <b>${item.raw_scraped ?? item.raw_count ?? 0}</b></span>
           <span>Budget valid: <b>${item.budget_valid_count ?? 0}</b></span>
+          <span>Semantic checked: <b>${item.result_metadata?.semantic_checked ?? 0}</b></span>
           <span>AI checked: <b>${item.result_metadata?.classifier_checked ?? item.result_metadata?.ai_checked ?? 0}</b></span>
           <span>AI accepted: <b>${item.ai_accepted_count ?? item.result_metadata?.ai_accepted_count ?? 0}</b></span>
           <span>Duration: ${item.duration_seconds ?? item.duration ?? 0}s</span>
@@ -665,12 +666,14 @@ class ScraperApp {
   renderResultSummary(data) {
     const meta = data.result_metadata || this.state.metadata || {};
     const requested = Number(meta.requested_count ?? data.requested_count ?? data.target_count ?? 0);
-    const displayed = Number(meta.displayed_count ?? data.displayed_count ?? this.state.products.length);
+    const productCount = Array.isArray(data.data || data.products) ? (data.data || data.products).length : this.state.products.length;
+    const displayed = productCount;
     const raw = Number(meta.raw_scraped_count ?? meta.raw_scraped ?? data.raw_count ?? 0);
     const deduped = Number(meta.deduped_count ?? data.deduped_count ?? 0);
     const budget = Number(meta.budget_valid_count ?? data.budget_valid_count ?? data.budget_count ?? 0);
+    const semanticChecked = Number(meta.semantic_checked ?? meta.semantic_checked_count ?? 0);
     const aiChecked = Number(meta.classifier_checked ?? meta.ai_checked ?? data.ai_checked ?? 0);
-    const aiAccepted = Number(meta.ai_accepted_count ?? data.ai_accepted_count ?? data.ai_valid_count ?? 0);
+    const aiAccepted = Number(meta.ai_accepted ?? meta.ai_accepted_count ?? data.ai_accepted_count ?? 0);
 
     this.setText('r-count', displayed || this.state.products.length || 0);
     this.setText('r-target', requested || '-');
@@ -678,6 +681,7 @@ class ScraperApp {
     this.setText('rs-raw', raw || 0);
     this.setText('rs-deduped', deduped || 0);
     this.setText('rs-budget', budget || 0);
+    this.setText('rs-semantic', semanticChecked || 0);
     this.setText('rs-ai-checked', aiChecked || 0);
     this.setText('rs-ai', aiAccepted || 0);
     this.setText('rs-displayed', displayed || this.state.products.length || 0);
@@ -802,7 +806,7 @@ class ScraperApp {
 
   updateResultCount() {
     const meta = this.state.metadata || {};
-    const displayed = Number(meta.displayed_count ?? this.state.products.length);
+    const displayed = this.state.products.length;
     const requested = Number(meta.requested_count ?? this.$('r-target')?.textContent ?? displayed);
     this.setText('r-count', displayed || this.state.products.length);
     this.setText('r-target', requested || '-');
