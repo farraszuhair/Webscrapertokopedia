@@ -30,7 +30,7 @@ class SearchRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
 
     search_id: str = "unknown"
     product_id: str = ""
@@ -49,6 +49,13 @@ class FeedbackRequest(BaseModel):
     reasons: List[str] = Field(default_factory=list)
     note: str = ""
     rule_score: float = 0.0
+    semantic_score: float = 0.0
+    combined_score: float = 0.0
+    learned_adjustment: float = 0.0
+    confidence: float = 0.0
+    learning_scope_hint: Optional[str] = None
+    model_used: Optional[str] = None
+    ai_reason: Optional[str] = None
     sort_mode: str = "terbaik"
 
 

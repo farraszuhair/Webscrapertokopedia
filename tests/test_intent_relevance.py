@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 import src.ai.learning as learning
+import src.ai.feedback_store as feedback_store
 import src.ai.memory_store as memory_store
 from src.ai.learning import save_feedback
-from src.ai.relevance import compute_rule_score, detect_query_intent, filter_relevance
+from src.ai.relevance import (
+    compute_rule_score,
+    detect_query_intent,
+    filter_relevance,
+    has_gaming_laptop_evidence,
+    is_obvious_junk_for_intent,
+)
 
 
 def _p(title: str) -> dict:
@@ -39,6 +48,44 @@ def test_laptop_gaming_intent_accepts_semantic_laptops_and_rejects_accessories()
     assert "HP Victus Gaming" in titles
     assert "Mouse gaming RGB" not in titles
     assert "RAM DDR4 laptop" not in titles
+
+
+@pytest.mark.parametrize("title", [
+    "Laptop Lenovo LOQ 15 Intel Core i7 13650HX RTX4050",
+    "HP VICTUS 15 RYZEN 5 RTX4050",
+    "ASUS TUF A15 RYZEN 7 RTX2050",
+    "Acer Nitro V 15 RTX3050",
+    "ASUS TUF GAMING A15 RTX2050",
+    "Lenovo LOQ RTX3050",
+    "HP Victus RTX3050",
+    "MSI THIN 15 RTX2050",
+    "ROG STRIX G513RC RTX3050",
+])
+def test_laptop_gaming_positive_evidence_is_never_obvious_junk(title):
+    product = _p(title)
+    assert has_gaming_laptop_evidence(title) is True
+    assert is_obvious_junk_for_intent("laptop gaming", product, "main_product") is False
+    assert compute_rule_score("laptop gaming", product, "main_product") >= 0.72
+
+
+@pytest.mark.parametrize("title", [
+    "Mouse gaming RGB",
+    "Keyboard gaming",
+    "Cooling pad laptop",
+    "Tas laptop gaming",
+    "Charger laptop Asus",
+    "LCD laptop",
+    "Baterai laptop",
+    "Skin sticker laptop",
+])
+def test_laptop_gaming_accessories_are_obvious_junk(title):
+    assert is_obvious_junk_for_intent("laptop gaming", _p(title), "main_product") is True
+
+
+def test_iphone_case_intent_obvious_junk_boundaries():
+    assert is_obvious_junk_for_intent("casing iphone 13", _p("casing iphone 13"), "accessory") is False
+    assert is_obvious_junk_for_intent("iphone 13", _p("casing iphone 13"), "main_product") is True
+    assert is_obvious_junk_for_intent("iphone 13", _p("iphone 13 128gb"), "main_product") is False
 
 
 def test_iphone_13_main_product_rejects_cases_and_chargers():
@@ -108,6 +155,7 @@ def test_feedback_is_scoped_by_query_intent(tmp_path, monkeypatch):
     monkeypatch.setattr(memory_store, "EXAMPLES_FILE", tmp_path / "examples.jsonl")
     monkeypatch.setattr(memory_store, "CATEGORY_RULES_FILE", tmp_path / "category_rules.json")
     monkeypatch.setattr(learning, "PRODUCT_FEEDBACK_FILE", tmp_path / "product_feedback.json")
+    monkeypatch.setattr(feedback_store, "FEEDBACK_DB_PATH", tmp_path / "marketspy_feedback.db")
 
     product = {"title": "Casing iPhone 13", "url": "https://tokopedia.com/case", "product_category": "accessory"}
     before_main = compute_rule_score("iphone 13", product, "main_product")

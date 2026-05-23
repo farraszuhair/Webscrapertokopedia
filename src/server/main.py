@@ -15,8 +15,10 @@ from src.utils.logger import log
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from src.ai.feedback_store import ensure_feedback_db
     from src.ai.model_registry import get_orchestrator_status
 
+    ensure_feedback_db()
     get_orchestrator_status(force_refresh=True)
     yield
     log("SERVER", "Shutting down, cleaning up...", "INFO")

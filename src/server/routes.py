@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from src.ai.feedback_store import feedback_summary_counts, reset_learning
 from src.ai.learning import save_feedback
 from src.ai.memory_store import FEEDBACK_FILE as LEGACY_FEEDBACK_FILE, read_jsonl
 from src.ai.model_registry import get_orchestrator_status
@@ -122,7 +123,7 @@ async def handle_feedback(req: FeedbackRequest):
         feedback_type = req.feedback_type or ("positive" if req.user_action == "benar" else "negative")
         user_action = req.user_action or ("benar" if feedback_type == "positive" else "salah")
         corrected_label = req.corrected_label or ("relevan" if feedback_type == "positive" else "tidak_relevan")
-        save_feedback(
+        result = save_feedback(
             query=req.query,
             product_id=req.product_id or str(product.get("id") or product.get("url") or "unknown"),
             product_title=req.product_title or str(product.get("title") or ""),
@@ -136,12 +137,23 @@ async def handle_feedback(req: FeedbackRequest):
             query_intent=req.query_intent,
             feedback_type=feedback_type,
             rule_score=req.rule_score,
+            semantic_score=req.semantic_score,
+            combined_score=req.combined_score,
+            learned_adjustment=req.learned_adjustment,
             sort_mode=req.sort_mode,
             decision_source=str(getattr(req, "decision_source", "") or product.get("decision_source") or product.get("ai_source") or ""),
+            learning_scope_hint=req.learning_scope_hint,
+            model_used=req.model_used,
+            ai_reason=req.ai_reason,
         )
         if req.search_id:
             save_json_debug(req.search_id, "feedback_saved.json", req.model_dump())
-        return {"ok": True, "success": True, "message": "Feedback saved"}
+        return {
+            "ok": True,
+            "success": True,
+            "message": "Feedback saved",
+            "learning_updated": bool(result.get("learning_updated")),
+        }
     except Exception as exc:
         log("API", f"Feedback save error: {exc}", "ERROR")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -152,11 +164,13 @@ async def feedback_summary():
     records = read_jsonl(LEGACY_FEEDBACK_FILE, limit=500)
     positives = sum(1 for item in records if item.get("feedback_type") == "positive" or item.get("user_action") == "benar")
     negatives = sum(1 for item in records if item.get("feedback_type") == "negative" or item.get("user_action") == "salah")
+    sqlite_counts = feedback_summary_counts()
     return {
         "ok": True,
         "total": len(records),
         "positive": positives,
         "negative": negatives,
+        **sqlite_counts,
     }
 
 
@@ -166,6 +180,24 @@ async def handle_ai_reset():
     if reset_ai_memory():
         return {"success": True, "message": "AI memory reset. Ollama model untouched."}
     raise HTTPException(status_code=500, detail="Failed to reset AI memory.")
+
+
+@router.post("/api/learning/reset")
+async def handle_learning_reset(payload: dict[str, Any]):
+    """Reset scoped SQLite learning memory."""
+    try:
+        scope = str(payload.get("scope") or "all")
+        result = reset_learning(
+            scope=scope,
+            query=payload.get("query"),
+            constraint_key=payload.get("constraint_key"),
+        )
+        return {"ok": True, "success": True, "message": "Learning reset", **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        log("API", f"Learning reset error: {exc}", "ERROR")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/api/preflight/{engine}")
@@ -565,6 +597,17 @@ async def _filter_pipeline(
         "candidate_pool": len(candidates),
         "ai_input_count": len(candidates),
         "target_display": target_display,
+        "query_constraints": ai_meta.get("query_constraints", {}),
+        "feedback_examples_loaded": ai_meta.get("feedback_examples_loaded", 0),
+        "learned_patterns_loaded": ai_meta.get("learned_patterns_loaded", 0),
+        "query_scoped_patterns": ai_meta.get("query_scoped_patterns", 0),
+        "constraint_scoped_patterns": ai_meta.get("constraint_scoped_patterns", 0),
+        "intent_scoped_patterns": ai_meta.get("intent_scoped_patterns", 0),
+        "global_patterns": ai_meta.get("global_patterns", 0),
+        "constraint_mismatch_products": ai_meta.get("constraint_mismatch_products", 0),
+        "learning_adjusted_products": ai_meta.get("learning_adjusted_products", 0),
+        "learned_positive_matches": ai_meta.get("learned_positive_matches", 0),
+        "learned_negative_matches": ai_meta.get("learned_negative_matches", 0),
         "rule_accepted": ai_meta.get("rule_accepted", ai_meta.get("rule_accepted_count", 0)),
         "rule_rejected": ai_meta.get("rule_rejected", ai_meta.get("rule_rejected_count", 0)),
         "borderline_candidates": ai_meta.get("borderline_candidates", 0),

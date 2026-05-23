@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 import src.ai.memory_store as memory_store
+from src.ai.feedback_store import reset_learning
 from src.config import FEEDBACK_FILE as PRODUCT_FEEDBACK_FILE
 from src.utils.logger import log
 
@@ -36,8 +37,9 @@ def reset_ai_memory() -> bool:
             json.dumps({"version": 1, "rules": []}, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        reset_learning(scope="all")
 
-        log("AI_RESET", "AI memory cleared: feedback.jsonl, product_feedback.json, examples.jsonl, category_rules.json", "OK")
+        log("AI_RESET", "AI memory cleared: feedback.jsonl, product_feedback.json, examples.jsonl, category_rules.json, marketspy_feedback.db", "OK")
         return True
 
     except Exception as exc:

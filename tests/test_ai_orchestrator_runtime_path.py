@@ -186,7 +186,7 @@ async def test_requested_fifty_fills_from_weak_safe_candidates(monkeypatch):
     assert result.meta["displayed"] == 50
     assert result.meta["accepted_before_fallback"] == 21
     assert result.meta["fallback_added"] == 29
-    assert result.meta["weak_fallback_candidates_count"] == 29
+    assert result.meta["fallback_candidates_count"] == 29
     assert result.meta["ai_checked"] == 0
     assert result.meta["ai_skip_reason"] == "AI disabled"
 
@@ -248,6 +248,55 @@ async def test_classifier_limit_sends_only_top_six_borderline_products(monkeypat
     assert result.meta["fallback_added"] == 14
     assert result.meta["displayed"] == 20
     assert any(product["decision_source"] == "fallback_not_classified_cpu_limit" for product in result.products)
+
+
+@pytest.mark.asyncio
+async def test_ai_reject_cannot_drop_positive_laptop_evidence(monkeypatch):
+    monkeypatch.setattr(
+        ai_filter,
+        "get_orchestrator_status",
+        lambda: {
+            "ok": True,
+            "installed": ["llama3.2:3b"],
+            "supported": ["llama3.2:3b"],
+            "missing": [],
+            "capabilities": {"semantic": False, "balanced_classifier": False, "fast_classifier": True, "json_repair": False},
+            "classifier": "llama3.2:3b",
+            "message": "AI Orchestrator ready",
+        },
+    )
+
+    async def fake_classify(*args, **kwargs):
+        return {
+            "accepted": False,
+            "confidence": 0.90,
+            "reason": "fake rejection",
+            "category_match": "no",
+            "decision_source": "ai_orchestrator",
+            "_chat_ok": True,
+            "_fallback_used": False,
+        }
+
+    monkeypatch.setattr(ai_filter, "classify_borderline_product", fake_classify)
+    monkeypatch.setattr(relevance, "compute_rule_score", lambda query, product, intent=None: 0.72)
+
+    result = await filter_relevance(
+        "laptop gaming",
+        [{
+            "id": "msi-modern",
+            "title": "MSI Modern 14 Core i7 16GB 512GB",
+            "price": 9_500_000,
+            "price_value": 9_500_000,
+            "url": "https://tokopedia.test/msi-modern",
+            "_requested_target": 1,
+            "_budget_valid": 1,
+        }],
+        use_ai=True,
+    )
+
+    assert result.meta["displayed"] == 1
+    assert result.meta["ai_rejected"] == 1
+    assert result.products[0]["decision_source"] == "fallback_after_ai_reject_positive_laptop"
 
 
 @pytest.mark.asyncio

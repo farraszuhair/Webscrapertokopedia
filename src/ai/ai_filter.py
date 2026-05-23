@@ -122,6 +122,8 @@ def _decision_priority(product: dict[str, Any]) -> int:
         "rule_accept": 1,
         "fallback_expansion": 2,
         "fallback_after_ai_reject": 3,
+        "fallback_after_ai_reject_positive_laptop": 3,
+        "rescued_false_obvious_junk": 3,
         "fallback_ai_timeout": 4,
         "fallback_ai_circuit_open": 5,
         "fallback_not_classified_cpu_limit": 6,
@@ -185,7 +187,13 @@ def _product_price_value(product: dict[str, Any]) -> int:
 
 
 def _is_valid_product(product: dict[str, Any]) -> bool:
-    return bool(str(product.get("title") or "").strip()) and _product_price_value(product) > 0
+    title = str(product.get("title") or product.get("name") or "").strip()
+    if len(title) < 3:
+        return False
+    identifier = str(product.get("id") or product.get("url") or product.get("product_url") or "").strip()
+    if identifier:
+        return True
+    return _product_price_value(product) > 0
 
 
 def _debug_sample(product: dict[str, Any]) -> dict[str, Any]:
@@ -199,7 +207,17 @@ def _debug_sample(product: dict[str, Any]) -> dict[str, Any]:
         "reason": product.get("reason") or product.get("ai_reason"),
         "rule_score": product.get("rule_score", ctx.get("rule_score")),
         "semantic_score": product.get("semantic_score", ctx.get("semantic_score")),
+        "base_combined_score": product.get("base_combined_score", ctx.get("base_combined_score")),
+        "constraint_penalty": product.get("constraint_penalty", ctx.get("constraint_penalty")),
         "combined_score": product.get("combined_score", ctx.get("combined_score")),
+        "query_constraints": product.get("query_constraints", ctx.get("query_constraints")),
+        "product_constraints": product.get("product_constraints", ctx.get("product_constraints")),
+        "constraint_mismatch_reasons": product.get(
+            "constraint_mismatch_reasons",
+            ctx.get("constraint_mismatch_reasons", []),
+        ),
+        "learned_adjustment": product.get("learned_adjustment", ctx.get("learned_adjustment", 0.0)),
+        "learned_matches": product.get("learned_matches", ctx.get("learned_matches", [])),
     }
 
 
@@ -267,16 +285,38 @@ async def filter_products(
     search_id: str | None = None,
 ) -> IntentFilterResult:
     from src.ai.relevance import (
+        apply_laptop_gaming_boost,
         compute_rule_score,
         detect_product_category,
         detect_query_intent,
+        has_gaming_laptop_evidence,
         is_obvious_junk_for_intent,
         is_obvious_match_for_intent,
+        is_laptop_gaming_query,
+    )
+    from src.ai.feedback_store import (
+        compute_constraint_mismatch_penalty,
+        compute_learned_adjustment,
+        extract_query_constraints,
+        load_feedback_context,
+        load_learned_patterns,
     )
 
     query_intent = detect_query_intent(query)
+    query_constraints = extract_query_constraints(query)
+    learned_patterns = load_learned_patterns(query, query_intent, query_constraints, limit=200)
+    feedback_context = load_feedback_context(query, query_intent, query_constraints, limit=12)
+    feedback_examples_loaded = int(feedback_context.get("feedback_examples_loaded", 0) or 0)
+    learned_patterns_loaded = len(learned_patterns)
+    query_scoped_patterns = sum(1 for p in learned_patterns if p.get("scope") == "exact_query")
+    constraint_scoped_patterns = sum(1 for p in learned_patterns if p.get("scope") == "query_constraint")
+    intent_scoped_patterns = sum(1 for p in learned_patterns if p.get("scope") == "query_intent")
+    global_patterns = sum(1 for p in learned_patterns if p.get("scope") == "global")
     orchestrator_status = get_orchestrator_status()
-    selected_model = orchestrator_status.get("classifier") or get_best_classifier_model(orchestrator_status.get("installed") or None)
+    installed_models = orchestrator_status.get("installed")
+    selected_model = orchestrator_status.get("classifier") or get_best_classifier_model(
+        installed_models if installed_models is not None else None
+    )
     classifier_installed = bool(selected_model)
     target_count = int(products[0].get("_requested_target", 50) or 50) if products else 50
     target_display = min(target_count, len(products or []))
@@ -296,6 +336,17 @@ async def filter_products(
     log("AI_ORCH", f"ai_enabled={bool(use_ai)}", "INFO")
     log("AI_ORCH", f"installed_models={orchestrator_status.get('installed', [])}", "INFO")
     log("AI_ORCH", f"selected_classifier={selected_model or 'none'}", "INFO")
+    log(
+        "AI_LEARN",
+        (
+            f"feedback_examples_loaded={feedback_examples_loaded} "
+            f"learned_patterns_loaded={learned_patterns_loaded} "
+            f"query_scoped_patterns={query_scoped_patterns} "
+            f"constraint_scoped_patterns={constraint_scoped_patterns} "
+            f"global_patterns={global_patterns}"
+        ),
+        "INFO",
+    )
     
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -320,6 +371,12 @@ async def filter_products(
     ai_skip_reason_override: str | None = None
     fallback_rejected_as_junk = 0
     rejected_reasons_histogram: Counter[str] = Counter()
+    rejected_as_obvious_junk_count_before_rescue = 0
+    rescued_false_obvious_junk_count = 0
+    constraint_mismatch_products = 0
+    learning_adjusted_products = 0
+    learned_positive_matches = 0
+    learned_negative_matches = 0
 
     def record_rejection(reason: str, product: dict[str, Any]) -> None:
         rejected_reasons_histogram[reason] += 1
@@ -337,6 +394,7 @@ async def filter_products(
 
     for product in list(products or []):
         product_category = detect_product_category(product)
+        product_constraints = extract_query_constraints(str(product.get("title") or product.get("name") or ""))
         rule_score = compute_rule_score(query, product, query_intent)
         semantic_score = None
         
@@ -356,17 +414,57 @@ async def filter_products(
                 semantic_score = None
 
         combined_score = combine_rule_and_semantic_score(rule_score, semantic_score)
+        combined_score = apply_laptop_gaming_boost(query, product, combined_score)
+        base_combined_score = combined_score
+        constraint_penalty, constraint_reasons = compute_constraint_mismatch_penalty(
+            query_constraints,
+            product_constraints,
+        )
+        learned_adjustment, learned_matches = compute_learned_adjustment(
+            query,
+            query_intent,
+            query_constraints,
+            product,
+            learned_patterns,
+        )
+        if constraint_reasons:
+            constraint_mismatch_products += 1
+        if abs(learned_adjustment) > 0.0001:
+            learning_adjusted_products += 1
+        if any(float(match.get("weight", 0) or 0) > 0 for match in learned_matches):
+            learned_positive_matches += 1
+        if any(float(match.get("weight", 0) or 0) < 0 for match in learned_matches):
+            learned_negative_matches += 1
+        combined_score = round(max(0.0, min(1.0, combined_score + constraint_penalty + learned_adjustment)), 3)
+        positive_laptop_evidence = is_laptop_gaming_query(query) and has_gaming_laptop_evidence(str(product.get("title") or ""))
         obvious_junk = is_obvious_junk_for_intent(query, product, query_intent)
+        if positive_laptop_evidence:
+            obvious_junk = False
                 
         product["_rule_context"] = {
             "query_intent": query_intent,
             "product_category": product_category,
             "rule_score": rule_score,
             "semantic_score": semantic_score,
+            "base_combined_score": base_combined_score,
+            "constraint_penalty": constraint_penalty,
+            "constraint_mismatch_reasons": constraint_reasons,
+            "learned_adjustment": learned_adjustment,
+            "learned_matches": learned_matches,
             "combined_score": combined_score,
             "obvious_junk": obvious_junk,
+            "positive_laptop_evidence": positive_laptop_evidence,
+            "query_constraints": query_constraints,
+            "product_constraints": product_constraints,
         }
         product["rule_score"] = round(rule_score, 3)
+        product["base_combined_score"] = round(base_combined_score, 3)
+        product["constraint_penalty"] = round(constraint_penalty, 3)
+        product["constraint_mismatch_reasons"] = constraint_reasons
+        product["query_constraints"] = query_constraints
+        product["product_constraints"] = product_constraints
+        product["learned_adjustment"] = round(learned_adjustment, 3)
+        product["learned_matches"] = learned_matches
         product["combined_score"] = round(combined_score, 3)
 
         obvious_match = is_obvious_match_for_intent(query, product, query_intent)
@@ -387,6 +485,7 @@ async def filter_products(
             continue
 
         if obvious_junk and combined_score < RULE_REJECT_THRESHOLD:
+            log("REJECT", f'reason=obvious_junk title="{str(product.get("title") or "")[:180]}" positive_laptop_evidence={str(positive_laptop_evidence).lower()}', "WARN")
             rule_rejected += 1
             rejected_as_obvious_junk_count += 1
             record_rejection("obvious_junk", product)
@@ -427,6 +526,7 @@ async def filter_products(
 
         reject_reason = "obvious_junk" if obvious_junk else "invalid_product_data"
         if obvious_junk:
+            log("REJECT", f'reason=obvious_junk title="{str(product.get("title") or "")[:180]}" positive_laptop_evidence={str(positive_laptop_evidence).lower()}', "WARN")
             rejected_as_obvious_junk_count += 1
         record_rejection(reject_reason, product)
         rejected.append(_mark_product(
@@ -441,6 +541,42 @@ async def filter_products(
             category_match=reject_reason,
             combined_score=combined_score,
         ))
+
+    rejected_as_obvious_junk_count_before_rescue = rejected_as_obvious_junk_count
+    rescued_false_junk: list[dict[str, Any]] = []
+    remaining_rejected: list[dict[str, Any]] = []
+    for product in rejected:
+        if (
+            product.get("reject_reason") == "obvious_junk"
+            and is_laptop_gaming_query(query)
+            and has_gaming_laptop_evidence(str(product.get("title") or ""))
+        ):
+            product["decision_source"] = "rescued_false_obvious_junk"
+            product["ai_source"] = "rescued_false_obvious_junk"
+            product["reason"] = "Rescued because title has valid gaming laptop evidence"
+            product["ai_reason"] = product["reason"]
+            product["confidence"] = round(max(
+                _as_number(product.get("combined_score"), 0.0),
+                _as_number(product.get("semantic_score"), 0.0) * 0.85,
+                0.55,
+            ), 3)
+            product["ai_confidence"] = product["confidence"]
+            rescued_false_junk.append(product)
+            continue
+        remaining_rejected.append(product)
+    if rescued_false_junk:
+        rejected[:] = remaining_rejected
+        fallback_candidates.extend(rescued_false_junk)
+        rejected_as_obvious_junk_count = max(0, rejected_as_obvious_junk_count - len(rescued_false_junk))
+        rejected_reasons_histogram["obvious_junk"] = max(
+            0,
+            rejected_reasons_histogram.get("obvious_junk", 0) - len(rescued_false_junk),
+        )
+    rescued_false_obvious_junk_count = len(rescued_false_junk)
+    log("RELEVANCE", f"query={query} target_display={target_display}", "INFO")
+    log("RELEVANCE", f"rejected_as_obvious_junk_before_rescue={rejected_as_obvious_junk_count_before_rescue}", "INFO")
+    log("RELEVANCE", f"rescued_false_obvious_junk={rescued_false_obvious_junk_count}", "INFO")
+    log("RELEVANCE", f"fallback_candidates_after_rescue={len(fallback_candidates)}", "INFO")
 
     def apply_fallback_expansion() -> int:
         nonlocal accepted_before_fallback, fallback_rejected_as_junk, rejected_as_obvious_junk_count
@@ -468,7 +604,8 @@ async def filter_products(
             score = _as_number(ctx.get("rule_score", product.get("rule_score")), 0.0)
             semantic = _as_number(ctx.get("semantic_score", product.get("semantic_score")), 0.0)
             existing_confidence = _as_number(product.get("confidence", product.get("relevance_score", product.get("ai_confidence", 0))), 0.0)
-            if is_obvious_junk_for_intent(query, product, query_intent):
+            positive_laptop_evidence = is_laptop_gaming_query(query) and has_gaming_laptop_evidence(str(product.get("title") or ""))
+            if not positive_laptop_evidence and is_obvious_junk_for_intent(query, product, query_intent):
                 fallback_rejected_as_junk += 1
                 rejected_as_obvious_junk_count += 1
                 record_rejection("obvious_junk", product)
@@ -599,6 +736,17 @@ async def filter_products(
             "ai_input_count": len(products),
             "target_display": target_display,
             "query_intent": query_intent,
+            "query_constraints": query_constraints,
+            "feedback_examples_loaded": feedback_examples_loaded,
+            "learned_patterns_loaded": learned_patterns_loaded,
+            "query_scoped_patterns": query_scoped_patterns,
+            "constraint_scoped_patterns": constraint_scoped_patterns,
+            "intent_scoped_patterns": intent_scoped_patterns,
+            "global_patterns": global_patterns,
+            "constraint_mismatch_products": constraint_mismatch_products,
+            "learning_adjusted_products": learning_adjusted_products,
+            "learned_positive_matches": learned_positive_matches,
+            "learned_negative_matches": learned_negative_matches,
             "selected_model": selected_model if use_ai else None,
             "ai_status": status,
             "ai_orchestrator": orchestrator_status,
@@ -610,6 +758,9 @@ async def filter_products(
             "rule_rejected_count": rule_rejected,
             "rejected_as_obvious_junk": rejected_as_obvious_junk_count,
             "rejected_as_obvious_junk_count": rejected_as_obvious_junk_count,
+            "rejected_as_obvious_junk_count_before_rescue": rejected_as_obvious_junk_count_before_rescue,
+            "rescued_false_obvious_junk": rescued_false_obvious_junk_count,
+            "fallback_candidates_count_after_rescue": len(fallback_candidates),
             "rejected_reasons_histogram": dict(rejected_reasons_histogram),
             "semantic_checked_count": semantic_checked,
             "semantic_checked": semantic_checked,
@@ -664,6 +815,7 @@ async def filter_products(
         log("PIPELINE", f"fallback_candidates={len(fallback_candidates)} weak_fallback_candidates={len(weak_fallback_candidates)}", "INFO")
         log("PIPELINE", f"fallback_added={fallback_expanded}", "INFO")
         log("PIPELINE", f"final_displayed={final_displayed}", "INFO")
+        log("PIPELINE", f"accepted_before_fallback={accepted_before_fallback} fallback_added={fallback_expanded} final_displayed={final_displayed}", "INFO")
         log("PIPELINE", f"rejected_as_obvious_junk={rejected_as_obvious_junk_count}", "INFO")
         log(
             "PIPELINE",
@@ -720,12 +872,26 @@ async def filter_products(
             "requested": target_count,
             "candidate_pool_count": len(products),
             "target_display": target_display,
+            "query_constraints": query_constraints,
+            "feedback_examples_loaded": feedback_examples_loaded,
+            "learned_patterns_loaded": learned_patterns_loaded,
+            "query_scoped_patterns": query_scoped_patterns,
+            "constraint_scoped_patterns": constraint_scoped_patterns,
+            "intent_scoped_patterns": intent_scoped_patterns,
+            "global_patterns": global_patterns,
+            "constraint_mismatch_products": constraint_mismatch_products,
+            "learning_adjusted_products": learning_adjusted_products,
+            "learned_positive_matches": learned_positive_matches,
+            "learned_negative_matches": learned_negative_matches,
             "accepted_before_fallback": accepted_before_fallback,
             "fallback_candidates_count": len(fallback_candidates),
             "weak_fallback_candidates_count": len(weak_fallback_candidates),
             "fallback_added": fallback_expanded,
             "final_displayed": len(final_products),
             "rejected_as_obvious_junk_count": rejected_as_obvious_junk_count,
+            "rejected_as_obvious_junk_count_before_rescue": rejected_as_obvious_junk_count_before_rescue,
+            "rescued_false_obvious_junk": rescued_false_obvious_junk_count,
+            "fallback_candidates_count_after_rescue": len(fallback_candidates),
             "rejected_reasons_histogram": dict(rejected_reasons_histogram),
             "semantic_checked": semantic_checked,
             "classifier_checked": checked,
@@ -835,6 +1001,8 @@ async def filter_products(
         combined_score = _as_number(ctx.get("combined_score", product.get("combined_score")), rule_score)
         semantic_score = _as_number(ctx.get("semantic_score", product.get("semantic_score")), 0.0)
         obvious_junk = bool(ctx.get("obvious_junk"))
+        if is_laptop_gaming_query(query) and has_gaming_laptop_evidence(str(product.get("title") or "")):
+            obvious_junk = False
         if _is_safe_fallback_candidate(product, rule_score, obvious_junk):
             product["rule_score"] = round(rule_score, 3)
             product["combined_score"] = round(combined_score, 3)
@@ -878,6 +1046,9 @@ async def filter_products(
             combined_score = _as_number(ctx.get("combined_score", product.get("combined_score")), rule_score)
             semantic_score = _as_number(ctx.get("semantic_score", product.get("semantic_score")), 0.0)
             obvious_junk = bool(ctx.get("obvious_junk"))
+            positive_laptop_evidence = is_laptop_gaming_query(query) and has_gaming_laptop_evidence(str(product.get("title") or ""))
+            if positive_laptop_evidence:
+                obvious_junk = False
 
             if ai_circuit_open:
                 if _is_safe_fallback_candidate(product, rule_score, obvious_junk):
@@ -983,7 +1154,15 @@ async def filter_products(
                 ai_rejected += 1
                 marked["decision_source"] = "ai_reject"
                 marked["ai_source"] = "ai_reject"
-                if _is_safe_fallback_candidate(marked, rule_score, obvious_junk):
+                if positive_laptop_evidence and _is_valid_product(marked):
+                    marked["decision_source"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["ai_source"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["reason"] = "AI rejected but product has valid gaming laptop evidence"
+                    marked["ai_reason"] = marked["reason"]
+                    marked["rule_score"] = round(rule_score, 3)
+                    marked["combined_score"] = round(combined_score, 3)
+                    fallback_candidates.append(marked)
+                elif _is_safe_fallback_candidate(marked, rule_score, obvious_junk):
                     marked["decision_source"] = "fallback_after_ai_reject"
                     marked["rule_score"] = round(rule_score, 3)
                     marked["combined_score"] = round(combined_score, 3)

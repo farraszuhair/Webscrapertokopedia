@@ -3,6 +3,7 @@ Automatic AI Orchestrator for borderline product relevance checks.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from src.ai.json_repair import repair_json_or_fallback
@@ -23,15 +24,42 @@ def should_call_llm(rule_score: float, obvious_junk: bool) -> bool:
 
 
 def build_classifier_prompt(query: str, query_intent: str, product: dict[str, Any]) -> str:
+    from src.ai.feedback_store import extract_query_constraints, load_feedback_context
+
+    query_constraints = extract_query_constraints(query)
+    product_constraints = extract_query_constraints(str(product.get("title") or ""))
+    feedback_memory = load_feedback_context(query, query_intent, query_constraints, limit=12)
+    positive_examples = json.dumps(feedback_memory.get("positive_examples", []), ensure_ascii=True, default=str)
+    negative_examples = json.dumps(feedback_memory.get("negative_examples", []), ensure_ascii=True, default=str)
+    learned_patterns = json.dumps(feedback_memory.get("learned_patterns", []), ensure_ascii=True, default=str)
+    product_constraints_json = json.dumps(product_constraints, ensure_ascii=True, default=str)
+    query_constraints_json = json.dumps(query_constraints, ensure_ascii=True, default=str)
     return f"""Query: {query}
 Intent: {query_intent}
+Query constraints: {query_constraints_json}
+
+User feedback memory:
+Positive examples:
+{positive_examples}
+
+Negative examples:
+{negative_examples}
+
+Learned patterns:
+{learned_patterns}
 
 Product:
 Title: {product.get("title", "")}
 Price: {product.get("price_raw") or product.get("price_text") or product.get("price", "")}
 Store: {product.get("shop_name") or product.get("shop") or ""}
+Product constraints: {product_constraints_json}
 
 Decision rules:
+- Follow user feedback memory, but respect scope.
+- Negative feedback from another query must not globally ban a product.
+- If query wants RTX 5060 and product has RTX 4060, mark spec mismatch.
+- If query wants RTX 4060 and product has RTX 4060, do not apply RTX 5060 negative feedback.
+- If unsure, accepted can be true with lower confidence instead of hard rejecting.
 - Main product query rejects accessories/spare parts.
 - Accessory query accepts matching accessories.
 - Sparepart query accepts matching spare parts.
@@ -39,7 +67,7 @@ Decision rules:
 - casing iphone accepts case/casing/softcase/hardcase for that iPhone.
 
 Return exactly:
-{{"accepted":true,"confidence":0.0,"reason":"short","category_match":"main/accessory/sparepart/no"}}
+{{"accepted":true,"confidence":0.0,"reason":"short","category_match":"main/accessory/sparepart/no","learned_match":""}}
 No markdown.
 """
 

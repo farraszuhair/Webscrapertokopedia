@@ -1191,6 +1191,11 @@ html, body {
   line-height: 1;
 }
 
+.feedback-accepted-badge {
+  background: rgba(34,197,94,.14);
+  color: #86efac;
+}
+
 .product-footer {
   padding: 8px 14px 14px;
   display: flex;
@@ -1255,6 +1260,16 @@ html, body {
 .product-card.feedback-sent {
   border-color: var(--green);
   box-shadow: 0 0 0 2px rgba(34,197,94,.2);
+  opacity: .92;
+}
+
+.cat-checkbox small {
+  color: var(--text-dim);
+  display: block;
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 3px 0 0 24px;
+  text-transform: none;
 }
 
 /* AI score + categories on card */

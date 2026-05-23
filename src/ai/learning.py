@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import FEEDBACK_FILE as PRODUCT_FEEDBACK_FILE
+from src.ai.feedback_store import save_feedback_event
 import src.ai.memory_store as memory_store
 from src.ai.memory_store import (
     CATEGORY_RULES_FILE,
@@ -59,9 +60,15 @@ def save_feedback(
     query_intent: str | None = None,
     feedback_type: str | None = None,
     rule_score: float | None = None,
+    semantic_score: float | None = None,
+    combined_score: float | None = None,
+    learned_adjustment: float | None = None,
     sort_mode: str | None = None,
     decision_source: str | None = None,
-) -> None:
+    learning_scope_hint: str | None = None,
+    model_used: str | None = None,
+    ai_reason: str | None = None,
+) -> dict[str, Any]:
     """
     Save full feedback record to feedback.jsonl and examples.jsonl.
     Also update category_rules.json when user teaches AI about a category.
@@ -107,8 +114,14 @@ def save_feedback(
         "reasons": selected_reasons,
         "note": custom_reason,
         "rule_score": rule_score or 0.0,
+        "semantic_score": semantic_score if semantic_score is not None else product.get("semantic_score", 0.0),
+        "combined_score": combined_score if combined_score is not None else product.get("combined_score", 0.0),
+        "learned_adjustment": learned_adjustment if learned_adjustment is not None else product.get("learned_adjustment", 0.0),
+        "learning_scope_hint": learning_scope_hint,
         "sort_mode": sort_mode or "terbaik",
         "decision_source": decision_source or product.get("decision_source") or product.get("ai_source") or "",
+        "model_used": model_used or product.get("_model") or "",
+        "ai_reason": ai_reason or product.get("ai_reason") or product.get("reason") or "",
         "ai_label": ai_label,
         "ai_confidence": ai_confidence,
         "user_action": user_action,
@@ -137,7 +150,36 @@ def save_feedback(
     # Update category_rules.json for systematic patterns
     _update_category_rules(query, product_title, user_action, selected_reasons)
 
+    sqlite_result = save_feedback_event(
+        query=query,
+        query_intent=query_intent,
+        product={
+            **product,
+            "title": product_title,
+            "price_value": product.get("price_value") or product.get("price") or 0,
+            "decision_source": record["decision_source"],
+            "confidence": ai_confidence,
+            "rule_score": record["rule_score"],
+            "semantic_score": record["semantic_score"],
+            "combined_score": record["combined_score"],
+            "learned_adjustment": record["learned_adjustment"],
+        },
+        feedback_type=feedback_type,
+        reasons=selected_reasons,
+        note=custom_reason,
+        learning_scope_hint=learning_scope_hint,
+        decision_source=record["decision_source"],
+        confidence=ai_confidence,
+        rule_score=record["rule_score"],
+        semantic_score=record["semantic_score"],
+        combined_score=record["combined_score"],
+        learned_adjustment=record["learned_adjustment"],
+        model_used=record["model_used"],
+        ai_reason=record["ai_reason"],
+    )
+
     log("AI_LEARN", f"Saved feedback '{user_action}' categories={selected_reasons} for: {product_title[:60]}", "OK")
+    return sqlite_result
 
 
 def _append_product_feedback_json(record: dict[str, Any]) -> None:

@@ -9,14 +9,15 @@
 
 const FEEDBACK_REASONS = [
   'Produk tidak relevan',
+  'Cuma aksesoris',
+  'Spesifikasi tidak sesuai query',
   'Harga tidak sesuai',
   'Nama produk salah',
-  'Bukan produk utama / cuma aksesoris',
-  'Duplikat',
-  'Toko tidak terpercaya',
   'Gambar tidak sesuai',
-  'Produk kosong / data tidak lengkap',
+  'Toko tidak terpercaya',
+  'Duplikat',
   'Bukan sesuai intent pencarian',
+  'Data tidak lengkap',
   'Lainnya',
 ];
 
@@ -54,6 +55,7 @@ class ScraperApp {
     this.bindBudgetInfo();
     this.bindEnter();
     this.bindResetAI();
+    this.bindResetLearning();
     this.bindQuickSort();
     this._createFeedbackModal();
     this.fetchAiStatus();
@@ -167,6 +169,35 @@ class ScraperApp {
         btn.textContent = data.success ? 'Reset OK' : 'Reset gagal';
       } catch (err) {
         console.error('Reset AI error:', err);
+        btn.textContent = 'Reset error';
+      } finally {
+        setTimeout(() => {
+          btn.textContent = oldText;
+          btn.disabled = false;
+        }, 1200);
+      }
+    });
+  }
+
+  bindResetLearning() {
+    const btn = this.$('reset-learning-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (!window.confirm('Yakin reset pembelajaran AI?')) return;
+      const oldText = btn.textContent;
+      try {
+        btn.disabled = true;
+        btn.textContent = 'Resetting...';
+        const res = await fetch('/api/learning/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'all' }),
+        });
+        const data = await res.json();
+        btn.textContent = data.success ? 'Reset OK' : 'Reset gagal';
+        this.showToast(data.success ? 'Learning direset' : 'Reset learning gagal');
+      } catch (err) {
+        console.error('Reset learning error:', err);
         btn.textContent = 'Reset error';
       } finally {
         setTimeout(() => {
@@ -1093,7 +1124,10 @@ class ScraperApp {
     FEEDBACK_REASONS.forEach((reason) => {
       const item = document.createElement('label');
       item.className = 'cat-checkbox';
-      item.innerHTML = `<input type="checkbox" name="reason" value="${this.esc(reason)}"><span>${this.esc(reason)}</span>`;
+      const help = reason === 'Spesifikasi tidak sesuai query'
+        ? '<small>Contoh: cari RTX 5060 tapi yang muncul RTX 4060.</small>'
+        : '';
+      item.innerHTML = `<input type="checkbox" name="reason" value="${this.esc(reason)}"><span>${this.esc(reason)}</span>${help}`;
       reasonsDiv.appendChild(item);
     });
 
@@ -1137,9 +1171,21 @@ class ScraperApp {
     this._closeFeedbackModal();
   }
 
+  _learningScopeHint(feedback) {
+    const reasons = feedback.selectedReasons || [];
+    if ((feedback.feedbackType || '').toLowerCase() === 'positive') return 'exact_query';
+    if (reasons.includes('Spesifikasi tidak sesuai query')) return 'query_constraint';
+    if (reasons.includes('Cuma aksesoris') || reasons.includes('Bukan sesuai intent pencarian')) return 'query_intent';
+    if (reasons.includes('Harga tidak sesuai')) return 'query_constraint';
+    if (reasons.includes('Data tidak lengkap')) return 'exact_query';
+    return 'exact_query';
+  }
+
   async _submitFeedback(productId, feedback) {
     const product = this.state.products.find((p) => String(p.id || p.url || p.title || '') === String(productId));
     if (!product) return;
+    const selectedReasons = feedback.selectedReasons || [];
+    const learningScopeHint = this._learningScopeHint(feedback);
 
     const payload = {
       search_id: this.state.searchId || 'unknown',
@@ -1147,25 +1193,41 @@ class ScraperApp {
       product_title: product.title || '',
       user_action: feedback.userAction,
       feedback_type: feedback.feedbackType || (feedback.userAction === 'benar' ? 'positive' : 'negative'),
-      selected_reasons: feedback.selectedReasons || [],
-      reasons: feedback.selectedReasons || [],
+      selected_reasons: selectedReasons,
+      reasons: selectedReasons,
       custom_reason: feedback.customReason || '',
       note: feedback.customReason || '',
       corrected_label: feedback.correctedLabel,
       ai_label: product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan'),
       ai_confidence: product.ai_confidence ?? product.relevance_score ?? 0,
       rule_score: product.rule_score ?? 0,
+      semantic_score: product.semantic_score ?? 0,
+      combined_score: product.combined_score ?? 0,
+      learned_adjustment: product.learned_adjustment ?? 0,
+      confidence: product.confidence ?? product.ai_confidence ?? product.relevance_score ?? 0,
+      learning_scope_hint: learningScopeHint,
+      model_used: product._model || product.model_used || '',
+      ai_reason: product.ai_reason || product.reason || '',
       sort_mode: this.state.sortMode || 'terbaik',
       decision_source: product.ai_source || product.decision_source || '',
       query_intent: product.query_intent || this.state.metadata.query_intent || '',
       product: {
         id: product.id || '',
         title: product.title || '',
+        price_value: product.price_value ?? product.price ?? 0,
         price: product.price_value ?? product.price ?? 0,
         store: product.shop_name || product.shop || '',
         url: product.url || product.product_url || '',
         image: product.image || product.image_url || '',
         product_category: product.product_category || '',
+        decision_source: product.ai_source || product.decision_source || '',
+        confidence: product.confidence ?? product.ai_confidence ?? product.relevance_score ?? 0,
+        rule_score: product.rule_score ?? 0,
+        semantic_score: product.semantic_score ?? 0,
+        combined_score: product.combined_score ?? 0,
+        learned_adjustment: product.learned_adjustment ?? 0,
+        query_constraints: product.query_constraints || {},
+        product_constraints: product.product_constraints || {},
       },
       query: this.state.query || '',
       timestamp: new Date().toISOString(),
@@ -1187,7 +1249,14 @@ class ScraperApp {
       if (card) {
         card.classList.add('feedback-sent');
         card.title = `Feedback: ${feedback.userAction}`;
+        const badges = card.querySelector('.product-badges');
+        if (badges && !badges.querySelector('.feedback-accepted-badge')) {
+          const badge = this.createBadge('Feedback diterima');
+          badge.classList.add('feedback-accepted-badge');
+          badges.appendChild(badge);
+        }
       }
+      this.showToast('Feedback disimpan');
     } catch (err) {
       console.error('Feedback error:', err);
     }

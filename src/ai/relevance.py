@@ -44,13 +44,35 @@ SPAREPART_KEYWORDS = {
 GAMING_LAPTOP_HINTS = {
     "rog", "legion", "nitro", "predator", "tuf", "omen", "victus",
     "loq", "msi", "rtx", "gtx", "gaming", "ryzen 7", "intel i7",
-    "intel i9", "geforce", "katana", "alienware",
+    "intel i9", "geforce", "katana", "alienware", "msi thin",
+    "msi cyborg", "msi bravo", "msi modern", "nvidia", "rtx2050",
+    "rtx3050", "rtx4050", "rtx4060", "gtx1650",
 }
 MAIN_PRODUCT_HINTS = {
     "laptop", "notebook", "iphone", "ipad", "macbook", "samsung",
     "xiaomi", "oppo", "vivo", "realme", "asus", "lenovo", "acer",
     "hp", "dell", "msi", "pc", "monitor", "printer", "kamera",
 }
+
+VALID_GAMING_LAPTOP_HINTS = [
+    "rog", "tuf", "loq", "legion", "victus", "omen", "nitro",
+    "predator", "msi thin", "msi katana", "msi cyborg", "msi bravo",
+    "msi modern", "geforce", "nvidia", "rtx", "gtx", "rtx2050",
+    "rtx 2050", "rtx3050", "rtx 3050", "rtx4050", "rtx 4050",
+    "rtx4060", "rtx 4060", "gtx1650", "gtx 1650", "ryzen 5",
+    "ryzen 7", "ryzen 9", "core i5", "core i7", "core i9", "i5 ",
+    "i7 ", "i9 ", "144hz", "165hz",
+]
+
+ACCESSORY_JUNK_HINTS = [
+    "mouse", "keyboard", "keycaps", "headset", "earphone", "speaker",
+    "cooling pad", "cooler laptop", "stand laptop", "tas laptop",
+    "sleeve laptop", "skin laptop", "sticker laptop", "charger laptop",
+    "adaptor laptop", "adapter laptop", "baterai laptop", "battery laptop",
+    "lcd laptop", "screen replacement", "fan replacement",
+    "sparepart laptop", "case laptop", "casing laptop", "hardcase laptop",
+    "softcase laptop", "ram laptop", "ssd laptop",
+]
 ACCESSORY_GROUPS = {
     "case": {"case", "casing", "softcase", "hardcase", "magsafe"},
     "charger": {"charger", "kabel", "adapter", "adaptor"},
@@ -66,6 +88,7 @@ def normalize_text(value: Any) -> str:
     text = "" if value is None else str(value)
     text = unicodedata.normalize("NFKC", text).lower()
     text = text.replace("\u00a0", " ").replace("\u200b", "")
+    text = text.replace("-", " ").replace("_", " ").replace("/", " ")
     text = re.sub(r"[^a-z0-9+.#/ ]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -95,6 +118,66 @@ def parse_sold_count(value: Any) -> int:
 
 def _contains_any(text: str, keywords: set[str]) -> bool:
     return any(keyword in text for keyword in keywords)
+
+
+def contains_any(text: str, keywords: list[str] | set[str]) -> bool:
+    normalized = normalize_text(text)
+    return any(normalize_text(keyword) in normalized for keyword in keywords)
+
+
+def is_laptop_gaming_query(query: str) -> bool:
+    q = normalize_text(query)
+    return "laptop" in q and "gaming" in q
+
+
+def has_accessory_evidence(title: str) -> bool:
+    t = normalize_text(title)
+    if contains_any(t, ACCESSORY_JUNK_HINTS):
+        return True
+    tokens = _word_tokens(t)
+    if tokens & {"mouse", "keyboard", "keycaps", "headset", "earphone"}:
+        return True
+    if "sparepart" in tokens:
+        return True
+    return False
+
+
+def has_gaming_laptop_evidence(title: str) -> bool:
+    t = normalize_text(title)
+    if has_accessory_evidence(t):
+        return False
+    if contains_any(t, VALID_GAMING_LAPTOP_HINTS):
+        return True
+    tokens = _word_tokens(t)
+    if tokens & {
+        "ram", "ssd", "hdd", "baterai", "battery", "lcd", "sparepart",
+        "mouse", "keyboard", "webcam", "charger", "adapter", "adaptor",
+        "cooler", "stand", "headset", "earphone", "tas", "sleeve",
+    }:
+        return False
+    if ({"laptop", "notebook"} & tokens) and "gaming" in tokens:
+        return True
+    return False
+
+
+def apply_laptop_gaming_boost(query: str, product: dict[str, Any], score: float) -> float:
+    title = normalize_text(product.get("title") or product.get("name") or "")
+    if not is_laptop_gaming_query(query):
+        return score
+    if has_gaming_laptop_evidence(title):
+        score = max(score, 0.72)
+
+    strong_gpu = [
+        "rtx 2050", "rtx2050", "rtx 3050", "rtx3050", "rtx 4050",
+        "rtx4050", "rtx 4060", "rtx4060", "gtx 1650", "gtx1650",
+    ]
+    strong_series = [
+        "rog", "tuf", "loq", "legion", "victus", "omen", "nitro",
+        "predator", "msi thin",
+    ]
+    if contains_any(title, strong_gpu) and contains_any(title, strong_series + ["laptop", "notebook"]):
+        score = max(score, 0.78)
+    return round(max(0.0, min(0.98, score)), 3)
 
 
 def _word_tokens(text: str) -> set[str]:
@@ -127,6 +210,10 @@ def detect_product_category(product: dict[str, Any] | str) -> str:
     title = normalize_text(product.get("title") if isinstance(product, dict) else product)
     if not title:
         return "unknown"
+    if has_accessory_evidence(title):
+        return "accessory"
+    if has_gaming_laptop_evidence(title):
+        return "main_product"
     if _contains_any(title, SPAREPART_KEYWORDS):
         return "sparepart"
     if _contains_any(title, ACCESSORY_KEYWORDS):
@@ -148,7 +235,7 @@ def _semantic_bonus(query: str, title: str) -> float:
     q = normalize_text(query)
     t = normalize_text(title)
     bonus = 0.0
-    if "laptop" in q and "gaming" in q and _contains_any(t, GAMING_LAPTOP_HINTS):
+    if is_laptop_gaming_query(q) and has_gaming_laptop_evidence(t):
         bonus += 0.38
         if "laptop" in t or "notebook" in t:
             bonus += 0.10
@@ -172,6 +259,8 @@ def compute_rule_score(query: str, product: dict[str, Any], query_intent: str | 
     score = 0.20 + overlap_ratio * 0.36 + min(0.16, fuzzy * 0.16) + _semantic_bonus(query, title)
 
     if intent == "main_product":
+        if is_laptop_gaming_query(query) and has_gaming_laptop_evidence(title):
+            return apply_laptop_gaming_boost(query, product, score + 0.18)
         if category in {"accessory", "sparepart"}:
             return min(0.30, 0.08 + overlap_ratio * 0.15)
         if category == "main_product":
@@ -196,14 +285,24 @@ def compute_rule_score(query: str, product: dict[str, Any], query_intent: str | 
         score += 0.08
 
     feedback_delta = get_feedback_score_adjustment(query, intent, category, title)
-    return round(max(0.0, min(0.98, score + feedback_delta)), 3)
+    score = round(max(0.0, min(0.98, score + feedback_delta)), 3)
+    return apply_laptop_gaming_boost(query, product, score)
 
 
 def is_obvious_junk_for_intent(query: str, product: dict[str, Any], query_intent: str | None = None) -> bool:
     intent = query_intent or detect_query_intent(query)
     category = detect_product_category(product)
-    title = normalize_text(product.get("title") or "")
+    title = normalize_text(product.get("title") or product.get("name") or "")
     if not title:
+        return True
+    if is_laptop_gaming_query(query):
+        positive_laptop = has_gaming_laptop_evidence(title)
+        if positive_laptop:
+            return False
+        if has_accessory_evidence(title) or category in {"accessory", "sparepart"}:
+            return True
+        if "laptop" in title or "notebook" in title:
+            return False
         return True
     if intent == "main_product" and category in {"accessory", "sparepart"}:
         return True
