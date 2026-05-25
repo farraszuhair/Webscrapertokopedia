@@ -19,7 +19,9 @@ from src.ai.ai_orchestrator import classify_borderline_product
 from src.ai.model_registry import get_best_classifier_model, get_orchestrator_status
 from src.config import (
     AI_BATCH_SIZE,
+    AI_CHAT_TIMEOUT_SECONDS,
     AI_CLASSIFIER_MAX_PRODUCTS,
+    AI_CPU_MODE,
     AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK,
     FALLBACK_EXPANSION_THRESHOLD,
     LLM_ACCEPT_THRESHOLD,
@@ -327,7 +329,7 @@ async def filter_products(
             f"ai_orchestrator_enabled={use_ai} "
             f"supported_models={orchestrator_status.get('supported', [])} "
             f"missing_models={orchestrator_status.get('missing', [])} "
-            f"selected_classifier={selected_model or 'rules_only'} "
+            f"classifier={selected_model or 'rules_only'} "
             f"semantic_enabled={bool(orchestrator_status.get('capabilities', {}).get('semantic'))} "
             f"json_repair_enabled={bool(orchestrator_status.get('capabilities', {}).get('json_repair'))}"
         ),
@@ -335,7 +337,16 @@ async def filter_products(
     )
     log("AI_ORCH", f"ai_enabled={bool(use_ai)}", "INFO")
     log("AI_ORCH", f"installed_models={orchestrator_status.get('installed', [])}", "INFO")
-    log("AI_ORCH", f"selected_classifier={selected_model or 'none'}", "INFO")
+    log(
+        "AI_ORCH",
+        (
+            f"selected_classifier={selected_model or 'none'} "
+            f"cpu_mode={str(AI_CPU_MODE).lower()} "
+            f"max_products={AI_CLASSIFIER_MAX_PRODUCTS} "
+            f"timeout={AI_CHAT_TIMEOUT_SECONDS}"
+        ),
+        "INFO",
+    )
     log(
         "AI_LEARN",
         (
@@ -804,7 +815,7 @@ async def filter_products(
     def log_runtime_summary(*, fallback_expanded: int, final_displayed: int, checked: int) -> None:
         skip_reason = _ai_skip_reason(checked)
         log("AI_ORCH", f"semantic_checked={semantic_checked}", "INFO")
-        log("AI_ORCH", f"classifier_installed={str(classifier_installed).lower()} selected_classifier={selected_model or 'none'}", "INFO")
+        log("AI_ORCH", f"classifier_installed={str(classifier_installed).lower()} classifier={selected_model or 'none'}", "INFO")
         log("AI_ORCH", f"borderline_candidates={len(borderline)}", "INFO")
         log("AI_ORCH", f"classifier_checked={checked}", "INFO")
         log("AI_ORCH", f"ai_calls_attempted={ai_calls_attempted}", "INFO")

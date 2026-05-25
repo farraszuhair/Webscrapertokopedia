@@ -11,6 +11,29 @@ import os
 from pathlib import Path
 
 
+def _load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+
+def parse_bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -25,35 +48,36 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-AI_ORCHESTRATION_ENABLED = os.getenv("AI_ORCHESTRATION_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
-AI_CPU_MODE = os.getenv("AI_CPU_MODE", "true").strip().lower() not in {"0", "false", "no", "off"}
+AI_ORCHESTRATION_ENABLED = parse_bool(os.getenv("AI_ORCHESTRATION_ENABLED", "true"))
+AI_CPU_MODE = parse_bool(os.getenv("AI_CPU_MODE", "true"))
+AI_CLASSIFIER_MODEL = os.getenv("AI_CLASSIFIER_MODEL", "gemma3:4b").strip()
 
-ALLOWED_OLLAMA_MODELS = [
+ALLOWED_OLLAMA_MODELS = list(dict.fromkeys([
+    AI_CLASSIFIER_MODEL,
     "gemma3:4b",
     "llama3.2:3b",
     "phi4-mini",
     "nomic-embed-text",
-]
+]))
 
 AI_MODEL_JOBS = {
     "semantic": "nomic-embed-text",
-    "balanced_classifier": "gemma3:4b",
+    "balanced_classifier": AI_CLASSIFIER_MODEL,
     "fast_classifier": "llama3.2:3b",
     "json_repair": "phi4-mini",
 }
 
-CLASSIFIER_PRIORITY = (
-    ["llama3.2:3b", "gemma3:4b"]
-    if AI_CPU_MODE
-    else ["gemma3:4b", "llama3.2:3b"]
-)
+CLASSIFIER_PRIORITY = [
+    AI_CLASSIFIER_MODEL,
+    "llama3.2:3b",
+]
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip("/")
 OLLAMA_TIMEOUT_SECONDS = _env_int("OLLAMA_TIMEOUT_SECONDS", _env_int("AI_TIMEOUT_SECONDS", 12))
-AI_CLASSIFIER_MAX_PRODUCTS = max(1, _env_int("AI_CLASSIFIER_MAX_PRODUCTS", 6))
-AI_CHAT_TIMEOUT_SECONDS = max(1, _env_int("AI_CHAT_TIMEOUT_SECONDS", 20))
-AI_CHAT_NUM_PREDICT = max(16, _env_int("AI_CHAT_NUM_PREDICT", 80))
-AI_CHAT_NUM_CTX = max(512, _env_int("AI_CHAT_NUM_CTX", 1024))
+AI_CHAT_TIMEOUT_SECONDS = int(os.getenv("AI_CHAT_TIMEOUT_SECONDS", "35"))
+AI_CHAT_NUM_CTX = int(os.getenv("AI_CHAT_NUM_CTX", "1024"))
+AI_CHAT_NUM_PREDICT = int(os.getenv("AI_CHAT_NUM_PREDICT", "80"))
+AI_CLASSIFIER_MAX_PRODUCTS = int(os.getenv("AI_CLASSIFIER_MAX_PRODUCTS", "4"))
 AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK = max(1, _env_int("AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK", 2))
 AI_MODEL_CACHE_TTL_SECONDS = max(1, _env_int("AI_MODEL_CACHE_TTL_SECONDS", 60))
 

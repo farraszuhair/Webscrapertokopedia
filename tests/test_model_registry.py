@@ -45,7 +45,7 @@ def test_ai_status_filters_to_allowed_models(monkeypatch):
     status = model_registry.get_orchestrator_status(force_refresh=True)
 
     assert status["ok"] is True
-    assert status["classifier"] == "llama3.2:3b"
+    assert status["classifier"] == "gemma3:4b"
     assert status["supported"] == ["gemma3:4b", "llama3.2:3b"]
     assert "unsupported-large:latest" not in status["supported"]
 
@@ -79,7 +79,7 @@ def test_ai_status_normalizes_latest_tags(monkeypatch):
     status = model_registry.get_orchestrator_status(force_refresh=True)
 
     assert status["ok"] is True
-    assert status["classifier"] == "llama3.2:3b"
+    assert status["classifier"] == "gemma3:4b"
     assert status["missing"] == []
     assert status["capabilities"] == {
         "semantic": True,

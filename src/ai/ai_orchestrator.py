@@ -9,7 +9,7 @@ from typing import Any
 from src.ai.json_repair import repair_json_or_fallback
 from src.ai.model_registry import get_orchestrator_status, get_installed_model_name
 from src.ai.ollama_client import chat_raw_async
-from src.config import AI_CPU_MODE, LLM_ACCEPT_THRESHOLD, RULE_ACCEPT_THRESHOLD, RULE_REJECT_THRESHOLD, RULE_REVIEW_THRESHOLD
+from src.config import LLM_ACCEPT_THRESHOLD, RULE_ACCEPT_THRESHOLD, RULE_REJECT_THRESHOLD, RULE_REVIEW_THRESHOLD
 from src.utils.logger import log
 
 
@@ -101,7 +101,7 @@ async def classify_borderline_product(
     prompt = build_classifier_prompt(query, query_intent, product)
     result = await chat_raw_async(prompt, model=resolved_classifier, use_json_format=True)
     
-    if not result.get("ok") and not AI_CPU_MODE:
+    if not result.get("ok"):
         supported = set(status.get("supported") or [])
         fallback_model = "llama3.2:3b"
         resolved_fallback = get_installed_model_name(fallback_model, status.get("installed") or None)

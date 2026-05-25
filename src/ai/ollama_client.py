@@ -15,7 +15,7 @@ from typing import Any
 import requests
 
 from src.config import (
-    AI_CPU_MODE,
+    AI_CLASSIFIER_MODEL,
     AI_CHAT_NUM_CTX,
     AI_CHAT_NUM_PREDICT,
     AI_CHAT_TIMEOUT_SECONDS,
@@ -178,7 +178,7 @@ def chat_json(
     timeout: int | None = None,
     use_json_format: bool = True,
 ) -> dict[str, Any]:
-    selected_model = model or ("llama3.2:3b" if AI_CPU_MODE else "gemma3:4b")
+    selected_model = model or AI_CLASSIFIER_MODEL
 
     from src.ai.model_registry import get_installed_model_name
     resolved_model = get_installed_model_name(selected_model)
@@ -187,8 +187,6 @@ def chat_json(
         return _post_chat(prompt, resolved_model, timeout, use_json_format)
     except Exception as exc:
         log("AI", f"Ollama chat failed with {resolved_model} (base: {selected_model}): {exc}", "WARN")
-        if AI_CPU_MODE:
-            return _fallback(str(exc), resolved_model)
         fallback_model = "llama3.2:3b"
         resolved_fallback = get_installed_model_name(fallback_model)
         if resolved_model == resolved_fallback:

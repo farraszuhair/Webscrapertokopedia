@@ -16,18 +16,19 @@ Open http://127.0.0.1:3000.
 
 Only these models are supported:
 
-- `llama3.2:3b` - primary classifier in CPU mode
-- `gemma3:4b` - balanced classifier, used when CPU mode is disabled or llama is missing
+- `gemma3:4b` - primary classifier by default
+- `llama3.2:3b` - fallback classifier when the primary classifier is missing or fails
 - `phi4-mini` - JSON repair only
 - `nomic-embed-text` - semantic scoring only
 
-Model selection is automatic. The app detects installed models with `GET /api/tags`, caches that registry for 60 seconds, and `:latest` tags such as `phi4-mini:latest` and `nomic-embed-text:latest` satisfy their supported base names. Unsupported legacy large classifier models were removed and are ignored.
+Model selection is controlled by `AI_CLASSIFIER_MODEL`, which defaults to `gemma3:4b`. CPU mode controls CPU-safe runtime settings only; it does not switch the classifier to `llama3.2:3b`. The app detects installed models with `GET /api/tags`, caches that registry for 60 seconds, and `:latest` tags such as `phi4-mini:latest` and `nomic-embed-text:latest` satisfy their supported base names. Unsupported legacy large classifier models were removed and are ignored.
 
 Default CPU-friendly settings:
 
 - `AI_CPU_MODE=true`
-- `AI_CLASSIFIER_MAX_PRODUCTS=6`
-- `AI_CHAT_TIMEOUT_SECONDS=20`
+- `AI_CLASSIFIER_MODEL=gemma3:4b`
+- `AI_CLASSIFIER_MAX_PRODUCTS=4`
+- `AI_CHAT_TIMEOUT_SECONDS=35`
 - `AI_CHAT_NUM_CTX=1024`
 - `AI_CHAT_NUM_PREDICT=80`
 - `AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK=2`
@@ -117,14 +118,14 @@ Example search:
 ### AI Accepted is 0
 
 1. Call `/api/ai/status`.
-2. Confirm `classifier` is `llama3.2:3b` in CPU mode, or `gemma3:4b` if CPU mode is disabled or llama is missing.
+2. Confirm `classifier` is `gemma3:4b` when it is installed, even when `AI_CPU_MODE=true`.
 3. Check `result_metadata.ai_skip_reason`.
 4. If `borderline_candidates > 0`, confirm logs show `POST /api/chat`.
 5. If `semantic_checked` is greater than `0` but `classifier_checked` is `0`, only embeddings ran; check `ai_skip_reason`.
 
 ### Local AI is timing out
 
-The classifier timeout is 20 seconds by default. After 2 classifier failures in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_circuit_open`, `ai_fallback`, and `fallback_added` in `result_metadata`.
+The classifier timeout is 35 seconds by default. After 2 classifier failures in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_circuit_open`, `ai_fallback`, and `fallback_added` in `result_metadata`.
 
 ### Displayed is much lower than requested
 

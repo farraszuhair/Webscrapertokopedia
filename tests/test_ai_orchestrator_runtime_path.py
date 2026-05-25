@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.ai import ai_filter, ollama_client
+from src.ai import ai_filter, model_registry, ollama_client
+import src.ai.feedback_store as feedback_store
 import src.ai.relevance as relevance
 from src.ai.relevance import filter_relevance
 
@@ -83,7 +84,96 @@ def test_chat_raw_posts_to_ollama_chat(monkeypatch):
     assert captured["payload"]["options"]["num_ctx"] == 1024
     assert captured["payload"]["options"]["num_predict"] == 80
     assert captured["payload"]["keep_alive"] == "10m"
-    assert captured["timeout"] == 20
+    assert captured["timeout"] == 35
+
+
+def test_cpu_mode_does_not_override_classifier_priority():
+    assert model_registry.get_best_classifier_model(["llama3.2:3b", "gemma3:4b"]) == "gemma3:4b"
+
+
+@pytest.mark.asyncio
+async def test_cpu_mode_selects_gemma_and_posts_gemma_to_chat(monkeypatch):
+    model_registry._MODEL_CACHE["timestamp"] = 0.0
+    model_registry._MODEL_CACHE["models"] = []
+    monkeypatch.setattr(model_registry, "CLASSIFIER_PRIORITY", ["gemma3:4b", "llama3.2:3b"])
+    monkeypatch.setattr(ai_filter, "AI_CPU_MODE", True)
+    monkeypatch.setattr(ai_filter, "AI_CLASSIFIER_MAX_PRODUCTS", 4)
+    monkeypatch.setattr(ai_filter, "AI_CHAT_TIMEOUT_SECONDS", 35)
+    monkeypatch.setattr(ollama_client, "AI_CHAT_TIMEOUT_SECONDS", 35)
+
+    captured = {}
+    log_messages = []
+
+    def recording_log(tag, msg, level="INFO"):
+        log_messages.append((tag, msg, level))
+        print(f"[{tag}] {msg}", flush=True)
+
+    monkeypatch.setattr(ai_filter, "log", recording_log)
+    monkeypatch.setattr(ollama_client, "log", recording_log)
+
+    class TagsResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "llama3.2:3b"}, {"name": "gemma3:4b"}]}
+
+    class ChatResponse:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"content": '{"accepted": true, "confidence": 0.8, "reason": "ok", "category_match": "match"}'}}
+
+    def fake_get(url, timeout):
+        assert url.endswith("/api/tags")
+        return TagsResponse()
+
+    def fake_post(url, json, timeout):
+        captured["url"] = url
+        captured["payload"] = json
+        captured["timeout"] = timeout
+        return ChatResponse()
+
+    monkeypatch.setattr(model_registry.requests, "get", fake_get)
+    monkeypatch.setattr(ollama_client.requests, "post", fake_post)
+    monkeypatch.setattr(relevance, "detect_query_intent", lambda query: "main_product")
+    monkeypatch.setattr(relevance, "detect_product_category", lambda product: "main_product")
+    monkeypatch.setattr(relevance, "compute_rule_score", lambda query, product, intent=None: 0.55)
+    monkeypatch.setattr(relevance, "apply_laptop_gaming_boost", lambda query, product, score: score)
+    monkeypatch.setattr(relevance, "is_obvious_junk_for_intent", lambda query, product, intent=None: False)
+    monkeypatch.setattr(relevance, "is_obvious_match_for_intent", lambda query, product, intent=None: False)
+    monkeypatch.setattr(feedback_store, "extract_query_constraints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(feedback_store, "load_feedback_context", lambda *args, **kwargs: {"feedback_examples_loaded": 0})
+    monkeypatch.setattr(feedback_store, "load_learned_patterns", lambda *args, **kwargs: [])
+    monkeypatch.setattr(feedback_store, "compute_constraint_mismatch_penalty", lambda *args, **kwargs: (0.0, []))
+    monkeypatch.setattr(feedback_store, "compute_learned_adjustment", lambda *args, **kwargs: (0.0, []))
+
+    result = await filter_relevance(
+        "office laptop",
+        [{
+            "id": "borderline-gemma",
+            "title": "Budget office laptop",
+            "price": 9_500_000,
+            "price_value": 9_500_000,
+            "url": "https://tokopedia.test/borderline-gemma",
+            "_requested_target": 1,
+        }],
+        use_ai=True,
+    )
+
+    assert result.meta["classifier_checked"] == 1
+    assert captured["url"].endswith("/api/chat")
+    assert captured["payload"]["model"] == "gemma3:4b"
+    assert captured["timeout"] == 35
+    assert ("AI_ORCH", "selected_classifier=gemma3:4b cpu_mode=true max_products=4 timeout=35", "INFO") in log_messages
+    assert any(
+        tag == "AI_ORCH" and msg.startswith("POST /api/chat selected_model=gemma3:4b")
+        for tag, msg, _level in log_messages
+    )
 
 
 @pytest.mark.asyncio
@@ -192,7 +282,7 @@ async def test_requested_fifty_fills_from_weak_safe_candidates(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_classifier_limit_sends_only_top_six_borderline_products(monkeypatch):
+async def test_classifier_limit_sends_only_top_four_borderline_products(monkeypatch):
     monkeypatch.setattr(
         ai_filter,
         "get_orchestrator_status",
@@ -242,10 +332,10 @@ async def test_classifier_limit_sends_only_top_six_borderline_products(monkeypat
 
     result = await filter_relevance("laptop gaming", candidates, use_ai=True)
 
-    assert len(calls) == 6
-    assert result.meta["classifier_checked"] == 6
-    assert result.meta["ai_calls_attempted"] == 6
-    assert result.meta["fallback_added"] == 14
+    assert len(calls) == 4
+    assert result.meta["classifier_checked"] == 4
+    assert result.meta["ai_calls_attempted"] == 4
+    assert result.meta["fallback_added"] == 16
     assert result.meta["displayed"] == 20
     assert any(product["decision_source"] == "fallback_not_classified_cpu_limit" for product in result.products)
 
@@ -279,6 +369,14 @@ async def test_ai_reject_cannot_drop_positive_laptop_evidence(monkeypatch):
 
     monkeypatch.setattr(ai_filter, "classify_borderline_product", fake_classify)
     monkeypatch.setattr(relevance, "compute_rule_score", lambda query, product, intent=None: 0.72)
+    monkeypatch.setattr(relevance, "apply_laptop_gaming_boost", lambda query, product, score: score)
+    monkeypatch.setattr(relevance, "is_obvious_junk_for_intent", lambda query, product, intent=None: False)
+    monkeypatch.setattr(relevance, "is_obvious_match_for_intent", lambda query, product, intent=None: False)
+    monkeypatch.setattr(feedback_store, "extract_query_constraints", lambda *args, **kwargs: {})
+    monkeypatch.setattr(feedback_store, "load_feedback_context", lambda *args, **kwargs: {"feedback_examples_loaded": 0})
+    monkeypatch.setattr(feedback_store, "load_learned_patterns", lambda *args, **kwargs: [])
+    monkeypatch.setattr(feedback_store, "compute_constraint_mismatch_penalty", lambda *args, **kwargs: (0.0, []))
+    monkeypatch.setattr(feedback_store, "compute_learned_adjustment", lambda *args, **kwargs: (0.0, []))
 
     result = await filter_relevance(
         "laptop gaming",
