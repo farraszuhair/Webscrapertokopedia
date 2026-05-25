@@ -20,6 +20,36 @@ AI_DEFAULT_BATCH_SECONDS = int(os.getenv("AI_DEFAULT_BATCH_SECONDS", "75"))
 AI_MIN_BATCH_SECONDS = int(os.getenv("AI_MIN_BATCH_SECONDS", "30"))
 AI_MAX_BATCH_SECONDS = int(os.getenv("AI_MAX_BATCH_SECONDS", "180"))
 
+BLOCKED_ERROR_TOKENS = (
+    "captcha",
+    "blocked",
+    "access denied",
+    "too many requests",
+    "robot",
+    "bot detection",
+)
+
+SCRAPING_STAGES = {
+    "opening_page",
+    "scrolling",
+    "extracting",
+    "puppeteer_opening",
+    "puppeteer_query",
+    "puppeteer_retry",
+    "rollback_opening",
+    "rollback_extracting",
+    "compare_filtering",
+}
+
+PREPARING_STAGES = {
+    "initializing",
+    "engine_selecting",
+    "launching_browser",
+    "puppeteer_starting",
+    "rollback_browser_starting",
+    "switching_to_rollback",
+}
+
 
 def _epoch_ms() -> int:
     return int(time.time() * 1000)
@@ -84,12 +114,50 @@ def _format_eta(seconds: Any) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def _canonical_stage(record: Dict[str, Any]) -> str:
+    raw_stage = str(record.get("phase") or record.get("stage") or "initializing")
+    error_text = str(record.get("error") or record.get("message") or "").lower()
+    if any(token in error_text for token in BLOCKED_ERROR_TOKENS):
+        return "blocked"
+    if record.get("done") and not record.get("error"):
+        return "completed"
+    if raw_stage in {"done", "finalizing", "ranking", "recommendation_building"}:
+        return "completed"
+    if raw_stage in {"error", "failed", "cancelled"}:
+        return "error"
+    if raw_stage in {"deduplicating", "budget_filtering", "ai_filtering"}:
+        return raw_stage
+    if raw_stage in SCRAPING_STAGES:
+        return "scraping"
+    if raw_stage in PREPARING_STAGES:
+        return "preparing"
+    return "preparing"
+
+
+def _append_log(record: Dict[str, Any], message: str | None) -> None:
+    text = str(message or "").strip()
+    if not text:
+        return
+    logs = list(record.get("logs") or [])
+    last = logs[-1] if logs else {}
+    stage = str(record.get("phase") or record.get("stage") or "initializing")
+    if last.get("message") == text and last.get("stage") == stage:
+        return
+    logs.append({
+        "time": _epoch_ms(),
+        "stage": stage,
+        "message": text,
+    })
+    record["logs"] = logs[-40:]
+
+
 def _refresh_time_fields(record: Dict[str, Any], touch_updated: bool = False) -> Dict[str, Any]:
     now_epoch = _epoch_ms()
     now_monotonic = time.perf_counter()
     started_monotonic = float(record.get("started_at_monotonic") or now_monotonic)
     elapsed = max(0.0, now_monotonic - started_monotonic)
     percent = _coerce_percent(record.get("progress_percent", record.get("percent", 0)))
+    raw_stage = str(record.get("phase") or record.get("stage") or "initializing")
 
     record["server_now_epoch_ms"] = now_epoch
     if touch_updated:
@@ -99,7 +167,7 @@ def _refresh_time_fields(record: Dict[str, Any], touch_updated: bool = False) ->
     record["percent"] = percent
 
     if record.get("done"):
-        if record.get("stage") == "done":
+        if raw_stage in {"done", "completed"} and not record.get("error"):
             record["eta_seconds"] = 0
             record["estimated_completion_epoch_ms"] = now_epoch
             record["eta_is_reliable"] = True
@@ -131,6 +199,16 @@ def _refresh_time_fields(record: Dict[str, Any], touch_updated: bool = False) ->
 
     record["eta_label"] = _format_eta(record.get("eta_seconds"))
     record["phase"] = record.get("phase") or record.get("stage") or "initializing"
+    record["status_text"] = str(record.get("message") or "")
+    record["stage"] = _canonical_stage(record)
+    record["searchId"] = record.get("search_id")
+    record["statusText"] = record["status_text"]
+    record["percentage"] = record["progress_percent"]
+    record["elapsedSeconds"] = record["elapsed_seconds"]
+    record["etaSeconds"] = record.get("eta_seconds")
+    record["foundCount"] = record.get("found", 0)
+    record["targetCount"] = record.get("target", 0)
+    record.setdefault("logs", [])
     return record
 
 
@@ -148,6 +226,7 @@ def init_progress(search_id: str, target: int, raw_target: int, engine_mode: str
             "stage": "initializing",
             "phase": "initializing",
             "message": "Initializing...",
+            "status_text": "Initializing...",
             "found": 0,
             "valid": 0,
             "target": target,
@@ -173,6 +252,13 @@ def init_progress(search_id: str, target: int, raw_target: int, engine_mode: str
             "max_attempts": 1,
             "done": False,
             "error": None,
+            "logs": [
+                {
+                    "time": now_epoch,
+                    "stage": "initializing",
+                    "message": "Initializing...",
+                }
+            ],
         }
 
 
@@ -213,6 +299,8 @@ def update_progress(search_id: str, **kwargs: Any) -> None:
             return
 
         _progress_store[search_id].update(kwargs)
+        if "message" in kwargs:
+            _append_log(_progress_store[search_id], kwargs.get("message"))
         if not eta_explicit and not deadline_explicit and not _progress_store[search_id].get("done"):
             _progress_store[search_id]["eta_seconds"] = None
             _progress_store[search_id]["estimated_completion_epoch_ms"] = None
@@ -327,10 +415,11 @@ def complete_progress(search_id: str) -> None:
 
 def fail_progress(search_id: str, error_msg: str) -> None:
     """Mark a search as failed with a specific visible error."""
+    stage = "blocked" if any(token in str(error_msg).lower() for token in BLOCKED_ERROR_TOKENS) else "error"
     update_progress(
         search_id,
-        stage="error",
-        phase="error",
+        stage=stage,
+        phase=stage,
         message=error_msg,
         error=error_msg,
         done=True,

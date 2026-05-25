@@ -22,7 +22,7 @@ from src.ai.feedback_store import feedback_summary_counts, reset_learning
 from src.ai.learning import save_feedback
 from src.ai.memory_store import FEEDBACK_FILE as LEGACY_FEEDBACK_FILE, read_jsonl
 from src.ai.model_registry import get_orchestrator_status
-from src.ai.relevance import RELEVANCE_THRESHOLD, filter_relevance
+from src.ai.relevance import filter_relevance
 from src.ai.reset import reset_ai_memory
 from src.scraper.budget_filter import FilterResult, filter_by_budget
 from src.scraper.dedupe import deduplicate_products
@@ -32,7 +32,7 @@ from src.server.lifecycle import register_task, unregister_task
 from src.server.progress import complete_progress, fail_progress, get_progress, init_progress, update_progress
 from src.server.schemas import FeedbackRequest, ProgressResponse, SearchRequest
 from src.config import OVERFETCH_MULTIPLIER
-from src.utils.currency import format_rupiah
+from src.utils.currency import format_rupiah, parse_rupiah
 from src.utils.debug import safe_save_debug, save_json_debug
 from src.utils.eta import ETACalculator
 from src.utils.logger import log
@@ -40,23 +40,6 @@ from src.utils.logger import log
 
 router = APIRouter()
 _results_store: dict[str, dict[str, Any]] = {}
-
-
-def _product_cache_key(product: dict[str, Any]) -> str:
-    url = str(product.get("url") or product.get("product_url") or "").strip().lower()
-    if url:
-        return f"url:{url.split('?')[0]}"
-    title = str(product.get("title") or "").strip().lower()
-    price = str(product.get("price_value") or product.get("price_raw") or "").strip().lower()
-    return f"title:{title}|price:{price}"
-
-
-def _is_ai_valid(product: dict[str, Any]) -> bool:
-    try:
-        confidence = float(product.get("relevance_score", product.get("ai_confidence", 0)) or 0)
-    except (TypeError, ValueError):
-        confidence = 0.0
-    return bool(product.get("ai_decision", True)) and confidence >= RELEVANCE_THRESHOLD
 
 
 def cleanup_task(search_id: str, task: asyncio.Task) -> None:
@@ -237,6 +220,60 @@ def _budget_info(filter_result: FilterResult) -> dict[str, Any] | None:
         "debug_path": filter_result.debug_path,
         "reasons": filter_result.reasons,
     }
+
+
+def _public_product_payload(product: dict[str, Any]) -> dict[str, Any]:
+    """Expose the required demo product shape while keeping legacy aliases."""
+    payload = dict(product or {})
+    price_number = parse_rupiah(payload.get("price_value"))
+    if price_number is None:
+        price_number = parse_rupiah(payload.get("priceNumber"))
+    if price_number is None:
+        price_number = parse_rupiah(payload.get("price_raw") or payload.get("price_text") or payload.get("price"))
+    price_number = int(price_number or 0)
+
+    price_text = str(payload.get("price_raw") or payload.get("price_text") or "").strip()
+    if not price_text and price_number > 0:
+        price_text = format_rupiah(price_number)
+
+    store_name = str(payload.get("storeName") or payload.get("shop_name") or payload.get("shop") or payload.get("store") or "").strip()
+    confidence_value = payload.get("confidenceScore")
+    if confidence_value in (None, ""):
+        confidence_value = payload.get("confidence", payload.get("relevance_score", payload.get("ai_confidence", 0)))
+    try:
+        confidence_score = max(0.0, min(1.0, float(confidence_value or 0)))
+    except (TypeError, ValueError):
+        confidence_score = 0.0
+
+    relevance_reason = str(
+        payload.get("relevanceReason")
+        or payload.get("ai_reason")
+        or payload.get("reason")
+        or payload.get("ai_explanation")
+        or payload.get("category_reason")
+        or ""
+    ).strip()
+
+    payload.update({
+        "id": str(payload.get("id") or payload.get("url") or payload.get("product_url") or payload.get("title") or ""),
+        "title": str(payload.get("title") or ""),
+        "price": price_text,
+        "priceNumber": price_number,
+        "price_value": price_number,
+        "price_raw": price_text,
+        "price_text": price_text,
+        "image": str(payload.get("image") or payload.get("image_url") or ""),
+        "storeName": store_name,
+        "shop_name": store_name,
+        "rating": payload.get("rating") or 0,
+        "soldCount": int(_num(payload.get("soldCount", payload.get("sold_count")), 0)),
+        "sold_count": int(_num(payload.get("sold_count", payload.get("soldCount")), 0)),
+        "url": str(payload.get("url") or payload.get("product_url") or ""),
+        "source": str(payload.get("source") or payload.get("source_engine") or "tokopedia"),
+        "confidenceScore": round(confidence_score, 3),
+        "relevanceReason": relevance_reason,
+    })
+    return payload
 
 
 def _sort_products(products: list[dict[str, Any]], sort_mode: str = "terbaik") -> list[dict[str, Any]]:
@@ -555,8 +592,9 @@ async def _filter_pipeline(
     )
 
     target_display = min(req.target_count, len(candidates))
-    ranked = list(ai_valid)
+    ranked = _sort_products(list(ai_valid), req.sort_mode)
     final = ranked[:target_display]
+    public_final = [_public_product_payload(product) for product in final]
     fallback_added = int(ai_meta.get("fallback_added", ai_meta.get("fallback_expansion_count", 0)) or 0)
     ai_timeouts = int(ai_meta.get("ai_timeouts", 0) or 0)
     ai_skip_reason = ai_meta.get("ai_skip_reason")
@@ -565,7 +603,7 @@ async def _filter_pipeline(
         candidate_pool_count=len(candidates),
         fallback_added=fallback_added,
         ai_skip_reason=str(ai_skip_reason) if ai_skip_reason else None,
-        displayed=len(final),
+        displayed=len(public_final),
         target_display=target_display,
     )
     limited = final_warning or None
@@ -576,12 +614,12 @@ async def _filter_pipeline(
         percent=93,
         message="Membangun rekomendasi cepat...",
         found=len(deduped),
-        valid=len(final),
+        valid=len(public_final),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    recommendations = _build_recommendations(req.query, final)
-    has_enough = len(final) >= target_display
+    recommendations = _build_recommendations(req.query, public_final)
+    has_enough = len(public_final) >= target_display
     classifier_checked = ai_meta.get("classifier_checked", ai_meta.get("ai_checked", ai_meta.get("llm_checked_count", 0)))
     semantic_checked = ai_meta.get("semantic_checked", ai_meta.get("semantic_checked_count", 0))
     metadata = {
@@ -636,8 +674,8 @@ async def _filter_pipeline(
         "rejected_reasons_histogram": ai_meta.get("rejected_reasons_histogram", {}),
         "pipeline_debug_path": ai_meta.get("pipeline_debug_path"),
         "why_remaining_products_were_not_displayed": ai_meta.get("why_remaining_products_were_not_displayed"),
-        "displayed_count": len(final),
-        "displayed": len(final),
+        "displayed_count": len(public_final),
+        "displayed": len(public_final),
         "has_enough_results": has_enough,
         "limited_reason": limited,
         "ai_skip_reason": ai_skip_reason,
@@ -665,7 +703,7 @@ async def _filter_pipeline(
             f"ai_accepted={metadata['ai_accepted']} ai_rejected={metadata['ai_rejected']} ai_fallback={metadata['ai_fallback']} "
             f"accepted_before_fallback={metadata['accepted_before_fallback']} "
             f"fallback_candidates={metadata['fallback_candidates']} weak_fallback_candidates={metadata['weak_fallback_candidates']} "
-            f"fallback_added={fallback_added} displayed={len(final)} "
+            f"fallback_added={fallback_added} displayed={len(public_final)} "
             f"ai_skip_reason={metadata['ai_skip_reason']} "
             f"has_enough={str(has_enough).lower()}"
             + (f' reason="{limited}"' if limited else "")
@@ -673,11 +711,11 @@ async def _filter_pipeline(
         "INFO",
     )
 
-    if len(candidates) >= req.target_count and len(final) < req.target_count:
+    if len(candidates) >= req.target_count and len(public_final) < req.target_count:
         log(
             "PIPELINE",
             (
-                f"target_not_met target={target_display} displayed={len(final)} "
+                f"target_not_met target={target_display} displayed={len(public_final)} "
                 f"accepted_count_before_fallback={metadata['accepted_before_fallback']} "
                 f"fallback_candidates_count={metadata['fallback_candidates_count']} "
                 f"weak_fallback_candidates_count={metadata['weak_fallback_candidates_count']} "
@@ -708,7 +746,7 @@ async def _filter_pipeline(
             error = f"0 produk tersisa setelah fallback filter. {ai_warning}"
         else:
             error = "Semua produk ditolak filter relevansi. Disable AI atau tambah feedback."
-    elif not final:
+    elif not public_final:
         error = "Tidak ada produk setelah filter final."
 
     return {
@@ -718,7 +756,7 @@ async def _filter_pipeline(
         "budget": budget_result,
         "ai_valid": ai_valid,
         "ranked": ranked,
-        "final": final,
+        "final": public_final,
         "ai_status": ai_status,
         "ai_warning": ai_warning,
         "ai_meta": ai_meta,

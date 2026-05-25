@@ -17,7 +17,7 @@
           <span class="logo-icon">TS</span>
           <div>
             <h1>MarketSpy AI</h1>
-            <p>Puppeteer + Rollback/Selenium + local AI</p>
+            <p>Scraping produk yang rapi, bertahap, dan mudah diaudit</p>
           </div>
         </div>
         <div id="status-badge" class="status-badge status-idle">Idle</div>
@@ -152,6 +152,11 @@
 
         <div class="progress-message" id="progress-message">Memulai...</div>
 
+        <div class="progress-log-wrap">
+          <div class="progress-log-title">Aktivitas</div>
+          <div id="progress-log" class="progress-log"></div>
+        </div>
+
         <div class="stage-pipeline">
           <div class="stage-item" id="stage-init"><div class="stage-dot"></div><span>Init</span></div>
           <div class="stage-connector"></div>
@@ -204,9 +209,9 @@
         <div id="r-warning" class="result-warning hidden"></div>
 
         <div class="quick-sort" id="quick-sort">
-          <button type="button" class="quick-sort-btn active" data-sort-mode="terbaik">⭐ Terbaik</button>
-          <button type="button" class="quick-sort-btn" data-sort-mode="termurah">💸 Termurah</button>
-          <button type="button" class="quick-sort-btn" data-sort-mode="most_trusted">🏆 Most Trusted</button>
+          <button type="button" class="quick-sort-btn active" data-sort-mode="terbaik">Terbaik</button>
+          <button type="button" class="quick-sort-btn" data-sort-mode="termurah">Termurah</button>
+          <button type="button" class="quick-sort-btn" data-sort-mode="most_trusted">Most Trusted</button>
         </div>
 
         <div id="comparison-panel" class="comparison-panel hidden">
@@ -216,7 +221,7 @@
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
           <button id="recommendations-trigger" class="recommendations-trigger" type="button" onclick="app.toggleRecommendations()" aria-expanded="false">
-            <span class="recommendation-trigger-title">&#127919; Lihat Rekomendasi Cepat</span>
+            <span class="recommendation-trigger-title">Lihat Rekomendasi Cepat</span>
             <span class="recommendation-trigger-subtitle">Termurah, Trusted, dan Terbaik dari hasil scraping</span>
             <span class="recommendation-trigger-state">Buka</span>
           </button>

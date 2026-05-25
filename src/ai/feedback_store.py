@@ -442,7 +442,7 @@ def infer_learning_scope(
     reason_set = set(reasons or [])
     if FEEDBACK_REASONS_SPEC_MISMATCH in reason_set:
         return "query_constraint"
-    if "Cuma aksesoris" in reason_set or "Bukan sesuai intent pencarian" in reason_set:
+    if "Cuma aksesoris" in reason_set or "Bukan sesuai intent pencarian" in reason_set or "Bukan produk utama" in reason_set:
         return "query_intent"
     if "Produk tidak relevan" in reason_set:
         return "exact_query"
@@ -541,7 +541,7 @@ def update_learned_patterns_from_feedback(
         scope = learning_scope_hint or "exact_query"
         weight = -0.30
         pattern_type = "penalty"
-        if "Cuma aksesoris" in reasons or "Bukan sesuai intent pencarian" in reasons:
+        if "Cuma aksesoris" in reasons or "Bukan sesuai intent pencarian" in reasons or "Bukan produk utama" in reasons:
             scope = "query_intent"
             pattern_type = "reject_hint"
             weight = -0.35
@@ -713,11 +713,18 @@ def compute_learned_adjustment(
     learned_patterns: list[dict[str, Any]],
 ) -> tuple[float, list[dict[str, Any]]]:
     title = normalize_text(product.get("title") or product.get("name") or "")
+    query_text = normalize_text(query)
     adjustment = 0.0
     matches: list[dict[str, Any]] = []
     for pattern in learned_patterns:
         p = normalize_text(pattern.get("pattern") or "")
         if not p or p not in title:
+            continue
+        if (
+            pattern.get("scope") == "query_intent"
+            and pattern.get("pattern_type") == "accept_hint"
+            and p in query_text
+        ):
             continue
         if not pattern_applies(pattern, query, query_constraints, product):
             continue
@@ -854,7 +861,7 @@ def _feedback_terms(
         "adaptor", "adapter", "casing", "softcase", "hardcase",
         "sleeve", "lcd", "baterai", "battery", "skin sticker",
     ]
-    if "Cuma aksesoris" in reasons or "Bukan sesuai intent pencarian" in reasons:
+    if "Cuma aksesoris" in reasons or "Bukan sesuai intent pencarian" in reasons or "Bukan produk utama" in reasons:
         preferred.extend(term for term in accessory_terms if term in title)
     preferred.extend(extract_learning_terms(product_title))
     return _dedupe_preserve_order(preferred)

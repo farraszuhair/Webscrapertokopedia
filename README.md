@@ -21,11 +21,12 @@ Only these models are supported:
 - `phi4-mini` - JSON repair only
 - `nomic-embed-text` - semantic scoring only
 
-Model selection is controlled by `AI_CLASSIFIER_MODEL`, which defaults to `gemma3:4b`. CPU mode controls CPU-safe runtime settings only; it does not switch the classifier to `llama3.2:3b`. The app detects installed models with `GET /api/tags`, caches that registry for 60 seconds, and `:latest` tags such as `phi4-mini:latest` and `nomic-embed-text:latest` satisfy their supported base names. Unsupported legacy large classifier models were removed and are ignored.
+Model selection is controlled by `AI_MODEL`, which defaults to `gemma3:4b`. `AI_CLASSIFIER_MODEL` is still accepted as a backward-compatible alias. CPU mode controls CPU-safe runtime settings only; it does not switch the classifier to `llama3.2:3b`. The app detects installed models with `GET /api/tags`, caches that registry for 60 seconds, and `:latest` tags such as `phi4-mini:latest` and `nomic-embed-text:latest` satisfy their supported base names. Unsupported legacy large classifier models were removed and are ignored.
 
 Default CPU-friendly settings:
 
 - `AI_CPU_MODE=true`
+- `AI_MODEL=gemma3:4b`
 - `AI_CLASSIFIER_MODEL=gemma3:4b`
 - `AI_CLASSIFIER_MAX_PRODUCTS=4`
 - `AI_CHAT_TIMEOUT_SECONDS=35`

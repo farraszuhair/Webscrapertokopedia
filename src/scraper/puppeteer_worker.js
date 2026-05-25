@@ -4,7 +4,7 @@
  * Key fixes:
  * 1. Preflight: detect Chrome error page BEFORE extraction.
  * 2. Disable HTTP/2 (--disable-http2) to reduce ERR_HTTP2_PROTOCOL_ERROR.
- * 3. Use real browser User-Agent to reduce bot detection.
+ * 3. Use a stable desktop User-Agent for consistent page rendering.
  * 4. opened_real_page=false stops extraction immediately with clear error.
  * 5. No category filtering here. Raw products only. AI Orchestrator filters later.
  */
@@ -61,6 +61,11 @@ async function detectPageHealth(page) {
 
     // Known Chrome error strings
     const errorPatterns = [
+      { pattern: 'captcha',                       key: 'blocked' },
+      { pattern: 'verify you are human',          key: 'blocked' },
+      { pattern: 'access denied',                 key: 'blocked' },
+      { pattern: 'too many requests',             key: 'blocked' },
+      { pattern: 'robot',                         key: 'blocked' },
       { pattern: 'err_http2_protocol_error',      key: 'http2_protocol_error' },
       { pattern: 'err_connection_reset',           key: 'connection_reset' },
       { pattern: 'err_connection_refused',         key: 'connection_refused' },
@@ -125,7 +130,7 @@ function buildSearchUrl(query) {
 
 async function configurePage(page, consoleLogs) {
   await page.setViewport({ width: 1366, height: 768, deviceScaleFactor: 1 });
-  // Realistic Chrome UA reduces bot detection
+  // Stable desktop UA keeps Tokopedia markup consistent across runs.
   await page.setUserAgent(
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
   );
@@ -445,8 +450,7 @@ async function runAttempt({ query, variants, target, searchId, attempt }) {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-http2',             // KEY FIX: disable HTTP/2 to avoid ERR_HTTP2_PROTOCOL_ERROR
-        '--disable-blink-features=AutomationControlled',  // reduce bot detection
+        '--disable-http2',             // reduce ERR_HTTP2_PROTOCOL_ERROR without bypassing access controls
         '--window-size=1366,768',
       ],
     });

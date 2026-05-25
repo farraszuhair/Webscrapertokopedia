@@ -9,15 +9,12 @@
 
 const FEEDBACK_REASONS = [
   'Produk tidak relevan',
-  'Cuma aksesoris',
-  'Spesifikasi tidak sesuai query',
   'Harga tidak sesuai',
-  'Nama produk salah',
-  'Gambar tidak sesuai',
-  'Toko tidak terpercaya',
+  'Bukan produk utama',
   'Duplikat',
-  'Bukan sesuai intent pencarian',
+  'Rating/toko mencurigakan',
   'Data tidak lengkap',
+  'Spesifikasi tidak sesuai query',
   'Lainnya',
 ];
 
@@ -73,6 +70,10 @@ class ScraperApp {
     if (!el) return;
     el.textContent = text;
     el.className = `status-badge ${cls}`;
+  }
+
+  isBlockedMessage(message) {
+    return /captcha|blocked|access denied|too many requests|robot|bot detection/i.test(String(message || ''));
   }
 
   showToast(message) {
@@ -407,7 +408,7 @@ class ScraperApp {
     this.renderProgress({
       percent: 0,
       progress_percent: 0,
-      stage: 'initializing',
+      stage: 'preparing',
       phase: 'initializing',
       message: 'Initializing...',
       found: 0,
@@ -420,6 +421,7 @@ class ScraperApp {
       active_engine: 'none',
       attempt: 1,
       max_attempts: 1,
+      logs: [{ stage: 'initializing', message: 'Initializing...' }],
     });
     document.querySelectorAll('.stage-item').forEach((el) => el.classList.remove('active', 'done'));
   }
@@ -504,12 +506,13 @@ class ScraperApp {
     const pct = Math.max(0, Math.min(100, Number(progress.progress_percent ?? progress.percent ?? 0)));
     this.$('progress-pct').textContent = `${Math.round(pct)}%`;
     this.$('progress-bar').style.width = `${pct}%`;
-    const phase = progress.phase || progress.stage;
-    this.$('progress-stage-label').textContent = this.stageLabel(phase);
-    this.$('progress-message').textContent = progress.message || '';
-    this.$('pm-found').textContent = progress.found ?? 0;
+    const stage = progress.stage || progress.phase;
+    const phase = progress.phase || stage;
+    this.$('progress-stage-label').textContent = this.stageLabel(stage);
+    this.$('progress-message').textContent = progress.statusText || progress.status_text || progress.message || '';
+    this.$('pm-found').textContent = progress.foundCount ?? progress.found ?? 0;
     this.$('pm-valid').textContent = progress.valid ?? 0;
-    this.$('pm-target').textContent = progress.target ?? '-';
+    this.$('pm-target').textContent = progress.targetCount ?? progress.target ?? '-';
     if (this.state.progressStartedAtMs) {
       this.renderLiveTimers();
     } else {
@@ -519,10 +522,39 @@ class ScraperApp {
     this.$('pm-engine').textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
     this.$('pm-attempt').textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
     this.updateStagePipeline(phase, pct);
+    this.renderProgressLogs(progress.logs || []);
+  }
+
+  renderProgressLogs(logs) {
+    const el = this.$('progress-log');
+    if (!el) return;
+    const visible = [...(logs || [])].slice(-8).reverse();
+    if (!visible.length) {
+      el.innerHTML = '<div class="progress-log-empty">Menunggu aktivitas...</div>';
+      return;
+    }
+    el.innerHTML = '';
+    visible.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'progress-log-row';
+      const stage = document.createElement('span');
+      stage.className = 'progress-log-stage';
+      stage.textContent = this.stageLabel(item.stage || 'preparing');
+      const message = document.createElement('span');
+      message.className = 'progress-log-message';
+      message.textContent = item.message || '';
+      row.append(stage, message);
+      el.appendChild(row);
+    });
   }
 
   stageLabel(stage) {
     const labels = {
+      idle: 'Idle',
+      preparing: 'Preparing',
+      scraping: 'Scraping',
+      completed: 'Completed',
+      blocked: 'Blocked',
       queued: 'Menunggu',
       initializing: 'Initializing',
       engine_selecting: 'Memilih engine',
@@ -545,7 +577,7 @@ class ScraperApp {
       ranking: 'Ranking',
       recommendation_building: 'Recommendations',
       finalizing: 'Finalizing',
-      done: 'Selesai',
+      done: 'Completed',
       error: 'Error',
       failed: 'Gagal',
       cancelled: 'Dibatalkan',
@@ -571,7 +603,7 @@ class ScraperApp {
     this.show('results-panel');
     this.state.comparison = data.comparison || [];
     this.state.selectedEngine = data.selected_engine || null;
-    this.state.products = data.data || [];
+    this.state.products = (data.data || []).map((product) => this.normalizeProduct(product));
     this.state.recommendations = data.recommendations || {};
     this.state.metadata = data.result_metadata || {};
     this.state.engineMode = data.engine_mode || 'auto';
@@ -587,6 +619,29 @@ class ScraperApp {
     this.renderRecommendations(this.state.recommendations);
     this.updateResultCount();
     this.renderProducts();
+  }
+
+  normalizeProduct(product) {
+    const item = { ...(product || {}) };
+    const priceNumber = Number(item.priceNumber ?? item.price_value ?? item.price_val ?? 0) || 0;
+    const confidenceScore = Number(item.confidenceScore ?? item.confidence ?? item.relevance_score ?? item.ai_confidence ?? 0) || 0;
+    return {
+      ...item,
+      id: String(item.id || item.url || item.product_url || item.title || ''),
+      title: item.title || 'Produk Tokopedia',
+      price: item.price || item.price_raw || item.price_text || (priceNumber ? this.formatRupiah(priceNumber) : ''),
+      priceNumber,
+      price_value: priceNumber,
+      image: item.image || item.image_url || '',
+      storeName: item.storeName || item.shop_name || item.shop || item.store || '',
+      rating: item.rating || 0,
+      soldCount: Number(item.soldCount ?? item.sold_count ?? 0) || 0,
+      sold_count: Number(item.sold_count ?? item.soldCount ?? 0) || 0,
+      url: item.url || item.product_url || '#',
+      source: item.source || item.source_engine || 'tokopedia',
+      confidenceScore,
+      relevanceReason: item.relevanceReason || item.ai_reason || item.reason || item.ai_explanation || '',
+    };
   }
 
   renderResultWarning(data) {
@@ -678,7 +733,7 @@ class ScraperApp {
     const item = this.state.comparison.find((e) => e.engine === engine);
     if (!item) return;
     this.state.selectedEngine = engine;
-    this.state.products = item.data || item.products || [];
+    this.state.products = (item.data || item.products || []).map((product) => this.normalizeProduct(product));
     this.state.recommendations = item.recommendations || {};
     this.state.metadata = item.result_metadata || {};
     this.state.recommendationsOpen = false;
@@ -775,13 +830,14 @@ class ScraperApp {
       return card;
     }
 
-    const title = product.title || 'Produk Tokopedia';
+    const normalized = this.normalizeProduct(product);
+    const title = normalized.title || 'Produk Tokopedia';
     const main = document.createElement('div');
     main.className = 'recommendation-main';
 
     const imageBox = document.createElement('div');
     imageBox.className = 'recommendation-img';
-    const imageUrl = this.getValidImageUrl(product);
+    const imageUrl = this.getValidImageUrl(normalized);
     if (imageUrl) {
       const img = document.createElement('img');
       img.src = imageUrl;
@@ -799,19 +855,21 @@ class ScraperApp {
     const body = document.createElement('div');
     body.className = 'recommendation-body';
     this.appendText(body, 'recommendation-title', title);
-    this.appendText(body, 'recommendation-price', product.price || '-');
+    this.appendText(body, 'recommendation-price', normalized.price || '-');
 
     const meta = document.createElement('div');
     meta.className = 'recommendation-meta';
-    if (product.rating) this.appendText(meta, '', `\u2605 ${product.rating}`, 'span');
-    if (product.sold) this.appendText(meta, '', product.sold, 'span');
+    if (normalized.rating) this.appendText(meta, '', `Rating ${normalized.rating}`, 'span');
+    if (normalized.sold || normalized.sold_text || normalized.soldCount) {
+      this.appendText(meta, '', normalized.sold || normalized.sold_text || normalized.soldCount, 'span');
+    }
     body.appendChild(meta);
-    if (product.shop_name) this.appendText(body, 'recommendation-shop', product.shop_name);
-    this.appendText(body, 'recommendation-reason', product.reason || '');
-    if (product.url) {
+    if (normalized.storeName) this.appendText(body, 'recommendation-shop', normalized.storeName);
+    this.appendText(body, 'recommendation-reason', normalized.reason || normalized.relevanceReason || '');
+    if (normalized.url) {
       const link = document.createElement('a');
       link.className = 'recommendation-link';
-      link.href = product.url;
+      link.href = normalized.url;
       link.target = '_blank';
       link.rel = 'noopener';
       link.textContent = 'Buka produk';
@@ -889,16 +947,16 @@ class ScraperApp {
       return Number.isFinite(parsed) ? parsed : 0;
     };
     const price = (p) => {
-      const value = safeNumber(p.price_value ?? p.price);
+      const value = safeNumber(p.priceNumber ?? p.price_value ?? p.price);
       return value > 0 ? value : Number.MAX_SAFE_INTEGER;
     };
-    const relevance = (p) => safeNumber(p.confidence ?? p.relevance_score ?? p.ai_confidence);
+    const relevance = (p) => safeNumber(p.confidenceScore ?? p.confidence ?? p.relevance_score ?? p.ai_confidence);
     const rating = (p) => safeNumber(p.rating);
-    const sold = (p) => safeNumber(p.sold_count);
+    const sold = (p) => safeNumber(p.soldCount ?? p.sold_count);
     const review = (p) => safeNumber(p.review_count);
     const trust = (p) => {
       if (p.store_trust_score != null) return safeNumber(p.store_trust_score);
-      const shop = String(p.shop_name || p.shop || '').toLowerCase();
+      const shop = String(p.storeName || p.shop_name || p.shop || '').toLowerCase();
       const shopBoost = /(official|mall|power merchant|pro)/.test(shop) ? 1 : shop ? 0.5 : 0;
       return shopBoost + rating(p) / 5 + Math.min(sold(p), 1000) / 1000 + Math.min(review(p), 1000) / 2000;
     };
@@ -941,7 +999,7 @@ class ScraperApp {
     const placeholder = document.createElement('div');
     placeholder.className = 'product-image-placeholder';
     const icon = document.createElement('span');
-    icon.textContent = '📦';
+    icon.textContent = 'No image';
     const label = document.createElement('small');
     label.textContent = text;
     placeholder.append(icon, label);
@@ -994,19 +1052,19 @@ class ScraperApp {
 
     const title = product.title || 'Produk Tokopedia';
     const url = product.url || '#';
-    const numericPrice = product.price_value ?? product.price;
-    const priceText = Number(numericPrice) > 0
+    const numericPrice = product.priceNumber ?? product.price_value ?? product.price;
+    const priceText = product.price || (Number(numericPrice) > 0
       ? this.formatRupiah(numericPrice)
-      : (product.price_text || product.price_raw || 'Harga tidak tersedia');
-    const soldText = product.sold || product.sold_text || product.sold_count || '';
-    const shopName = product.shop || product.shop_name || '';
+      : (product.price_text || product.price_raw || 'Harga tidak tersedia'));
+    const soldText = product.sold || product.sold_text || product.soldCount || product.sold_count || '';
+    const shopName = product.storeName || product.shop || product.shop_name || '';
     const shopLocation = product.location || product.shop_location || '';
-    const aiValue = product.ai_confidence ?? product.relevance_score;
+    const aiValue = product.confidenceScore ?? product.ai_confidence ?? product.relevance_score;
     const aiNumeric = Number(aiValue);
     const aiConfidenceLabel = product.ai_confidence_label
       || (aiNumeric >= 0.85 ? 'High' : aiNumeric >= 0.70 ? 'Medium' : 'Low');
     const aiLabel = product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan');
-    const aiReason = product.ai_confidence_explanation || product.ai_explanation || product.ai_reason || '';
+    const aiReason = product.relevanceReason || product.ai_confidence_explanation || product.ai_explanation || product.ai_reason || '';
 
     const link = document.createElement('a');
     link.href = url || '#';
@@ -1022,7 +1080,7 @@ class ScraperApp {
 
     const meta = document.createElement('div');
     meta.className = 'product-meta';
-    if (product.rating) this.appendText(meta, 'product-rating', `★ ${product.rating}`, 'span');
+    if (product.rating) this.appendText(meta, 'product-rating', `Rating ${product.rating}`, 'span');
     if (soldText) this.appendText(meta, 'product-sold', String(soldText), 'span');
     if (shopName) this.appendText(meta, 'product-shop', shopName, 'span');
     if (shopLocation) this.appendText(meta, 'product-location', shopLocation, 'span');
@@ -1034,7 +1092,7 @@ class ScraperApp {
       badges.appendChild(this.createBadge(`AI ${aiNumeric.toFixed(2)} ${aiConfidenceLabel}`));
     }
     badges.appendChild(this.createBadge(product.ai_source || product.decision_source || 'rule'));
-    if (product.source_engine) badges.appendChild(this.createBadge(product.source_engine));
+    if (product.source || product.source_engine) badges.appendChild(this.createBadge(product.source || product.source_engine));
     body.appendChild(badges);
 
     const labelLine = document.createElement('div');
@@ -1108,7 +1166,7 @@ class ScraperApp {
           <textarea id="modal-note" placeholder="Jelaskan kenapa AI salah..." maxlength="500"></textarea>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" id="modal-submit">Save</button>
+          <button class="btn btn-primary" id="modal-submit">Simpan</button>
           <button class="btn btn-ghost" id="modal-cancel">Batal</button>
         </div>
       </div>
@@ -1175,8 +1233,9 @@ class ScraperApp {
     const reasons = feedback.selectedReasons || [];
     if ((feedback.feedbackType || '').toLowerCase() === 'positive') return 'exact_query';
     if (reasons.includes('Spesifikasi tidak sesuai query')) return 'query_constraint';
-    if (reasons.includes('Cuma aksesoris') || reasons.includes('Bukan sesuai intent pencarian')) return 'query_intent';
+    if (reasons.includes('Bukan produk utama')) return 'query_intent';
     if (reasons.includes('Harga tidak sesuai')) return 'query_constraint';
+    if (reasons.includes('Rating/toko mencurigakan')) return 'exact_query';
     if (reasons.includes('Data tidak lengkap')) return 'exact_query';
     return 'exact_query';
   }
@@ -1199,29 +1258,29 @@ class ScraperApp {
       note: feedback.customReason || '',
       corrected_label: feedback.correctedLabel,
       ai_label: product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan'),
-      ai_confidence: product.ai_confidence ?? product.relevance_score ?? 0,
+      ai_confidence: product.confidenceScore ?? product.ai_confidence ?? product.relevance_score ?? 0,
       rule_score: product.rule_score ?? 0,
       semantic_score: product.semantic_score ?? 0,
       combined_score: product.combined_score ?? 0,
       learned_adjustment: product.learned_adjustment ?? 0,
-      confidence: product.confidence ?? product.ai_confidence ?? product.relevance_score ?? 0,
+      confidence: product.confidenceScore ?? product.confidence ?? product.ai_confidence ?? product.relevance_score ?? 0,
       learning_scope_hint: learningScopeHint,
       model_used: product._model || product.model_used || '',
-      ai_reason: product.ai_reason || product.reason || '',
+      ai_reason: product.relevanceReason || product.ai_reason || product.reason || '',
       sort_mode: this.state.sortMode || 'terbaik',
       decision_source: product.ai_source || product.decision_source || '',
       query_intent: product.query_intent || this.state.metadata.query_intent || '',
       product: {
         id: product.id || '',
         title: product.title || '',
-        price_value: product.price_value ?? product.price ?? 0,
-        price: product.price_value ?? product.price ?? 0,
-        store: product.shop_name || product.shop || '',
+        price_value: product.priceNumber ?? product.price_value ?? 0,
+        price: product.priceNumber ?? product.price_value ?? 0,
+        store: product.storeName || product.shop_name || product.shop || '',
         url: product.url || product.product_url || '',
         image: product.image || product.image_url || '',
         product_category: product.product_category || '',
         decision_source: product.ai_source || product.decision_source || '',
-        confidence: product.confidence ?? product.ai_confidence ?? product.relevance_score ?? 0,
+        confidence: product.confidenceScore ?? product.confidence ?? product.ai_confidence ?? product.relevance_score ?? 0,
         rule_score: product.rule_score ?? 0,
         semantic_score: product.semantic_score ?? 0,
         combined_score: product.combined_score ?? 0,
@@ -1279,7 +1338,7 @@ class ScraperApp {
   showError(message) {
     this.stopPolling();
     this.stopElapsedTimer();
-    this.setStatus('Error', 'status-error');
+    this.setStatus(this.isBlockedMessage(message) ? 'Blocked' : 'Error', 'status-error');
     this.show('error-panel');
     this.$('error-msg').textContent = message;
   }

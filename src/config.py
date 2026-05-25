@@ -50,7 +50,8 @@ def _env_float(name: str, default: float) -> float:
 
 AI_ORCHESTRATION_ENABLED = parse_bool(os.getenv("AI_ORCHESTRATION_ENABLED", "true"))
 AI_CPU_MODE = parse_bool(os.getenv("AI_CPU_MODE", "true"))
-AI_CLASSIFIER_MODEL = os.getenv("AI_CLASSIFIER_MODEL", "gemma3:4b").strip()
+AI_MODEL = os.getenv("AI_MODEL", os.getenv("AI_CLASSIFIER_MODEL", "gemma3:4b")).strip()
+AI_CLASSIFIER_MODEL = AI_MODEL
 
 ALLOWED_OLLAMA_MODELS = list(dict.fromkeys([
     AI_CLASSIFIER_MODEL,

@@ -68,6 +68,7 @@ class ProgressResponse(BaseModel):
     stage: str
     phase: str = "initializing"
     message: str
+    status_text: str = ""
     found: int
     valid: int
     target: int
@@ -93,3 +94,11 @@ class ProgressResponse(BaseModel):
     max_attempts: int = 1
     done: bool
     error: Optional[str] = None
+    logs: List[Dict[str, Any]] = Field(default_factory=list)
+    searchId: str = ""
+    statusText: str = ""
+    percentage: float = 0.0
+    elapsedSeconds: float = 0.0
+    etaSeconds: Optional[int] = None
+    foundCount: int = 0
+    targetCount: int = 0
