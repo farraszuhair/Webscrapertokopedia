@@ -193,7 +193,7 @@
           <section class="recommendation-stage" id="recommendation-stage">
             <div class="recommendation-header">
               <span>QUICK RECOMMENDATION</span>
-              <h2 id="recommendationTitle">Terbaik</h2>
+              <h2 id="recommendationTitle" class="recommendation-active-title">Terbaik</h2>
 
               <div class="recommendation-controls" id="recommendation-tabs">
                 <!-- Dynamically populated inner emoji buttons: ⭐ Terbaik, 💸 Termurah, 🏆 Most Trusted -->
@@ -270,6 +270,72 @@
               </button>
 
               <button class="btn-primary" data-feedback-save>
+                Simpan Feedback
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="recommendation-product-dialog" class="recommendation-product-dialog">
+    <div class="recommendation-modal-card">
+      <button class="modal-close" data-recommendation-modal-close>×</button>
+
+      <div class="recommendation-modal-layout">
+        <div class="recommendation-modal-image-wrap">
+          <img class="recommendation-modal-image" alt="Product image" />
+        </div>
+
+        <div class="recommendation-modal-content">
+          <span class="recommendation-modal-kicker">RECOMMENDATION DETAIL</span>
+          <h2 class="recommendation-modal-title"></h2>
+          <p class="recommendation-modal-store"></p>
+
+          <div class="recommendation-modal-price"></div>
+
+          <div class="recommendation-modal-meta">
+            <span class="recommendation-modal-rating"></span>
+            <span class="recommendation-modal-sold"></span>
+            <span class="recommendation-modal-confidence"></span>
+          </div>
+
+          <div class="recommendation-modal-actions-box">
+            <p>Apakah produk ini sesuai?</p>
+
+            <div class="feedback-action-row">
+              <button class="feedback-yes-btn" data-modal-feedback-correct>
+                Benar
+              </button>
+
+              <button class="feedback-no-btn" data-modal-feedback-wrong>
+                Salah
+              </button>
+
+              <a class="open-product-btn" target="_blank" rel="noopener noreferrer">
+                Buka Produk
+              </a>
+            </div>
+          </div>
+
+          <div class="modal-feedback-reason-panel" hidden>
+            <h3>Kenapa produk ini salah?</h3>
+            <p>Pilih satu atau lebih alasan biar AI belajar.</p>
+
+            <div class="modal-feedback-reason-grid"></div>
+
+            <textarea
+              class="modal-feedback-note"
+              placeholder="Tambahin catatan kalau perlu..."
+            ></textarea>
+
+            <div class="feedback-save-row">
+              <button class="btn-ghost" data-modal-feedback-cancel>
+                Batal
+              </button>
+
+              <button class="btn-primary" data-modal-feedback-save>
                 Simpan Feedback
               </button>
             </div>

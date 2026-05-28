@@ -74,6 +74,7 @@ class ScraperApp {
     this.bindResetLearning();
     this.bindQuickSort();
     this.bindProductModalEvents();
+    this.bindRecommendationModalEvents();
     this.bindProductCardClick();
     this.fetchAiStatus();
   }
@@ -1107,45 +1108,43 @@ class ScraperApp {
 
   createRecommendationMiniCard(product) {
     const item = this.normalizeProduct(product);
-    const card = document.createElement('a');
-    card.className = 'recommendation-mini-card';
-    card.href = item.url || '#';
-    card.target = '_blank';
-    card.rel = 'noopener';
+    const card = document.createElement('div');
+    card.className = 'recommendation-product-card product-card';
+    const id = String(item.id || item.url || item.product_url || item.title || '');
+    card.dataset.productId = id;
+    card.dataset.id = id;
 
-    const image = document.createElement('div');
-    image.className = 'recommendation-mini-image';
+    const img = document.createElement('img');
     const imageUrl = this.resolveProductImage(item);
-    if (imageUrl) {
-      const img = document.createElement('img');
-      img.src = imageUrl;
-      img.alt = item.title || 'Product image';
-      img.loading = 'lazy';
-      img.onerror = () => {
-        if (!img.dataset.proxyTried) {
-          img.dataset.proxyTried = '1';
-          img.src = this.proxyImageUrl(imageUrl);
-          return;
-        }
-        image.replaceChildren(this.createSmallImagePlaceholder('No image'));
-      };
-      image.appendChild(img);
-    } else {
-      image.appendChild(this.createSmallImagePlaceholder('No image'));
-    }
+    img.src = imageUrl || '';
+    img.alt = item.title || 'Product image';
+    img.loading = 'lazy';
+    img.onerror = () => {
+      if (imageUrl && !img.dataset.proxyTried) {
+        img.dataset.proxyTried = '1';
+        img.src = this.proxyImageUrl(imageUrl);
+      }
+    };
 
-    const body = document.createElement('div');
-    body.className = 'recommendation-mini-body';
-    this.appendText(body, 'recommendation-mini-title', item.title || 'Produk Tokopedia');
-    this.appendText(body, 'recommendation-mini-price', item.price || '-');
-    const meta = document.createElement('div');
-    meta.className = 'recommendation-mini-meta';
-    if (item.rating) this.appendText(meta, '', `Rating ${item.rating}`, 'span');
-    if (item.soldCount || item.sold_text || item.sold) {
-      this.appendText(meta, '', item.sold || item.sold_text || item.soldCount, 'span');
-    }
-    body.appendChild(meta);
-    card.append(image, body);
+    const details = document.createElement('div');
+    const h4 = document.createElement('h4');
+    h4.textContent = item.title || 'Produk Tokopedia';
+    const strong = document.createElement('strong');
+    strong.textContent = item.price || '';
+    const span = document.createElement('span');
+    const ratingStr = item.rating ? `Rating ${item.rating}` : '';
+    const soldStr = item.sold || item.sold_text || item.soldCount || item.sold_count || '';
+    span.textContent = [ratingStr, soldStr].filter(Boolean).join(' | ');
+
+    details.append(h4, strong, span);
+    card.append(img, details);
+
+    card.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.openRecommendationProductModal(item, card);
+    });
+
     return card;
   }
 
@@ -1165,41 +1164,123 @@ class ScraperApp {
   selectRecommendation(mode) {
     if (!RECOMMENDATION_MODES.some((item) => item.key === mode)) return;
     if (this.state.recommendationMode === mode && this.state.hasUserSelectedRecommendation) return;
+    if (this.recommendationTransitionRunning) return;
     this.state.hasUserSelectedRecommendation = true;
+    this.recommendationTransitionRunning = true;
 
-    if (this.recommendationTimeline?.pause) this.recommendationTimeline.pause();
-    const oldCards = document.querySelectorAll('.recommendation-mini-card');
-    const update = () => {
-      this.state.recommendationMode = mode;
-      const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === mode);
-      if (modeMeta) {
-        this.applySortMode(modeMeta.sortMode, true);
-      } else {
+    const nextMode = mode;
+    const stage = document.querySelector(".recommendation-stage");
+    const activePanel = document.querySelector(".recommendation-panel.is-active");
+    const title = document.querySelector(".recommendation-active-title");
+    const cards = document.querySelectorAll(".recommendation-product-card");
+    const clickedButton = document.querySelector(`[data-recommendation-mode="${nextMode}"]`);
+
+    const tl = window.anime.timeline({
+      easing: "easeOutExpo",
+      complete: () => {
+        this.state.recommendationMode = nextMode;
+
+        // Update content
         this.renderRecommendations();
-        this.animateRecommendationStage();
-      }
-    };
+        const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === nextMode);
+        if (modeMeta) {
+          this.applySortMode(modeMeta.sortMode, false);
+          this.renderProducts();
+          this.animateProductCards();
+          this.updateResultCount();
+        }
 
-    if (this.canAnimate() && oldCards.length) {
-      this.recommendationTimeline = window.anime({
-        targets: oldCards,
+        // Animate in new cards and title
+        window.anime({
+          targets: ".recommendation-product-card",
+          opacity: [0, 1],
+          translateY: [26, 0],
+          scale: [0.92, 1],
+          delay: window.anime.stagger(55),
+          duration: 750,
+          easing: "easeOutExpo"
+        });
+
+        window.anime({
+          targets: "#recommendationTitle",
+          opacity: [0, 1],
+          translateY: [18, 0],
+          scale: [0.94, 1],
+          duration: 650,
+          easing: "easeOutExpo"
+        });
+
+        window.anime({
+          targets: ".recommendation-panel.is-active",
+          scale: [1.04, 1],
+          duration: 650,
+          easing: "easeOutExpo",
+          complete: () => {
+            this.recommendationTransitionRunning = false;
+          }
+        });
+      }
+    });
+
+    if (cards.length) {
+      tl.add({
+        targets: cards,
         opacity: [1, 0],
-        translateY: [0, 12],
-        scale: [1, 0.96],
-        delay: window.anime.stagger(20),
-        duration: 180,
-        easing: 'easeOutExpo',
-        complete: update,
+        translateY: [0, 18],
+        scale: [1, 0.94],
+        delay: window.anime.stagger(35, { direction: "reverse" }),
+        duration: 360
       });
-      return;
     }
 
-    update();
+    if (title) {
+      tl.add({
+        targets: title,
+        opacity: [1, 0],
+        translateY: [0, -16],
+        scale: [1, 0.92],
+        duration: 320
+      }, "-=260");
+    }
+
+    if (clickedButton) {
+      tl.add({
+        targets: clickedButton,
+        scale: [1, 1.12, 1.04],
+        duration: 520
+      }, "-=220");
+    }
+
+    if (activePanel) {
+      tl.add({
+        targets: activePanel,
+        scale: [1, 1.08],
+        translateY: [0, -10],
+        boxShadow: [
+          "0 0 0 rgba(96,165,250,0)",
+          "0 28px 90px rgba(96,165,250,0.24)"
+        ],
+        duration: 620
+      }, "-=300");
+    }
+
+    const sidePanels = document.querySelectorAll(".recommendation-panel.is-side");
+    if (sidePanels.length) {
+      tl.add({
+        targets: sidePanels,
+        opacity: [1, 0.65],
+        scale: [1, 0.94],
+        translateX: function(el, i) {
+          return i === 0 ? [-0, -26] : [0, 26];
+        },
+        duration: 520
+      }, "-=520");
+    }
   }
 
   animateRecommendationStage() {
     if (!this.canAnimate()) return;
-    window.anime.remove?.('.recommendation-panel, .recommendation-mini-card, .recommendation-tab');
+    window.anime.remove?.('.recommendation-panel, .recommendation-product-card, .recommendation-tab');
     window.anime({
       targets: '.recommendation-panel',
       opacity: [0, 1],
@@ -1210,7 +1291,7 @@ class ScraperApp {
       easing: 'easeOutExpo',
     });
     window.anime({
-      targets: '.recommendation-mini-card',
+      targets: '.recommendation-product-card',
       opacity: [0, 1],
       translateY: [18, 0],
       scale: [0.94, 1],
@@ -1558,18 +1639,53 @@ class ScraperApp {
 
     if (aiReason) this.appendText(body, 'ai-reason', aiReason);
 
-    card.appendChild(body);
+    const actionsBox = document.createElement('div');
+    actionsBox.className = 'product-card-actions';
 
-    const footer = document.createElement('div');
-    footer.className = 'product-footer';
-    const open = document.createElement('a');
-    open.className = 'btn-open-product';
-    open.href = url || '#';
-    open.target = '_blank';
-    open.rel = 'noopener';
-    open.textContent = 'Buka';
-    footer.append(open);
-    card.appendChild(footer);
+    const correctBtn = document.createElement('button');
+    correctBtn.className = 'card-action-btn is-correct';
+    correctBtn.dataset.feedbackCorrect = 'true';
+    correctBtn.dataset.noModal = 'true';
+    correctBtn.textContent = 'Benar';
+    correctBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this._submitFeedback(id, {
+        userAction: 'benar',
+        feedbackType: 'positive',
+        selectedReasons: [],
+        customReason: '',
+        correctedLabel: 'relevan',
+      });
+    });
+
+    const wrongBtn = document.createElement('button');
+    wrongBtn.className = 'card-action-btn is-wrong';
+    wrongBtn.dataset.feedbackWrong = 'true';
+    wrongBtn.dataset.noModal = 'true';
+    wrongBtn.textContent = 'Salah';
+    wrongBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.openProductModal(product, card);
+      this.revealReasonPanel();
+    });
+
+    const openBtn = document.createElement('a');
+    openBtn.className = 'card-action-btn is-open';
+    openBtn.dataset.noModal = 'true';
+    openBtn.href = url || '#';
+    openBtn.target = '_blank';
+    openBtn.rel = 'noopener noreferrer';
+    openBtn.textContent = 'Buka Produk';
+    openBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    actionsBox.append(correctBtn, wrongBtn, openBtn);
+    body.appendChild(actionsBox);
+
+    card.appendChild(body);
 
     return card;
   }
@@ -1803,21 +1919,251 @@ class ScraperApp {
   }
 
   bindProductCardClick() {
-    document.addEventListener("click", (event) => {
-      const ignore = event.target.closest("a, button, [data-no-product-modal]");
-      if (ignore) return;
+    const isInsideRecommendation = (cardEl) => {
+      return Boolean(cardEl.closest(".recommendation-stage"));
+    };
 
-      const card = event.target.closest(".product-card");
+    document.addEventListener("click", (event) => {
+      const card = event.target.closest(".product-card, .recommendation-product-card");
       if (!card) return;
 
-      const productId = card.dataset.productId;
-      const product = window.__MARKETSPY_PRODUCTS__?.find(
-        item => String(item.id) === String(productId)
-      );
+      const clickedAction = event.target.closest("button, a, [data-no-modal]");
+      if (clickedAction) return;
 
-      if (!product) return;
+      if (isInsideRecommendation(card)) {
+        const productId = card.dataset.productId;
+        const product = window.__MARKETSPY_PRODUCTS__?.find(
+          item => String(item.id) === String(productId)
+        );
 
-      this.openProductModal(product, card);
+        if (!product) return;
+
+        this.openRecommendationProductModal(product, card);
+        return;
+      }
+    });
+  }
+
+  openRecommendationProductModal(product, sourceCardEl) {
+    const dialog = document.querySelector("#recommendation-product-dialog");
+    if (!dialog) return;
+
+    window.__ACTIVE_MODAL_PRODUCT__ = product;
+    window.__ACTIVE_MODAL_SOURCE_CARD__ = sourceCardEl;
+
+    this.fillRecommendationProductModal(product);
+
+    const reasonPanel = dialog.querySelector(".modal-feedback-reason-panel");
+    if (reasonPanel) reasonPanel.hidden = true;
+
+    dialog.showModal();
+
+    window.anime({
+      targets: ".recommendation-modal-card",
+      opacity: [0, 1],
+      translateY: [50, 0],
+      scale: [0.90, 1],
+      duration: 1000,
+      easing: "easeOutExpo"
+    });
+
+    window.anime({
+      targets: ".recommendation-modal-image-wrap",
+      opacity: [0, 1],
+      translateX: [-48, 0],
+      scale: [0.96, 1],
+      duration: 1000,
+      delay: 120,
+      easing: "easeOutExpo"
+    });
+
+    window.anime({
+      targets: ".recommendation-modal-content > *",
+      opacity: [0, 1],
+      translateX: [36, 0],
+      delay: window.anime.stagger(70, { start: 180 }),
+      duration: 850,
+      easing: "easeOutExpo"
+    });
+  }
+
+  closeRecommendationProductModal() {
+    const dialog = document.querySelector("#recommendation-product-dialog");
+    if (!dialog) return;
+
+    window.anime({
+      targets: ".recommendation-modal-card",
+      opacity: [1, 0],
+      translateY: [0, 28],
+      scale: [1, 0.94],
+      duration: 1000,
+      easing: "easeOutExpo",
+      complete: () => {
+        dialog.close();
+        window.__ACTIVE_MODAL_PRODUCT__ = null;
+        window.__ACTIVE_MODAL_SOURCE_CARD__ = null;
+      }
+    });
+  }
+
+  fillRecommendationProductModal(product) {
+    const dialog = document.querySelector("#recommendation-product-dialog");
+    if (!dialog) return;
+
+    const img = dialog.querySelector(".recommendation-modal-image");
+    if (img) {
+      const imageUrl = this.resolveProductImage(product);
+      img.src = imageUrl || '';
+      img.onerror = () => {
+        if (imageUrl && !img.dataset.proxyTried) {
+          img.dataset.proxyTried = '1';
+          img.src = this.proxyImageUrl(imageUrl);
+        } else {
+          img.src = '';
+        }
+      };
+    }
+
+    dialog.querySelector(".recommendation-modal-title").textContent = product.title || 'Produk';
+    dialog.querySelector(".recommendation-modal-store").textContent = product.storeName || product.shop_name || product.shop || '';
+    dialog.querySelector(".recommendation-modal-price").textContent = product.price || '';
+
+    const ratingEl = dialog.querySelector(".recommendation-modal-rating");
+    if (ratingEl) {
+      ratingEl.textContent = product.rating ? `⭐ ${product.rating}` : '';
+      ratingEl.style.display = product.rating ? 'inline' : 'none';
+    }
+
+    const soldEl = dialog.querySelector(".recommendation-modal-sold");
+    if (soldEl) {
+      const soldText = product.sold || product.sold_text || product.soldCount || product.sold_count || '';
+      soldEl.textContent = soldText ? `🛍️ ${soldText}` : '';
+      soldEl.style.display = soldText ? 'inline' : 'none';
+    }
+
+    const confEl = dialog.querySelector(".recommendation-modal-confidence");
+    if (confEl) {
+      const aiValue = product.confidenceScore ?? product.ai_confidence ?? product.relevance_score;
+      const aiNumeric = Number(aiValue);
+      confEl.textContent = (aiValue != null && Number.isFinite(aiNumeric)) ? `🧠 AI Confidence: ${aiNumeric.toFixed(2)}` : '';
+      confEl.style.display = (aiValue != null && Number.isFinite(aiNumeric)) ? 'inline' : 'none';
+    }
+
+    const openBtn = dialog.querySelector(".open-product-btn");
+    if (openBtn) {
+      openBtn.href = product.url || '#';
+    }
+
+    const reasonGrid = dialog.querySelector(".modal-feedback-reason-grid");
+    if (reasonGrid) {
+      reasonGrid.innerHTML = '';
+      FEEDBACK_REASONS.forEach((reason) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "feedback-reason-chip";
+        chip.dataset.reason = reason;
+        chip.textContent = reason;
+        chip.addEventListener("click", (e) => {
+          e.preventDefault();
+          chip.classList.toggle("is-selected");
+        });
+        reasonGrid.appendChild(chip);
+      });
+    }
+
+    const noteTextarea = dialog.querySelector(".modal-feedback-note");
+    if (noteTextarea) {
+      noteTextarea.value = '';
+    }
+  }
+
+  revealModalReasonPanel() {
+    const panel = document.querySelector(".modal-feedback-reason-panel");
+    const grid = document.querySelector(".modal-feedback-reason-grid");
+    if (!panel || !grid) return;
+
+    panel.hidden = false;
+
+    window.anime({
+      targets: panel,
+      opacity: [0, 1],
+      translateY: [24, 0],
+      duration: 650,
+      easing: "easeOutExpo"
+    });
+
+    window.anime({
+      targets: ".modal-feedback-reason-grid .feedback-reason-chip",
+      opacity: [0, 1],
+      translateY: [16, 0],
+      scale: [0.94, 1],
+      delay: window.anime.stagger(45),
+      duration: 650,
+      easing: "easeOutExpo"
+    });
+  }
+
+  bindRecommendationModalEvents() {
+    const dialog = document.querySelector("#recommendation-product-dialog");
+    if (!dialog) return;
+
+    dialog.querySelector("[data-recommendation-modal-close]")?.addEventListener("click", () => {
+      this.closeRecommendationProductModal();
+    });
+
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) {
+        this.closeRecommendationProductModal();
+      }
+    });
+
+    dialog.querySelector("[data-modal-feedback-correct]")?.addEventListener("click", async () => {
+      if (!window.__ACTIVE_MODAL_PRODUCT__) return;
+      const pid = window.__ACTIVE_MODAL_PRODUCT__.id;
+
+      const success = await this._submitFeedback(pid, {
+        userAction: 'benar',
+        feedbackType: 'positive',
+        selectedReasons: [],
+        customReason: '',
+        correctedLabel: 'relevan',
+      });
+
+      if (success) {
+        setTimeout(() => {
+          this.closeRecommendationProductModal();
+        }, 800);
+      }
+    });
+
+    dialog.querySelector("[data-modal-feedback-wrong]")?.addEventListener("click", () => {
+      this.revealModalReasonPanel();
+    });
+
+    dialog.querySelector("[data-modal-feedback-save]")?.addEventListener("click", async () => {
+      if (!window.__ACTIVE_MODAL_PRODUCT__) return;
+      const pid = window.__ACTIVE_MODAL_PRODUCT__.id;
+
+      const selectedReasons = Array.from(dialog.querySelectorAll(".modal-feedback-reason-grid .feedback-reason-chip.is-selected"))
+        .map(chip => chip.dataset.reason);
+      const note = dialog.querySelector(".modal-feedback-note")?.value.trim() || '';
+
+      const success = await this._submitFeedback(pid, {
+        userAction: 'salah',
+        feedbackType: 'negative',
+        selectedReasons,
+        customReason: note,
+        correctedLabel: 'tidak_relevan',
+      });
+
+      if (success) {
+        this.closeRecommendationProductModal();
+      }
+    });
+
+    dialog.querySelector("[data-modal-feedback-cancel]")?.addEventListener("click", () => {
+      const panel = dialog.querySelector(".modal-feedback-reason-panel");
+      if (panel) panel.hidden = true;
     });
   }
 
@@ -1904,12 +2250,24 @@ class ScraperApp {
       if (card) {
         card.classList.add('feedback-sent');
         card.title = `Feedback: ${feedback.userAction}`;
-        const badges = card.querySelector('.product-badges');
-        if (badges && !badges.querySelector('.feedback-accepted-badge')) {
-          const badge = this.createBadge(feedback.feedbackType === 'positive' ? 'Benar' : 'Feedback diterima');
-          badge.classList.add('feedback-accepted-badge');
-          badges.appendChild(badge);
+        
+        if (card.classList.contains('recommendation-product-card')) {
+          let badge = card.querySelector('.feedback-accepted-badge');
+          if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'feedback-accepted-badge product-badge';
+            badge.textContent = feedback.feedbackType === 'positive' ? 'Benar' : 'Feedback diterima';
+            card.querySelector('div')?.appendChild(badge);
+          }
+        } else {
+          const badges = card.querySelector('.product-badges');
+          if (badges && !badges.querySelector('.feedback-accepted-badge')) {
+            const badge = this.createBadge(feedback.feedbackType === 'positive' ? 'Benar' : 'Feedback diterima');
+            badge.classList.add('feedback-accepted-badge');
+            badges.appendChild(badge);
+          }
         }
+
         if (feedback.feedbackType === 'positive') {
           this.animatePositiveFeedback(card);
         }
@@ -2000,4 +2358,6 @@ class ScraperApp {
 let app;
 document.addEventListener('DOMContentLoaded', () => {
   app = new ScraperApp();
+  window.openRecommendationProductModal = (product, card) => app.openRecommendationProductModal(product, card);
+  window.closeRecommendationProductModal = () => app.closeRecommendationProductModal();
 });
