@@ -9,8 +9,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=ui-20260528">
   <!-- UI_BUILD_MARKER_20260528 -->
+  <!-- UI_RECOMMENDATION_MORPH_20260528 -->
+  <!-- UI_FINAL_REVIEW_FLOW_20260528 -->
 </head>
 <body>
+  <span id="UI_FINAL_REVIEW_FLOW_20260528" style="display: none;">UI_FINAL_REVIEW_FLOW_20260528</span>
   <div class="app">
     <header class="header">
       <div class="header-inner">
@@ -105,8 +108,19 @@
           <label class="checkbox-label">
             <input type="checkbox" id="target_first_mode">
             <span>Prioritaskan jumlah target walau sedikit keluar budget</span>
-            <small>Default mati. Jika aktif, produk di luar budget diberi badge khusus.</small>
           </label>
+          <div class="target-priority-info-box">
+            <button type="button" class="info-toggle" data-toggle-target-priority-info>
+              Apa maksud opsi ini?
+            </button>
+
+            <div class="info-content" hidden>
+              <p>
+                Jika aktif, sistem akan memprioritaskan jumlah target produk.
+                Produk yang sedikit keluar dari budget tetap bisa muncul, tetapi diberi badge khusus agar mudah dibedakan.
+              </p>
+            </div>
+          </div>
         </div>
 
         <div class="form-actions">
@@ -119,104 +133,20 @@
       <section id="progress-panel" class="panel progress-panel hidden">
         <h2 class="panel-title">Scraping Berlangsung</h2>
 
-        <div class="ai-progress-stage" data-progress-running="false">
-          <svg class="ai-progress-orbit" viewBox="0 0 420 120" aria-hidden="true">
-            <path
-              id="ai-progress-path"
-              class="ai-progress-path"
-              d="M20,70 C85,5 145,5 210,70 C275,135 335,135 400,70"
-              fill="none"
-            />
-            <path
-              id="ai-progress-path-glow"
-              class="ai-progress-path-glow"
-              d="M20,70 C85,5 145,5 210,70 C275,135 335,135 400,70"
-              fill="none"
-            />
-          </svg>
+        <div class="progress-clean-panel" data-progress-stage="idle">
+          <div class="progress-scramble-text" id="progressScrambleText">Menunggu proses...</div>
 
-          <div class="ai-progress-orb">
-            <span class="ai-progress-core"></span>
-          </div>
-
-          <div class="ai-progress-copy">
-            <div class="ai-progress-label">AI SCRAPING</div>
-            <div class="ai-progress-scramble">Mengambil data marketplace...</div>
-          </div>
-
-          <div class="ai-time-mini">
-            <div class="ai-time-pill">
+          <div class="progress-time-row">
+            <div class="progress-time-pill">
               <span>Elapsed</span>
               <strong id="elapsedText">00:00</strong>
             </div>
-            <div class="ai-time-pill">
+
+            <div class="progress-time-pill">
               <span>ETA</span>
               <strong id="etaText">Menghitung...</strong>
             </div>
           </div>
-        </div>
-
-        <div class="progress-header">
-          <div class="progress-pct" id="progress-pct">0%</div>
-          <div class="progress-stage-label" id="progress-stage-label">Initializing</div>
-        </div>
-
-        <div class="progress-track">
-          <div class="progress-bar" id="progress-bar"></div>
-        </div>
-
-        <div class="progress-meta">
-          <div class="meta-item">
-            <span class="meta-label">Ditemukan</span>
-            <span class="meta-val" id="pm-found">0</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Valid</span>
-            <span class="meta-val" id="pm-valid">0</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Target</span>
-            <span class="meta-val" id="pm-target">-</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Elapsed</span>
-            <span class="meta-val" id="pm-elapsed">0s</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">ETA</span>
-            <span class="meta-val" id="pm-eta">Calculating...</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Engine</span>
-            <span class="meta-val" id="pm-engine">-</span>
-          </div>
-          <div class="meta-item">
-            <span class="meta-label">Attempt</span>
-            <span class="meta-val" id="pm-attempt">1/1</span>
-          </div>
-        </div>
-
-        <div class="progress-message" id="progress-message">Memulai...</div>
-
-        <div class="progress-log-wrap">
-          <div class="progress-log-title">Aktivitas</div>
-          <div id="progress-log" class="progress-log"></div>
-        </div>
-
-        <div class="stage-pipeline">
-          <div class="stage-item" id="stage-init"><div class="stage-dot"></div><span>Init</span></div>
-          <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-opening"><div class="stage-dot"></div><span>Open</span></div>
-          <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-scrolling"><div class="stage-dot"></div><span>Scroll</span></div>
-          <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-extracting"><div class="stage-dot"></div><span>Extract</span></div>
-          <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-filtering"><div class="stage-dot"></div><span>Filter</span></div>
-          <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-ai_validation"><div class="stage-dot"></div><span>AI</span></div>
-          <div class="stage-connector"></div>
-          <div class="stage-item" id="stage-finalizing"><div class="stage-dot"></div><span>Done</span></div>
         </div>
       </section>
 
@@ -268,28 +198,36 @@
 
         <div id="r-warning" class="result-warning hidden"></div>
 
-        <div class="quick-sort" id="quick-sort">
-          <button type="button" class="quick-sort-btn active" data-sort-mode="terbaik">Terbaik</button>
-          <button type="button" class="quick-sort-btn" data-sort-mode="termurah">Termurah</button>
-          <button type="button" class="quick-sort-btn" data-sort-mode="most_trusted">Most Trusted</button>
-        </div>
-
         <div id="comparison-panel" class="comparison-panel hidden">
           <h3>Engine Comparison</h3>
           <div id="comparison-grid" class="comparison-grid"></div>
         </div>
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
-          <div id="recommendation-stage" class="recommendation-stage">
-            <div class="recommendation-stage-head">
+          <section class="recommendation-stage" id="recommendation-stage" data-active-mode="terbaik">
+            <div class="recommendation-bg-orbit"></div>
+
+            <div class="recommendation-header">
               <div>
-                <span class="section-kicker">Quick Recommendation</span>
-                <h3 id="recommendation-stage-title">Terbaik</h3>
+                <span class="recommendation-kicker">QUICK RECOMMENDATION</span>
+                <h2 id="recommendationTitle" class="recommendation-active-title">Terbaik</h2>
               </div>
-              <div id="recommendation-tabs" class="recommendation-tabs" role="tablist" aria-label="Rekomendasi cepat"></div>
+
+              <div class="recommendation-controls">
+                <button class="recommendation-mode-btn is-active" data-recommendation-mode="terbaik">⭐ Terbaik</button>
+                <button class="recommendation-mode-btn" data-recommendation-mode="termurah">💸 Termurah</button>
+                <button class="recommendation-mode-btn" data-recommendation-mode="trusted">🏆 Most Trusted</button>
+              </div>
             </div>
-            <div id="recommendation-stage-grid" class="recommendation-stage-grid"></div>
-          </div>
+
+            <main class="recommendation-active-panel">
+              <div class="recommendation-focus-logo">
+                <span class="active-mode-icon">⭐</span>
+              </div>
+
+              <div class="recommendation-product-grid" id="recommendation-product-grid"></div>
+            </main>
+          </section>
         </div>
 
         <div id="products-grid" class="products-grid"></div>
@@ -300,6 +238,138 @@
       </section>
     </main>
   </div>
+
+  <dialog id="product-feedback-dialog" class="product-feedback-dialog">
+    <div class="product-modal-card">
+      <button class="modal-close" data-product-modal-close>×</button>
+
+      <div class="product-modal-layout">
+        <div class="product-modal-image-wrap">
+          <img class="product-modal-image" alt="Product image" />
+        </div>
+
+        <div class="product-modal-content">
+          <span class="product-modal-kicker">PRODUCT DETAIL</span>
+          <h2 class="product-modal-title"></h2>
+          <p class="product-modal-store"></p>
+
+          <div class="product-modal-price"></div>
+
+          <div class="product-modal-meta">
+            <span class="product-modal-rating"></span>
+            <span class="product-modal-sold"></span>
+            <span class="product-modal-confidence"></span>
+          </div>
+
+          <div class="product-modal-actions-box">
+            <p class="feedback-question">Apakah produk ini sesuai?</p>
+
+            <div class="feedback-action-row">
+              <button class="feedback-yes-btn" data-feedback-correct>
+                Benar
+              </button>
+
+              <button class="feedback-no-btn" data-feedback-wrong>
+                Salah
+              </button>
+
+              <a class="open-product-btn" target="_blank" rel="noopener noreferrer">
+                Buka Produk
+              </a>
+            </div>
+          </div>
+
+          <div class="feedback-reason-panel" hidden>
+            <h3>Kenapa produk ini salah?</h3>
+            <p>Pilih satu atau lebih alasan biar AI belajar.</p>
+
+            <div class="feedback-reason-grid"></div>
+
+            <textarea
+              class="feedback-note"
+              placeholder="Tambahin catatan kalau perlu..."
+            ></textarea>
+
+            <div class="feedback-save-row">
+              <button class="btn-ghost" data-feedback-reason-cancel>
+                Batal
+              </button>
+
+              <button class="btn-primary" data-feedback-save>
+                Simpan Feedback
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="recommendation-product-dialog" class="recommendation-product-dialog">
+    <div class="recommendation-modal-card">
+      <button class="modal-close" data-recommendation-modal-close>×</button>
+
+      <div class="recommendation-modal-layout">
+        <div class="recommendation-modal-image-wrap">
+          <img class="recommendation-modal-image" alt="Product image" />
+        </div>
+
+        <div class="recommendation-modal-content">
+          <span class="recommendation-modal-kicker">RECOMMENDATION DETAIL</span>
+          <h2 class="recommendation-modal-title"></h2>
+          <p class="recommendation-modal-store"></p>
+
+          <div class="recommendation-modal-price"></div>
+
+          <div class="recommendation-modal-meta">
+            <span class="recommendation-modal-rating"></span>
+            <span class="recommendation-modal-sold"></span>
+            <span class="recommendation-modal-confidence"></span>
+          </div>
+
+          <div class="recommendation-modal-actions-box">
+            <p>Apakah produk ini sesuai?</p>
+
+            <div class="feedback-action-row">
+              <button class="feedback-yes-btn" data-modal-feedback-correct>
+                Benar
+              </button>
+
+              <button class="feedback-no-btn" data-modal-feedback-wrong>
+                Salah
+              </button>
+
+              <a class="open-product-btn" target="_blank" rel="noopener noreferrer">
+                Buka Produk
+              </a>
+            </div>
+          </div>
+
+          <div class="modal-feedback-reason-panel" hidden>
+            <h3>Kenapa produk ini salah?</h3>
+            <p>Pilih satu atau lebih alasan biar AI belajar.</p>
+
+            <div class="modal-feedback-reason-grid"></div>
+
+            <textarea
+              class="modal-feedback-note"
+              placeholder="Tambahin catatan kalau perlu..."
+            ></textarea>
+
+            <div class="feedback-save-row">
+              <button class="btn-ghost" data-modal-feedback-cancel>
+                Batal
+              </button>
+
+              <button class="btn-primary" data-modal-feedback-save>
+                Simpan Feedback
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
 
   <script src="vendor/anime.min.js?v=ui-20260528"></script>
   <script src="app.js?v=ui-20260528" defer></script>
