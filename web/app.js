@@ -398,6 +398,87 @@ class ScraperApp {
     this.state.elapsedTimer = null;
   }
 
+  startProgressAnimation() {
+    if (!window.anime) return;
+    this.stopProgressAnimation();
+    
+    const messages = [
+      'Mengambil data marketplace...',
+      'Membaca kartu produk...',
+      'Membersihkan duplikat...',
+      'Mengecek budget...',
+      'AI sedang audit kandidat...',
+      'Menyusun rekomendasi terbaik...',
+      'Menyiapkan hasil...',
+    ];
+
+    let messageIndex = 0;
+    const scrambleText = (element) => {
+      if (!element) return;
+      const message = messages[messageIndex % messages.length];
+      messageIndex++;
+      element.textContent = message;
+    };
+
+    this._progressMessageTimer = setInterval(() => {
+      const el = this.$('ai-progress-scramble') || this.$('progress-message');
+      if (el) scrambleText(el);
+    }, 2100);
+
+    const stage = this.$('ai-progress-stage');
+    if (stage) stage.setAttribute('data-progress-running', 'true');
+
+    const path = this.$('ai-progress-path');
+    const pathGlow = this.$('ai-progress-path-glow');
+    const orb = this.$('ai-progress-orb');
+
+    if (pathGlow) pathGlow.classList.add('is-animating');
+
+    if (orb && window.anime) {
+      const pathElement = this.$('ai-progress-path');
+      if (pathElement && typeof window.anime.path === 'function') {
+        const pathMotion = window.anime.path(pathElement);
+        if (pathMotion) {
+          this._progressAnimationTimeline = window.anime({
+            targets: orb,
+            translateX: pathMotion('x'),
+            translateY: pathMotion('y'),
+            rotate: pathMotion('angle'),
+            duration: 4200,
+            easing: 'easeInOutSine',
+            loop: true,
+          });
+          return;
+        }
+      }
+
+      this._progressAnimationTimeline = window.anime({
+        targets: orb,
+        translateX: [0, 100, 150, 100, 0, -50, 0],
+        translateY: [0, -50, 0, 50, 0, -30, 0],
+        rotate: [0, 180, 360, 180, 0, -90, 0],
+        duration: 4200,
+        easing: 'easeInOutSine',
+        loop: true,
+      });
+    }
+  }
+
+  stopProgressAnimation() {
+    if (this._progressMessageTimer) {
+      clearInterval(this._progressMessageTimer);
+      this._progressMessageTimer = null;
+    }
+    if (this._progressAnimationTimeline) {
+      this._progressAnimationTimeline.pause();
+      this._progressAnimationTimeline = null;
+    }
+    const stage = this.$('ai-progress-stage');
+    if (stage) stage.setAttribute('data-progress-running', 'false');
+    const pathGlow = this.$('ai-progress-path-glow');
+    if (pathGlow) pathGlow.classList.remove('is-animating');
+  }
+
   async fetchProgress() {
     if (!this.state.searchId) return;
     try {
@@ -435,6 +516,7 @@ class ScraperApp {
     this.state.localEtaSeconds = null;
     this.state.lastEtaFallbackSignature = null;
     this.state.lastProgress = null;
+    this.stopProgressAnimation();
     this.renderProgress({
       percent: 0,
       progress_percent: 0,
@@ -551,6 +633,20 @@ class ScraperApp {
     const phase = progress.phase || stage;
     this.$('progress-stage-label').textContent = this.stageLabel(stage);
     this.$('progress-message').textContent = progress.statusText || progress.status_text || progress.message || '';
+    
+    const elapsedEl = this.$('elapsedText');
+    const etaEl = this.$('etaText');
+    if (elapsedEl && this.state.progressStartedAtMs) {
+      const seconds = Math.floor((Date.now() - Number(this.state.progressStartedAtMs)) / 1000);
+      this.state.localElapsedSeconds = Math.max(0, seconds);
+      elapsedEl.textContent = this.formatDuration(this.state.localElapsedSeconds);
+    } else if (elapsedEl) {
+      elapsedEl.textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '00:00';
+    }
+    if (etaEl) {
+      etaEl.textContent = this.etaDisplayText();
+    }
+
     this.$('pm-found').textContent = progress.foundCount ?? progress.found ?? 0;
     this.$('pm-valid').textContent = progress.valid ?? 0;
     this.$('pm-target').textContent = progress.targetCount ?? progress.target ?? '-';
@@ -564,6 +660,15 @@ class ScraperApp {
     this.$('pm-attempt').textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
     this.updateStagePipeline(phase, pct);
     this.renderProgressLogs(progress.logs || []);
+
+    if (!progress.done && !this._progressAnimationStarted) {
+      this._progressAnimationStarted = true;
+      this.startProgressAnimation();
+    }
+    if (progress.done) {
+      this.stopProgressAnimation();
+      this._progressAnimationStarted = false;
+    }
   }
 
   renderProgressLogs(logs) {
@@ -1473,50 +1578,53 @@ class ScraperApp {
   }
 
   _createFeedbackModal() {
-    const modal = document.createElement('div');
-    modal.id = 'feedback-modal';
-    modal.className = 'modal hidden';
+    const modal = document.createElement('dialog');
+    modal.id = 'feedback-dialog';
+    modal.className = 'feedback-dialog';
     modal.innerHTML = `
-      <div class="modal-overlay" id="modal-overlay"></div>
-      <div class="modal-box" role="dialog" aria-modal="true" aria-label="Feedback salah">
-        <div class="modal-header">
+      <div class="feedback-modal-backdrop"></div>
+      <div class="feedback-modal-card">
+        <div class="feedback-modal-header">
+          <span class="feedback-modal-kicker">AI LEARNING</span>
+          <h2>Kenapa produk ini salah?</h2>
+          <p>Pilih satu atau lebih alasan biar AI belajar dari kesalahan.</p>
+        </div>
+        
+        <div class="feedback-product-preview">
+          <img class="feedback-product-image" alt="Product" />
           <div>
-            <h3>Kenapa produk ini salah?</h3>
-            <p>Pilih satu atau lebih alasan biar AI belajar.</p>
+            <h3 class="feedback-product-title"></h3>
+            <p class="feedback-product-price"></p>
           </div>
-          <button class="modal-close" id="modal-close" aria-label="Tutup">x</button>
         </div>
-        <div class="modal-product" id="modal-product-info"></div>
-        <div class="modal-cats" id="modal-cats"></div>
-        <div class="modal-note-wrap">
-          <label for="modal-note">Catatan tambahan</label>
-          <textarea id="modal-note" placeholder="Tambahin catatan kalau perlu..." maxlength="500"></textarea>
-        </div>
-        <div class="modal-actions">
-          <button class="btn btn-ghost" id="modal-cancel">Batal</button>
-          <button class="btn btn-primary" id="modal-submit">Simpan Feedback</button>
+        
+        <div class="feedback-reason-grid" id="feedback-reason-grid"></div>
+        
+        <textarea class="feedback-note" id="feedback-note" placeholder="Tambahin catatan kalau perlu..." maxlength="500"></textarea>
+        
+        <div class="feedback-modal-actions">
+          <button type="button" class="btn-ghost" data-feedback-cancel>Batal</button>
+          <button type="button" class="btn-primary" data-feedback-save>Simpan Feedback</button>
         </div>
       </div>
     `;
     document.body.appendChild(modal);
 
-    modal.querySelector('#modal-overlay')?.addEventListener('click', () => this._closeFeedbackModal());
-    modal.querySelector('#modal-close')?.addEventListener('click', () => this._closeFeedbackModal());
-    modal.querySelector('#modal-cancel')?.addEventListener('click', () => this._closeFeedbackModal());
-    modal.querySelector('#modal-submit')?.addEventListener('click', () => this._submitModalFeedback());
+    modal.querySelector('[data-feedback-cancel]')?.addEventListener('click', () => this._closeFeedbackModal());
+    modal.querySelector('[data-feedback-save]')?.addEventListener('click', () => this._submitModalFeedback());
 
-    const reasonsDiv = modal.querySelector('#modal-cats');
+    const reasonsDiv = modal.querySelector('#feedback-reason-grid');
     FEEDBACK_REASONS.forEach((reason) => {
-      const item = document.createElement('label');
-      item.className = 'cat-checkbox';
-      const help = reason === 'Spesifikasi tidak sesuai query'
-        ? '<small>Contoh: cari RTX 5060 tapi yang muncul RTX 4060.</small>'
-        : '';
-      item.innerHTML = `<input type="checkbox" name="reason" value="${this.esc(reason)}"><span>${this.esc(reason)}</span>${help}`;
-      item.querySelector('input')?.addEventListener('change', (event) => {
-        item.classList.toggle('is-selected', event.currentTarget.checked);
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'feedback-reason-chip';
+      chip.dataset.reason = reason;
+      chip.textContent = reason;
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        chip.classList.toggle('is-selected');
       });
-      reasonsDiv.appendChild(item);
+      reasonsDiv?.appendChild(chip);
     });
 
     this._modal = modal;
@@ -1529,13 +1637,31 @@ class ScraperApp {
 
     this._modalPid = productId;
     this.state.activeFeedbackProductId = productId;
-    const info = this._modal.querySelector('#modal-product-info');
-    if (info) info.textContent = product.title || 'Produk';
-    this._modal.querySelectorAll('input[name="reason"]').forEach((cb) => {
-      cb.checked = false;
-      cb.closest('.cat-checkbox')?.classList.remove('is-selected');
+    
+    const imageUrl = this.resolveProductImage(product);
+    const img = this._modal.querySelector('.feedback-product-image');
+    if (img) {
+      if (imageUrl) {
+        img.src = imageUrl;
+        img.style.display = 'block';
+        img.onerror = () => {
+          img.src = this.proxyImageUrl(imageUrl);
+          img.onerror = () => {
+            img.style.display = 'none';
+          };
+        };
+      } else {
+        img.style.display = 'none';
+      }
+    }
+
+    this._modal.querySelector('.feedback-product-title').textContent = product.title || 'Produk';
+    this._modal.querySelector('.feedback-product-price').textContent = product.price || '-';
+
+    this._modal.querySelectorAll('.feedback-reason-chip').forEach((chip) => {
+      chip.classList.remove('is-selected');
     });
-    const note = this._modal.querySelector('#modal-note');
+    const note = this._modal.querySelector('#feedback-note');
     if (note) note.value = '';
 
     document.querySelectorAll('.product-card').forEach((card) => {
@@ -1543,27 +1669,38 @@ class ScraperApp {
       card.classList.toggle('feedback-focus', isActive);
       card.classList.toggle('feedback-dimmed', !isActive);
     });
-    this._modal.classList.remove('hidden');
+
+    this._modal.classList.add('is-open');
     document.body.classList.add('modal-open');
+
     if (this.canAnimate()) {
+      window.anime.remove?.('.feedback-modal-backdrop, .feedback-modal-card, .feedback-reason-chip');
       window.anime({
-        targets: '#feedback-modal .modal-overlay',
+        targets: '.feedback-modal-backdrop',
         opacity: [0, 1],
-        duration: 260,
+        duration: 1000,
         easing: 'easeOutExpo',
       });
       window.anime({
-        targets: '#feedback-modal .modal-box',
+        targets: '.feedback-modal-card',
         opacity: [0, 1],
-        translateY: [28, 0],
-        scale: [0.96, 1],
-        duration: 460,
+        translateY: [42, 0],
+        scale: [0.90, 1],
+        duration: 1000,
+        easing: 'easeOutExpo',
+      });
+      window.anime({
+        targets: '.feedback-reason-chip',
+        opacity: [0, 1],
+        translateY: [12, 0],
+        delay: window.anime.stagger(40, { start: 200 }),
+        duration: 1000,
         easing: 'easeOutExpo',
       });
       window.anime({
         targets: '.product-card.feedback-focus',
         scale: [1, 0.985],
-        duration: 260,
+        duration: 400,
         easing: 'easeOutExpo',
       });
     }
@@ -1571,12 +1708,10 @@ class ScraperApp {
 
   _closeFeedbackModal(animate = true) {
     const cleanup = () => {
-      this._modal?.classList.add('hidden');
+      this._modal?.classList.remove('is-open');
       document.body.classList.remove('modal-open');
       document.querySelectorAll('.product-card.feedback-focus, .product-card.feedback-dimmed').forEach((card) => {
         card.classList.remove('feedback-focus', 'feedback-dimmed');
-        card.style.transform = '';
-        card.style.opacity = '';
       });
       this._modalPid = null;
       this.state.activeFeedbackProductId = null;
@@ -1587,30 +1722,46 @@ class ScraperApp {
       return Promise.resolve();
     }
 
-    const overlay = this._modal?.querySelector('.modal-overlay');
-    const box = this._modal?.querySelector('.modal-box');
+    const chips = this._modal?.querySelectorAll('.feedback-reason-chip');
+    const card = this._modal?.querySelector('.feedback-modal-card');
+    const backdrop = this._modal?.querySelector('.feedback-modal-backdrop');
+
+    if (chips && chips.length) {
+      window.anime.remove?.('.feedback-reason-chip');
+      window.anime({
+        targets: chips,
+        opacity: [1, 0],
+        translateY: [0, 12],
+        delay: window.anime.stagger(20, { direction: 'reverse' }),
+        duration: 800,
+        easing: 'easeInExpo',
+      });
+    }
+
+    window.anime.remove?.('.feedback-modal-card, .feedback-modal-backdrop, .product-card.feedback-focus');
     const animation = window.anime({
-      targets: [overlay, box].filter(Boolean),
+      targets: [card, backdrop].filter(Boolean),
       opacity: [1, 0],
-      translateY: [0, 20],
-      duration: 260,
-      easing: 'easeOutExpo',
+      translateY: [card ? 0 : undefined, 28],
+      scale: [1, 0.94],
+      duration: 1000,
+      easing: 'easeInExpo',
       complete: cleanup,
     });
     window.anime({
       targets: '.product-card.feedback-focus',
       scale: [0.985, 1],
-      duration: 260,
+      duration: 400,
       easing: 'easeOutExpo',
     });
-    return animation.finished;
+    return animation.finished || Promise.resolve();
   }
 
   async _submitModalFeedback() {
     if (!this._modalPid) return;
-    const selectedReasons = Array.from(this._modal.querySelectorAll('input[name="reason"]:checked'))
-      .map((cb) => cb.value);
-    const customReason = this._modal.querySelector('#modal-note')?.value.trim() || '';
+    const selectedReasons = Array.from(this._modal.querySelectorAll('.feedback-reason-chip.is-selected'))
+      .map((chip) => chip.dataset.reason);
+    const customReason = this._modal.querySelector('#feedback-note')?.value.trim() || '';
     const saved = await this._submitFeedback(this._modalPid, {
       userAction: 'salah',
       feedbackType: 'negative',

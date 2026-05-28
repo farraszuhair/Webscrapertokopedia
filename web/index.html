@@ -7,7 +7,8 @@
   <meta name="description" content="MarketSpy AI scraper with Puppeteer, Selenium rollback, intent-aware filtering, and local Ollama validation.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=ui-20260528">
+  <!-- UI_BUILD_MARKER_20260528 -->
 </head>
 <body>
   <div class="app">
@@ -117,6 +118,43 @@
 
       <section id="progress-panel" class="panel progress-panel hidden">
         <h2 class="panel-title">Scraping Berlangsung</h2>
+
+        <div class="ai-progress-stage" data-progress-running="false">
+          <svg class="ai-progress-orbit" viewBox="0 0 420 120" aria-hidden="true">
+            <path
+              id="ai-progress-path"
+              class="ai-progress-path"
+              d="M20,70 C85,5 145,5 210,70 C275,135 335,135 400,70"
+              fill="none"
+            />
+            <path
+              id="ai-progress-path-glow"
+              class="ai-progress-path-glow"
+              d="M20,70 C85,5 145,5 210,70 C275,135 335,135 400,70"
+              fill="none"
+            />
+          </svg>
+
+          <div class="ai-progress-orb">
+            <span class="ai-progress-core"></span>
+          </div>
+
+          <div class="ai-progress-copy">
+            <div class="ai-progress-label">AI SCRAPING</div>
+            <div class="ai-progress-scramble">Mengambil data marketplace...</div>
+          </div>
+
+          <div class="ai-time-mini">
+            <div class="ai-time-pill">
+              <span>Elapsed</span>
+              <strong id="elapsedText">00:00</strong>
+            </div>
+            <div class="ai-time-pill">
+              <span>ETA</span>
+              <strong id="etaText">Menghitung...</strong>
+            </div>
+          </div>
+        </div>
 
         <div class="progress-header">
           <div class="progress-pct" id="progress-pct">0%</div>
@@ -263,7 +301,7 @@
     </main>
   </div>
 
-  <script src="vendor/anime.min.js"></script>
-  <script src="app.js"></script>
+  <script src="vendor/anime.min.js?v=ui-20260528"></script>
+  <script src="app.js?v=ui-20260528" defer></script>
 </body>
 </html>

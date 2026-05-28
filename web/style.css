@@ -1794,3 +1794,476 @@ body.modal-open {
     width: 100%;
   }
 }
+
+/* ============================================================
+   CINEMATIC PROGRESS PANEL - AI PROGRESS STAGE
+   ============================================================ */
+
+.ai-progress-stage {
+  position: relative;
+  margin: 18px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(96, 165, 250, 0.14), transparent 42%),
+    linear-gradient(180deg, rgba(22, 32, 51, 0.88), rgba(15, 23, 42, 0.92));
+  box-shadow: 0 16px 48px rgba(59, 130, 246, 0.12);
+  padding: 24px;
+  min-height: 160px;
+  will-change: transform;
+}
+
+.ai-progress-orbit {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.ai-progress-path {
+  fill: none;
+  stroke: rgba(96, 165, 250, 0.34);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 400;
+  stroke-dashoffset: 0;
+}
+
+.ai-progress-path-glow {
+  fill: none;
+  stroke: rgba(96, 165, 250, 0.18);
+  stroke-width: 4;
+  stroke-linecap: round;
+  filter: blur(2px);
+  opacity: 0;
+}
+
+.ai-progress-path-glow.is-animating {
+  stroke-dasharray: 400;
+  stroke-dashoffset: 0;
+}
+
+.ai-progress-orb {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.ai-progress-core {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #60a5fa, #3b82f6);
+  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.28), 0 0 16px rgba(96, 165, 250, 0.42);
+}
+
+.ai-progress-copy {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+}
+
+.ai-progress-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--primary-glow);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-progress-scramble {
+  display: block;
+  min-height: 24px;
+  color: var(--text-main);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.ai-time-mini {
+  position: absolute;
+  bottom: 18px;
+  right: 18px;
+  display: flex;
+  gap: 12px;
+}
+
+.ai-time-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid rgba(96, 165, 250, 0.26);
+  border-radius: 999px;
+  background: rgba(22, 32, 51, 0.58);
+  backdrop-filter: blur(8px);
+}
+
+.ai-time-pill span {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ai-time-pill strong {
+  color: var(--text-main);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   FEEDBACK MODAL - 1000ms DIALOG ANIMATION
+   ============================================================ */
+
+.feedback-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: transparent;
+}
+
+.feedback-dialog.is-open {
+  display: flex;
+}
+
+.feedback-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 11, 24, 0.72);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+}
+
+.feedback-dialog.is-open .feedback-modal-backdrop {
+  opacity: 1;
+  animation: feedbackBackdropIn 1000ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.feedback-modal-card {
+  position: relative;
+  z-index: 2;
+  width: min(560px, 100%);
+  max-height: min(840px, 92vh);
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 22% 0%, rgba(124, 58, 237, 0.18), transparent 34%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(7, 11, 24, 0.98));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
+  opacity: 0;
+  transform: translateY(42px) scale(0.90);
+}
+
+.feedback-dialog.is-open .feedback-modal-card {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  animation: feedbackModalIn 1000ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.feedback-modal-header {
+  border-bottom: 1px solid var(--border-soft);
+  padding: 18px 20px;
+}
+
+.feedback-modal-header h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: var(--text-main);
+}
+
+.feedback-modal-header p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.feedback-modal-kicker {
+  display: inline-flex;
+  margin-bottom: 10px;
+  color: var(--primary-glow);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.feedback-product-preview {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin: 16px 20px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(22, 32, 51, 0.62);
+}
+
+.feedback-product-image {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.88);
+  object-fit: cover;
+  object-position: center;
+}
+
+.feedback-product-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.feedback-product-price {
+  margin: 4px 0 0;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.feedback-reason-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 20px 20px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.feedback-reason-chip {
+  position: relative;
+  border: 1.5px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(22, 32, 51, 0.62);
+  color: var(--text-main);
+  padding: 11px 13px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 850;
+  text-align: center;
+  transition: background .18s ease, border-color .18s ease, color .18s ease;
+  opacity: 0;
+  animation: feedbackChipIn 1000ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.feedback-reason-chip:nth-child(1) { animation-delay: 80ms; }
+.feedback-reason-chip:nth-child(2) { animation-delay: 120ms; }
+.feedback-reason-chip:nth-child(3) { animation-delay: 160ms; }
+.feedback-reason-chip:nth-child(4) { animation-delay: 200ms; }
+.feedback-reason-chip:nth-child(5) { animation-delay: 240ms; }
+.feedback-reason-chip:nth-child(6) { animation-delay: 280ms; }
+.feedback-reason-chip:nth-child(7) { animation-delay: 320ms; }
+.feedback-reason-chip:nth-child(8) { animation-delay: 360ms; }
+.feedback-reason-chip:nth-child(9) { animation-delay: 400ms; }
+.feedback-reason-chip:nth-child(10) { animation-delay: 440ms; }
+.feedback-reason-chip:nth-child(11) { animation-delay: 480ms; }
+
+.feedback-reason-chip:hover {
+  border-color: rgba(96, 165, 250, 0.42);
+}
+
+.feedback-reason-chip.is-selected {
+  border-color: rgba(96, 165, 250, 0.62);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.34), rgba(124, 58, 237, 0.32));
+  color: #ffffff;
+}
+
+.feedback-note {
+  width: 100%;
+  min-height: 88px;
+  margin: 0 20px 20px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: rgba(22, 32, 51, 0.62);
+  color: var(--text-main);
+  padding: 12px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+  transition: border-color .18s ease;
+}
+
+.feedback-note:focus {
+  border-color: rgba(96, 165, 250, 0.62);
+  outline: 0;
+}
+
+.feedback-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--border-soft);
+  padding: 16px 20px;
+}
+
+[data-feedback-cancel],
+[data-feedback-save] {
+  border-radius: 999px;
+  min-height: 40px;
+  border: 1px solid var(--border-soft);
+  padding: 10px 18px;
+  cursor: pointer;
+  font-weight: 850;
+  transition: background .18s ease, border-color .18s ease, color .18s ease;
+}
+
+[data-feedback-cancel] {
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--text-main);
+}
+
+[data-feedback-cancel]:hover {
+  border-color: rgba(96, 165, 250, 0.32);
+}
+
+[data-feedback-save] {
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.24);
+}
+
+[data-feedback-save]:hover {
+  background: linear-gradient(135deg, #1d4ed8, #60a5fa);
+  box-shadow: 0 16px 42px rgba(59, 130, 246, 0.32);
+}
+
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
+
+@keyframes feedbackBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes feedbackModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(42px) scale(0.90);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes feedbackChipIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes resultStatCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes productCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes successBurst {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes checkScale {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.result-stat-card.with-stagger {
+  animation: resultStatCardIn 650ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.product-card.with-stagger {
+  animation: productCardIn 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.success-burst.is-visible {
+  animation: successBurst 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.check-icon {
+  animation: checkScale 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.product-card.has-benar-animation {
+  animation: scale-pulse 320ms ease-out;
+}
+
+@keyframes scale-pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

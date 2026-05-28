@@ -3,7 +3,7 @@ main.py - FastAPI application setup.
 Mounts API routes and serves the frontend.
 """
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
@@ -31,6 +31,16 @@ app = FastAPI(
     version="4.0",
     lifespan=lifespan
 )
+
+# No-cache middleware for HTML/CSS/JS
+@app.middleware("http")
+async def no_cache_frontend(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.endswith((".html", ".css", ".js")):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 # Include API routes
 app.include_router(router)
