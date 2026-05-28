@@ -21,6 +21,12 @@ const FEEDBACK_REASONS = [
   'Lainnya',
 ];
 
+const RECOMMENDATION_MODES = [
+  { key: 'best', label: 'Terbaik', shortLabel: 'Terbaik', icon: '⭐', sortMode: 'terbaik' },
+  { key: 'cheapest', label: 'Termurah', shortLabel: 'Termurah', icon: '💸', sortMode: 'termurah' },
+  { key: 'trusted', label: 'Most Trusted', shortLabel: 'Trusted', icon: '🏆', sortMode: 'most_trusted' },
+];
+
 class ScraperApp {
   constructor() {
     this.state = {
@@ -43,10 +49,16 @@ class ScraperApp {
       lastProgress: null,
       aiStatus: null,
       engineMode: 'auto',
+      recommendationMode: 'best',
+      hasUserSelectedRecommendation: false,
+      autoExpandedOnce: false,
+      activeFeedbackProductId: null,
     };
 
     this.$ = (id) => document.getElementById(id);
     this.panels = ['search-panel', 'progress-panel', 'error-panel', 'results-panel'];
+    this.recommendationObserver = null;
+    this.recommendationTimeline = null;
     this.init();
   }
 
@@ -77,6 +89,19 @@ class ScraperApp {
 
   isBlockedMessage(message) {
     return /captcha|blocked|access denied|too many requests|robot|bot detection/i.test(String(message || ''));
+  }
+
+  prefersReducedMotion() {
+    return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  canAnimate() {
+    return Boolean(window.anime) && !this.prefersReducedMotion();
+  }
+
+  animate(targets, options = {}) {
+    if (!this.canAnimate()) return null;
+    return window.anime({ targets, ...options });
   }
 
   showToast(message) {
@@ -477,27 +502,38 @@ class ScraperApp {
   etaDisplayText() {
     const progress = this.state.lastProgress || {};
     if (progress.done) return progress.error ? '-' : '00:00';
-    if (!this.state.estimatedCompletionEpochMs) return 'ETA: calculating...';
+    if (!this.state.estimatedCompletionEpochMs) return 'Menghitung...';
 
     const remainingMs = Number(this.state.estimatedCompletionEpochMs) - Date.now();
-    if (remainingMs < -5000) return 'ETA: calculating...';
-    if (remainingMs <= 0) return 'ETA: extending...';
+    if (remainingMs < -5000) return 'Menghitung...';
+    if (remainingMs <= 0) return 'Memperbarui...';
 
     const seconds = this.computeLocalEta(this.state.estimatedCompletionEpochMs);
     this.state.localEtaSeconds = seconds;
-    return seconds == null ? 'ETA: calculating...' : this.formatDuration(seconds);
+    return seconds == null ? 'Menghitung...' : this.formatDuration(seconds);
   }
 
   renderLiveTimers() {
     const elapsedEl = this.$('pm-elapsed');
+    const resultElapsedEl = this.$('rt-elapsed');
     if (elapsedEl && this.state.progressStartedAtMs) {
       const seconds = Math.floor((Date.now() - Number(this.state.progressStartedAtMs)) / 1000);
       this.state.localElapsedSeconds = Math.max(0, seconds);
       elapsedEl.textContent = this.formatDuration(this.state.localElapsedSeconds);
+      if (resultElapsedEl) resultElapsedEl.textContent = this.formatDuration(this.state.localElapsedSeconds);
     }
 
     const etaEl = this.$('pm-eta');
-    if (etaEl) etaEl.textContent = this.etaDisplayText();
+    const resultEtaEl = this.$('rt-eta');
+    const etaText = this.etaDisplayText();
+    if (etaEl) etaEl.textContent = etaText;
+    if (resultEtaEl) resultEtaEl.textContent = etaText;
+  }
+
+  renderResultTimers() {
+    const elapsed = this.state.localElapsedSeconds || 0;
+    this.setText('rt-elapsed', this.formatDuration(elapsed));
+    this.setText('rt-eta', this.etaDisplayText());
   }
 
   renderProgress(progress) {
@@ -614,16 +650,22 @@ class ScraperApp {
     this.state.engineMode = data.engine_mode || 'auto';
     this.state.metadata.engine_mode = this.state.engineMode;
     this.state.sortMode = data.sort_mode || this.state.metadata.sort_mode || this.state.sortMode || 'terbaik';
-    this.state.recommendationsOpen = false;
+    this.state.recommendationsOpen = true;
+    this.state.recommendationMode = 'best';
+    this.state.hasUserSelectedRecommendation = false;
+    this.state.autoExpandedOnce = false;
 
     this.applySortMode(this.state.sortMode, false);
     this.renderResultSummary(data);
+    this.renderResultTimers();
     this.renderBudgetBar(data.budget_info);
     this.renderComparison(data);
     this.renderResultWarning(data);
-    this.renderRecommendations(this.state.recommendations);
+    this.renderRecommendations();
     this.updateResultCount();
     this.renderProducts();
+    this.observeRecommendationStage();
+    this.animateResultsEntrance();
   }
 
   normalizeProduct(product) {
@@ -656,7 +698,12 @@ class ScraperApp {
     const box = this.$('r-warning');
     if (!box) return;
     const meta = data.result_metadata || this.state.metadata || {};
-    const warning = String(data.ai_warning || meta.ai_warning || data.limited_reason || meta.limited_reason || '').trim();
+    const requested = Number(meta.requested_count ?? data.requested_count ?? data.target_count ?? 0);
+    const displayed = this.state.products.length || Number(meta.displayed_count ?? data.displayed_count ?? 0);
+    const shortage = requested > displayed && displayed > 0
+      ? `Diminta ${requested}, tersedia ${displayed} produk sesuai budget.`
+      : '';
+    const warning = String(data.ai_warning || meta.ai_warning || data.limited_reason || meta.limited_reason || shortage || '').trim();
     if (!warning) {
       box.classList.add('hidden');
       box.textContent = '';
@@ -744,10 +791,12 @@ class ScraperApp {
     this.state.products = (item.data || item.products || []).map((product) => this.normalizeProduct(product));
     this.state.recommendations = item.recommendations || {};
     this.state.metadata = item.result_metadata || {};
-    this.state.recommendationsOpen = false;
+    this.state.recommendationsOpen = true;
+    this.state.recommendationMode = 'best';
     this.renderComparison({ engine_mode: this.state.engineMode, engine_runs: this.state.comparison });
-    this.renderRecommendations(this.state.recommendations);
+    this.renderRecommendations();
     this.renderResultSummary(item);
+    this.renderResultTimers();
     this.renderResultWarning({
       limited_reason: this.state.metadata.limited_reason,
       ai_warning: item.ai_warning || '',
@@ -755,6 +804,8 @@ class ScraperApp {
     });
     this.updateResultCount();
     this.renderProducts();
+    this.observeRecommendationStage();
+    this.animateResultsEntrance();
   }
 
   renderResultSummary(data) {
@@ -782,77 +833,160 @@ class ScraperApp {
     this.setText('rs-ai', aiAccepted || 0);
     this.setText('rs-ai-calls', `${aiCallsSucceeded || 0}/${aiCallsAttempted || 0}`);
     this.setText('rs-displayed', displayed || this.state.products.length || 0);
+    const status = this.$('result-status-badge');
+    if (status) {
+      status.textContent = displayed >= requested ? 'Target met' : 'Partial';
+      status.className = `status-badge ${displayed >= requested ? 'status-done' : 'status-running'}`;
+    }
   }
 
-  renderRecommendations(recommendations) {
+  renderRecommendations() {
     const panel = this.$('recommendations-panel');
-    const grid = this.$('recommendations-grid');
-    if (!panel || !grid) return;
+    const grid = this.$('recommendation-stage-grid');
+    const tabs = this.$('recommendation-tabs');
+    const title = this.$('recommendation-stage-title');
+    if (!panel || !grid || !tabs || !title) return;
 
-    const hasAny = ['cheapest', 'trusted', 'best'].some((key) => Boolean(recommendations?.[key]));
-    if (!hasAny) {
+    if (!this.state.products.length) {
       panel.classList.add('hidden');
       grid.innerHTML = '';
+      tabs.innerHTML = '';
       return;
     }
 
     panel.classList.remove('hidden');
-    panel.classList.toggle('recommendations-open', this.state.recommendationsOpen);
-    grid.classList.toggle('hidden', !this.state.recommendationsOpen);
+    const activeMode = this.state.recommendationMode || 'best';
+    const buckets = this.buildRecommendationBuckets();
+    const activeMeta = RECOMMENDATION_MODES.find((mode) => mode.key === activeMode) || RECOMMENDATION_MODES[0];
+    title.textContent = activeMeta.label;
 
-    const trigger = this.$('recommendations-trigger');
-    if (trigger) {
-      trigger.setAttribute('aria-expanded', String(this.state.recommendationsOpen));
-      trigger.querySelector('.recommendation-trigger-state').textContent =
-        this.state.recommendationsOpen ? 'Tutup' : 'Buka';
+    tabs.innerHTML = '';
+    for (const mode of RECOMMENDATION_MODES) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `recommendation-tab ${mode.key === activeMode ? 'active' : ''}`;
+      btn.dataset.recommendationMode = mode.key;
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', String(mode.key === activeMode));
+      btn.innerHTML = `<span>${this.esc(mode.icon)}</span>${this.esc(mode.label)}`;
+      btn.addEventListener('click', () => this.selectRecommendation(mode.key));
+      tabs.appendChild(btn);
     }
 
-    if (!this.state.recommendationsOpen) {
-      grid.innerHTML = '';
-      return;
-    }
-
-    const items = [
-      ['cheapest', 'Harga Termurah'],
-      ['trusted', 'Trusted'],
-      ['best', 'Terbaik'],
-    ];
-
+    const inactive = RECOMMENDATION_MODES.filter((mode) => mode.key !== activeMode);
+    const panelOrder = [inactive[0], activeMeta, inactive[1]].filter(Boolean);
     grid.innerHTML = '';
-    for (const [key, label] of items) {
-      grid.appendChild(this.createRecommendationCard(label, recommendations?.[key]));
+    for (const mode of panelOrder) {
+      const stagePanel = this.createRecommendationPanel(mode, buckets[mode.key] || [], mode.key === activeMode);
+      grid.appendChild(stagePanel);
     }
   }
 
-  createRecommendationCard(label, product) {
-    const card = document.createElement('div');
-    card.className = 'recommendation-card';
+  buildRecommendationBuckets() {
+    const list = [...this.state.products];
+    const number = (value) => {
+      const parsed = Number(String(value ?? 0).replace(',', '.'));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const price = (p) => {
+      const value = number(p.priceNumber ?? p.price_value ?? p.price);
+      return value > 0 ? value : Number.MAX_SAFE_INTEGER;
+    };
+    const rating = (p) => number(p.rating);
+    const confidence = (p) => number(p.confidenceScore ?? p.confidence ?? p.relevance_score ?? p.ai_confidence);
+    const semantic = (p) => number(p.semantic_score);
+    const sold = (p) => number(p.soldCount ?? p.sold_count);
+    const storeTrust = (p) => {
+      if (p.store_trust_score != null) return number(p.store_trust_score);
+      const shop = String(p.storeName || p.shop_name || p.shop || '').toLowerCase();
+      return /(official|mall|power merchant|pro)/.test(shop) ? 2 : shop ? 1 : 0;
+    };
 
-    const labelEl = document.createElement('div');
-    labelEl.className = 'recommendation-label';
-    labelEl.textContent = label;
-    card.appendChild(labelEl);
+    return {
+      best: [...list].sort((a, b) =>
+        rating(b) - rating(a)
+        || confidence(b) - confidence(a)
+        || sold(b) - sold(a)
+        || semantic(b) - semantic(a)
+      ).slice(0, 6),
+      cheapest: [...list].sort((a, b) =>
+        price(a) - price(b)
+        || rating(b) - rating(a)
+      ).slice(0, 6),
+      trusted: [...list].sort((a, b) =>
+        storeTrust(b) - storeTrust(a)
+        || sold(b) - sold(a)
+        || rating(b) - rating(a)
+        || confidence(b) - confidence(a)
+      ).slice(0, 6),
+    };
+  }
 
-    if (!product) {
+  createRecommendationPanel(mode, products, active) {
+    const panel = document.createElement('div');
+    panel.className = `recommendation-panel ${active ? 'is-active' : 'is-side'}`;
+    panel.dataset.recommendationMode = mode.key;
+    if (!active) {
+      panel.setAttribute('role', 'button');
+      panel.tabIndex = 0;
+      panel.addEventListener('click', () => this.selectRecommendation(mode.key));
+      panel.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          this.selectRecommendation(mode.key);
+        }
+      });
+    }
+
+    const head = document.createElement('div');
+    head.className = 'recommendation-panel-head';
+    head.innerHTML = `
+      <span class="recommendation-panel-icon">${this.esc(mode.icon)}</span>
+      <span class="recommendation-panel-label">${this.esc(mode.label)}</span>
+      <span class="recommendation-panel-count">${products.length} produk</span>
+    `;
+    panel.appendChild(head);
+
+    if (!active) {
+      const preview = products[0];
+      const previewTitle = preview?.title || 'Belum ada produk';
+      const previewPrice = preview?.price || preview?.price_text || '';
+      const side = document.createElement('div');
+      side.className = 'recommendation-side-preview';
+      side.innerHTML = `<strong>${this.esc(previewTitle)}</strong><span>${this.esc(previewPrice)}</span>`;
+      panel.appendChild(side);
+      return panel;
+    }
+
+    const body = document.createElement('div');
+    body.className = 'recommendation-mini-grid';
+    if (!products.length) {
       const empty = document.createElement('div');
       empty.className = 'recommendation-empty';
       empty.textContent = 'Belum cukup data untuk rekomendasi ini.';
-      card.appendChild(empty);
-      return card;
+      body.appendChild(empty);
+    } else {
+      products.forEach((product) => body.appendChild(this.createRecommendationMiniCard(product)));
     }
+    panel.appendChild(body);
+    return panel;
+  }
 
-    const normalized = this.normalizeProduct(product);
-    const title = normalized.title || 'Produk Tokopedia';
-    const main = document.createElement('div');
-    main.className = 'recommendation-main';
+  createRecommendationMiniCard(product) {
+    const item = this.normalizeProduct(product);
+    const card = document.createElement('a');
+    card.className = 'recommendation-mini-card';
+    card.href = item.url || '#';
+    card.target = '_blank';
+    card.rel = 'noopener';
 
-    const imageBox = document.createElement('div');
-    imageBox.className = 'recommendation-img';
-    const imageUrl = this.resolveProductImage(normalized);
+    const image = document.createElement('div');
+    image.className = 'recommendation-mini-image';
+    const imageUrl = this.resolveProductImage(item);
     if (imageUrl) {
       const img = document.createElement('img');
       img.src = imageUrl;
-      img.alt = title;
+      img.alt = item.title || 'Product image';
       img.loading = 'lazy';
       img.onerror = () => {
         if (!img.dataset.proxyTried) {
@@ -860,39 +994,25 @@ class ScraperApp {
           img.src = this.proxyImageUrl(imageUrl);
           return;
         }
-        imageBox.replaceChildren(this.createSmallImagePlaceholder('Gambar gagal dimuat'));
+        image.replaceChildren(this.createSmallImagePlaceholder('No image'));
       };
-      imageBox.appendChild(img);
+      image.appendChild(img);
     } else {
-      imageBox.appendChild(this.createSmallImagePlaceholder('Gambar tidak tersedia'));
+      image.appendChild(this.createSmallImagePlaceholder('No image'));
     }
 
     const body = document.createElement('div');
-    body.className = 'recommendation-body';
-    this.appendText(body, 'recommendation-title', title);
-    this.appendText(body, 'recommendation-price', normalized.price || '-');
-
+    body.className = 'recommendation-mini-body';
+    this.appendText(body, 'recommendation-mini-title', item.title || 'Produk Tokopedia');
+    this.appendText(body, 'recommendation-mini-price', item.price || '-');
     const meta = document.createElement('div');
-    meta.className = 'recommendation-meta';
-    if (normalized.rating) this.appendText(meta, '', `Rating ${normalized.rating}`, 'span');
-    if (normalized.sold || normalized.sold_text || normalized.soldCount) {
-      this.appendText(meta, '', normalized.sold || normalized.sold_text || normalized.soldCount, 'span');
+    meta.className = 'recommendation-mini-meta';
+    if (item.rating) this.appendText(meta, '', `Rating ${item.rating}`, 'span');
+    if (item.soldCount || item.sold_text || item.sold) {
+      this.appendText(meta, '', item.sold || item.sold_text || item.soldCount, 'span');
     }
     body.appendChild(meta);
-    if (normalized.storeName) this.appendText(body, 'recommendation-shop', normalized.storeName);
-    this.appendText(body, 'recommendation-reason', normalized.reason || normalized.relevanceReason || '');
-    if (normalized.url) {
-      const link = document.createElement('a');
-      link.className = 'recommendation-link';
-      link.href = normalized.url;
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = 'Buka produk';
-      body.appendChild(link);
-    }
-
-    main.append(imageBox, body);
-    card.appendChild(main);
+    card.append(image, body);
     return card;
   }
 
@@ -904,8 +1024,137 @@ class ScraperApp {
   }
 
   toggleRecommendations() {
-    this.state.recommendationsOpen = !this.state.recommendationsOpen;
-    this.renderRecommendations(this.state.recommendations);
+    this.state.recommendationsOpen = true;
+    this.renderRecommendations();
+    this.expandRecommendationStage(true);
+  }
+
+  selectRecommendation(mode) {
+    if (!RECOMMENDATION_MODES.some((item) => item.key === mode)) return;
+    if (this.state.recommendationMode === mode && this.state.hasUserSelectedRecommendation) return;
+    this.state.hasUserSelectedRecommendation = true;
+
+    if (this.recommendationTimeline?.pause) this.recommendationTimeline.pause();
+    const oldCards = document.querySelectorAll('.recommendation-mini-card');
+    const update = () => {
+      this.state.recommendationMode = mode;
+      this.renderRecommendations();
+      this.animateRecommendationStage();
+    };
+
+    if (this.canAnimate() && oldCards.length) {
+      this.recommendationTimeline = window.anime({
+        targets: oldCards,
+        opacity: [1, 0],
+        translateY: [0, 12],
+        scale: [1, 0.96],
+        delay: window.anime.stagger(20),
+        duration: 180,
+        easing: 'easeOutExpo',
+        complete: update,
+      });
+      return;
+    }
+
+    update();
+  }
+
+  animateRecommendationStage() {
+    if (!this.canAnimate()) return;
+    window.anime.remove?.('.recommendation-panel, .recommendation-mini-card, .recommendation-tab');
+    window.anime({
+      targets: '.recommendation-panel',
+      opacity: [0, 1],
+      translateY: [24, 0],
+      scale: [0.96, 1],
+      delay: window.anime.stagger(70),
+      duration: 650,
+      easing: 'easeOutExpo',
+    });
+    window.anime({
+      targets: '.recommendation-mini-card',
+      opacity: [0, 1],
+      translateY: [18, 0],
+      scale: [0.94, 1],
+      delay: window.anime.stagger(45),
+      duration: 680,
+      easing: 'easeOutExpo',
+    });
+  }
+
+  observeRecommendationStage() {
+    if (this.recommendationObserver) this.recommendationObserver.disconnect();
+    const panel = this.$('recommendations-panel');
+    if (!panel || !('IntersectionObserver' in window)) return;
+    this.recommendationObserver = new IntersectionObserver((entries) => {
+      const entry = entries[0];
+      if (
+        entry?.isIntersecting
+        && entry.intersectionRatio >= 0.45
+        && !this.state.hasUserSelectedRecommendation
+        && !this.state.autoExpandedOnce
+      ) {
+        this.state.autoExpandedOnce = true;
+        this.expandRecommendationStage(false);
+      }
+    }, { threshold: [0, 0.45, 0.7] });
+    this.recommendationObserver.observe(panel);
+  }
+
+  expandRecommendationStage(fromUser) {
+    const stage = this.$('recommendation-stage');
+    if (!stage) return;
+    if (fromUser) this.state.hasUserSelectedRecommendation = true;
+    stage.classList.add('is-auto-expanded');
+    if (!this.canAnimate()) return;
+
+    const startHeight = stage.offsetHeight;
+    stage.style.height = `${startHeight}px`;
+    const endHeight = stage.scrollHeight;
+    window.anime({
+      targets: stage,
+      height: [startHeight, endHeight],
+      scale: [0.98, 1],
+      duration: 650,
+      easing: 'easeOutExpo',
+      complete: () => {
+        stage.style.height = '';
+      },
+    });
+    this.animateRecommendationStage();
+  }
+
+  animateResultsEntrance() {
+    if (!this.canAnimate()) return;
+    window.anime.remove?.('.result-stat-card, .quick-sort-btn, .product-card');
+    window.anime({
+      targets: '.result-stat-card',
+      opacity: [0, 1],
+      translateY: [24, 0],
+      scale: [0.96, 1],
+      delay: window.anime.stagger(60),
+      duration: 650,
+      easing: 'easeOutExpo',
+    });
+    window.anime({
+      targets: '.quick-sort-btn, .recommendation-tab',
+      opacity: [0, 1],
+      translateY: [14, 0],
+      scale: [0.96, 1],
+      delay: window.anime.stagger(45),
+      duration: 520,
+      easing: 'easeOutExpo',
+    });
+    window.anime({
+      targets: '.product-card',
+      opacity: [0, 1],
+      translateY: [30, 0],
+      scale: [0.94, 1],
+      delay: window.anime.stagger(45),
+      duration: 700,
+      easing: 'easeOutExpo',
+    });
+    this.animateRecommendationStage();
   }
 
   updateResultCount() {
@@ -921,7 +1170,13 @@ class ScraperApp {
     const grid = this.$('products-grid');
     grid.innerHTML = '';
     if (!this.state.products.length) {
-      grid.innerHTML = '<p class="no-results">Tidak ada produk valid untuk pilihan ini.</p>';
+      grid.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">?</div>
+          <strong>Tidak ada produk valid untuk pilihan ini.</strong>
+          <span>Coba naikkan toleransi budget, kurangi filter, atau aktifkan target-first mode.</span>
+        </div>
+      `;
       return;
     }
     for (const product of this.state.products) {
@@ -951,8 +1206,24 @@ class ScraperApp {
     this.state.products = this.sortProducts(this.state.products, nextMode);
     if (rerender) {
       this.renderProducts();
+      this.animateProductCards();
+      this.renderRecommendations();
       this.updateResultCount();
     }
+  }
+
+  animateProductCards() {
+    if (!this.canAnimate()) return;
+    window.anime.remove?.('.product-card');
+    window.anime({
+      targets: '.product-card',
+      opacity: [0, 1],
+      translateY: [30, 0],
+      scale: [0.94, 1],
+      delay: window.anime.stagger(45),
+      duration: 700,
+      easing: 'easeOutExpo',
+    });
   }
 
   sortProducts(products, mode) {
@@ -1133,6 +1404,11 @@ class ScraperApp {
     if (aiValue != null && Number.isFinite(aiNumeric)) {
       badges.appendChild(this.createBadge(`AI ${aiNumeric.toFixed(2)} ${aiConfidenceLabel}`));
     }
+    const learnedAdjustment = Number(product.learned_adjustment ?? 0);
+    if (Number.isFinite(learnedAdjustment) && Math.abs(learnedAdjustment) > 0) {
+      const sign = learnedAdjustment > 0 ? '+' : '';
+      badges.appendChild(this.createBadge(`Learned ${sign}${learnedAdjustment.toFixed(2)}`));
+    }
     badges.appendChild(this.createBadge(product.ai_source || product.decision_source || 'rule'));
     if (product.source || product.source_engine) badges.appendChild(this.createBadge(product.source || product.source_engine));
     if (product.outside_budget || product.budget_badge) badges.appendChild(this.createBadge(product.budget_badge || 'Di luar budget'));
@@ -1165,7 +1441,13 @@ class ScraperApp {
     negative.type = 'button';
     negative.title = 'Produk ini salah';
     negative.textContent = 'Salah';
-    footer.append(positive, negative);
+    const open = document.createElement('a');
+    open.className = 'btn-open-product';
+    open.href = url || '#';
+    open.target = '_blank';
+    open.rel = 'noopener';
+    open.textContent = 'Buka';
+    footer.append(positive, negative, open);
     card.appendChild(footer);
 
     card.querySelectorAll('.btn-feedback').forEach((btn) => {
@@ -1198,19 +1480,21 @@ class ScraperApp {
       <div class="modal-overlay" id="modal-overlay"></div>
       <div class="modal-box" role="dialog" aria-modal="true" aria-label="Feedback salah">
         <div class="modal-header">
-          <h3>Kenapa data ini salah?</h3>
+          <div>
+            <h3>Kenapa produk ini salah?</h3>
+            <p>Pilih satu atau lebih alasan biar AI belajar.</p>
+          </div>
           <button class="modal-close" id="modal-close" aria-label="Tutup">x</button>
         </div>
         <div class="modal-product" id="modal-product-info"></div>
-        <p class="modal-question">Pilih satu atau lebih alasan.</p>
         <div class="modal-cats" id="modal-cats"></div>
         <div class="modal-note-wrap">
-          <label for="modal-note">Penjelasan</label>
-          <textarea id="modal-note" placeholder="Jelaskan kenapa AI salah..." maxlength="500"></textarea>
+          <label for="modal-note">Catatan tambahan</label>
+          <textarea id="modal-note" placeholder="Tambahin catatan kalau perlu..." maxlength="500"></textarea>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-primary" id="modal-submit">Simpan</button>
           <button class="btn btn-ghost" id="modal-cancel">Batal</button>
+          <button class="btn btn-primary" id="modal-submit">Simpan Feedback</button>
         </div>
       </div>
     `;
@@ -1229,6 +1513,9 @@ class ScraperApp {
         ? '<small>Contoh: cari RTX 5060 tapi yang muncul RTX 4060.</small>'
         : '';
       item.innerHTML = `<input type="checkbox" name="reason" value="${this.esc(reason)}"><span>${this.esc(reason)}</span>${help}`;
+      item.querySelector('input')?.addEventListener('change', (event) => {
+        item.classList.toggle('is-selected', event.currentTarget.checked);
+      });
       reasonsDiv.appendChild(item);
     });
 
@@ -1241,35 +1528,97 @@ class ScraperApp {
     if (!product) return;
 
     this._modalPid = productId;
+    this.state.activeFeedbackProductId = productId;
     const info = this._modal.querySelector('#modal-product-info');
     if (info) info.textContent = product.title || 'Produk';
-    this._modal.querySelectorAll('input[name="reason"]').forEach((cb) => { cb.checked = false; });
+    this._modal.querySelectorAll('input[name="reason"]').forEach((cb) => {
+      cb.checked = false;
+      cb.closest('.cat-checkbox')?.classList.remove('is-selected');
+    });
     const note = this._modal.querySelector('#modal-note');
     if (note) note.value = '';
 
+    document.querySelectorAll('.product-card').forEach((card) => {
+      const isActive = card.dataset.id === String(productId);
+      card.classList.toggle('feedback-focus', isActive);
+      card.classList.toggle('feedback-dimmed', !isActive);
+    });
     this._modal.classList.remove('hidden');
     document.body.classList.add('modal-open');
+    if (this.canAnimate()) {
+      window.anime({
+        targets: '#feedback-modal .modal-overlay',
+        opacity: [0, 1],
+        duration: 260,
+        easing: 'easeOutExpo',
+      });
+      window.anime({
+        targets: '#feedback-modal .modal-box',
+        opacity: [0, 1],
+        translateY: [28, 0],
+        scale: [0.96, 1],
+        duration: 460,
+        easing: 'easeOutExpo',
+      });
+      window.anime({
+        targets: '.product-card.feedback-focus',
+        scale: [1, 0.985],
+        duration: 260,
+        easing: 'easeOutExpo',
+      });
+    }
   }
 
-  _closeFeedbackModal() {
-    this._modal?.classList.add('hidden');
-    document.body.classList.remove('modal-open');
-    this._modalPid = null;
+  _closeFeedbackModal(animate = true) {
+    const cleanup = () => {
+      this._modal?.classList.add('hidden');
+      document.body.classList.remove('modal-open');
+      document.querySelectorAll('.product-card.feedback-focus, .product-card.feedback-dimmed').forEach((card) => {
+        card.classList.remove('feedback-focus', 'feedback-dimmed');
+        card.style.transform = '';
+        card.style.opacity = '';
+      });
+      this._modalPid = null;
+      this.state.activeFeedbackProductId = null;
+    };
+
+    if (!animate || !this.canAnimate()) {
+      cleanup();
+      return Promise.resolve();
+    }
+
+    const overlay = this._modal?.querySelector('.modal-overlay');
+    const box = this._modal?.querySelector('.modal-box');
+    const animation = window.anime({
+      targets: [overlay, box].filter(Boolean),
+      opacity: [1, 0],
+      translateY: [0, 20],
+      duration: 260,
+      easing: 'easeOutExpo',
+      complete: cleanup,
+    });
+    window.anime({
+      targets: '.product-card.feedback-focus',
+      scale: [0.985, 1],
+      duration: 260,
+      easing: 'easeOutExpo',
+    });
+    return animation.finished;
   }
 
-  _submitModalFeedback() {
+  async _submitModalFeedback() {
     if (!this._modalPid) return;
     const selectedReasons = Array.from(this._modal.querySelectorAll('input[name="reason"]:checked'))
       .map((cb) => cb.value);
     const customReason = this._modal.querySelector('#modal-note')?.value.trim() || '';
-    this._submitFeedback(this._modalPid, {
+    const saved = await this._submitFeedback(this._modalPid, {
       userAction: 'salah',
       feedbackType: 'negative',
       selectedReasons,
       customReason,
       correctedLabel: 'tidak_relevan',
     });
-    this._closeFeedbackModal();
+    if (saved) await this._closeFeedbackModal(true);
   }
 
   _learningScopeHint(feedback) {
@@ -1348,7 +1697,7 @@ class ScraperApp {
       const data = await res.json();
       if (!data.success) {
         console.warn('Feedback gagal:', data);
-        return;
+        return false;
       }
       const card = Array.from(document.querySelectorAll('.product-card'))
         .find((item) => item.dataset.id === String(productId));
@@ -1357,15 +1706,48 @@ class ScraperApp {
         card.title = `Feedback: ${feedback.userAction}`;
         const badges = card.querySelector('.product-badges');
         if (badges && !badges.querySelector('.feedback-accepted-badge')) {
-          const badge = this.createBadge('Feedback diterima');
+          const badge = this.createBadge(feedback.feedbackType === 'positive' ? 'Benar' : 'Feedback diterima');
           badge.classList.add('feedback-accepted-badge');
           badges.appendChild(badge);
         }
+        if (feedback.feedbackType === 'positive') {
+          this.animatePositiveFeedback(card);
+        }
       }
       this.showToast('Feedback disimpan');
+      return true;
     } catch (err) {
       console.error('Feedback error:', err);
+      return false;
     }
+  }
+
+  animatePositiveFeedback(card) {
+    if (!card) return;
+    const burst = document.createElement('div');
+    burst.className = 'success-burst';
+    burst.textContent = 'OK';
+    card.appendChild(burst);
+    if (!this.canAnimate()) {
+      setTimeout(() => burst.remove(), 900);
+      return;
+    }
+    window.anime({
+      targets: card,
+      scale: [1, 1.03, 1],
+      borderColor: ['rgba(148, 163, 184, 0.18)', 'rgba(16, 185, 129, 0.72)'],
+      duration: 540,
+      easing: 'easeOutExpo',
+    });
+    window.anime({
+      targets: burst,
+      opacity: [0, 1, 0],
+      translateY: [10, -18],
+      scale: [0.8, 1.1, 1],
+      duration: 900,
+      easing: 'easeOutExpo',
+      complete: () => burst.remove(),
+    });
   }
 
   sendFeedback(productId, correction) {
@@ -1398,6 +1780,7 @@ class ScraperApp {
   reset() {
     this.stopPolling();
     this.stopElapsedTimer();
+    if (this.recommendationObserver) this.recommendationObserver.disconnect();
     this.setStatus('Idle', 'status-idle');
     this.show('search-panel');
   }

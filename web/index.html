@@ -193,22 +193,35 @@
 
       <section id="results-panel" class="panel results-panel hidden">
         <div class="results-header">
-          <h2 class="panel-title">Hasil Scraping</h2>
-          <div class="results-meta">
-            <span class="results-count">Menampilkan <span id="r-count">0</span> dari <span id="r-target">0</span> produk diminta</span>
+          <div class="results-title-block">
+            <h2 class="panel-title">Hasil Scraping</h2>
+            <div class="results-meta">
+              <span class="results-count">Menampilkan <span id="r-count">0</span> dari <span id="r-target">0</span> produk diminta</span>
+            </div>
+          </div>
+          <div class="result-header-tools">
+            <div class="result-time-card">
+              <span>Elapsed</span>
+              <b id="rt-elapsed">00:00</b>
+            </div>
+            <div class="result-time-card">
+              <span>ETA</span>
+              <b id="rt-eta">Menghitung...</b>
+            </div>
+            <div id="result-status-badge" class="status-badge status-done">Ready</div>
           </div>
         </div>
 
         <div id="result-summary" class="result-summary">
-          <div><span>Requested</span><b id="rs-requested">0</b></div>
-          <div><span>Scraped raw</span><b id="rs-raw">0</b></div>
-          <div><span>After dedupe</span><b id="rs-deduped">0</b></div>
-          <div><span>Budget valid</span><b id="rs-budget">0</b></div>
-          <div><span>Semantic checked</span><b id="rs-semantic">0</b></div>
-          <div><span>AI checked</span><b id="rs-ai-checked">0</b></div>
-          <div><span>AI accepted</span><b id="rs-ai">0</b></div>
-          <div><span>AI calls</span><b id="rs-ai-calls">0/0</b></div>
-          <div><span>Displayed</span><b id="rs-displayed">0</b></div>
+          <div class="result-stat-card"><span>Requested</span><b id="rs-requested">0</b></div>
+          <div class="result-stat-card"><span>Scraped raw</span><b id="rs-raw">0</b></div>
+          <div class="result-stat-card"><span>After dedupe</span><b id="rs-deduped">0</b></div>
+          <div class="result-stat-card"><span>Budget valid</span><b id="rs-budget">0</b></div>
+          <div class="result-stat-card"><span>Semantic checked</span><b id="rs-semantic">0</b></div>
+          <div class="result-stat-card"><span>AI checked</span><b id="rs-ai-checked">0</b></div>
+          <div class="result-stat-card"><span>AI accepted</span><b id="rs-ai">0</b></div>
+          <div class="result-stat-card"><span>AI calls</span><b id="rs-ai-calls">0/0</b></div>
+          <div class="result-stat-card"><span>Displayed</span><b id="rs-displayed">0</b></div>
         </div>
 
         <div id="r-budget-bar" class="r-budget-bar hidden">
@@ -229,12 +242,16 @@
         </div>
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
-          <button id="recommendations-trigger" class="recommendations-trigger" type="button" onclick="app.toggleRecommendations()" aria-expanded="false">
-            <span class="recommendation-trigger-title">Lihat Rekomendasi Cepat</span>
-            <span class="recommendation-trigger-subtitle">Termurah, Trusted, dan Terbaik dari hasil scraping</span>
-            <span class="recommendation-trigger-state">Buka</span>
-          </button>
-          <div id="recommendations-grid" class="recommendations-grid hidden"></div>
+          <div id="recommendation-stage" class="recommendation-stage">
+            <div class="recommendation-stage-head">
+              <div>
+                <span class="section-kicker">Quick Recommendation</span>
+                <h3 id="recommendation-stage-title">Terbaik</h3>
+              </div>
+              <div id="recommendation-tabs" class="recommendation-tabs" role="tablist" aria-label="Rekomendasi cepat"></div>
+            </div>
+            <div id="recommendation-stage-grid" class="recommendation-stage-grid"></div>
+          </div>
         </div>
 
         <div id="products-grid" class="products-grid"></div>
@@ -246,6 +263,7 @@
     </main>
   </div>
 
+  <script src="vendor/anime.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
