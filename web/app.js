@@ -7,6 +7,109 @@
  * - recommendations render as one collapsed clickable box
  */
 
+const AnimeBridge = (() => {
+  const animeGlobal = window.anime;
+
+  function run(targets, params) {
+    if (typeof animate === "function") {
+      return animate(targets, params);
+    }
+
+    if (animeGlobal && typeof animeGlobal === "function") {
+      return animeGlobal({ targets, ...params });
+    }
+
+    if (animeGlobal && typeof animeGlobal.animate === "function") {
+      return animeGlobal.animate(targets, params);
+    }
+
+    return null;
+  }
+
+  function timeline(params = {}) {
+    if (typeof createTimeline === "function") {
+      return createTimeline(params);
+    }
+
+    if (animeGlobal && typeof animeGlobal.timeline === "function") {
+      return animeGlobal.timeline(params);
+    }
+
+    return null;
+  }
+
+  function stagger(value, params = {}) {
+    if (typeof window.stagger === "function") {
+      return window.stagger(value, params);
+    }
+
+    if (animeGlobal && typeof animeGlobal.stagger === "function") {
+      return animeGlobal.stagger(value, params);
+    }
+
+    return function(el, index) {
+      const start = Number(params.start || 0);
+      const step = Array.isArray(value) ? 60 : Number(value || 0);
+      return start + index * step;
+    };
+  }
+
+  return { run, timeline, stagger };
+})();
+
+function getRecommendationMotionProfile() {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const isMobile = window.matchMedia("(max-width: 700px)").matches;
+  const isTablet = window.matchMedia("(min-width: 701px) and (max-width: 1100px)").matches;
+
+  if (reduceMotion) {
+    return {
+      reduceMotion: true,
+      zoomScale: 1,
+      enterY: 0,
+      enterScale: 1,
+      rotateX: 0,
+      staggerDelay: 0,
+      duration: 0,
+      grid: [1, 1]
+    };
+  }
+
+  if (isMobile) {
+    return {
+      zoomScale: 1.025,
+      enterY: 42,
+      enterScale: 0.82,
+      rotateX: 0,
+      staggerDelay: 55,
+      duration: 680,
+      grid: [1, 6]
+    };
+  }
+
+  if (isTablet) {
+    return {
+      zoomScale: 1.05,
+      enterY: 64,
+      enterScale: 0.76,
+      rotateX: 6,
+      staggerDelay: 70,
+      duration: 780,
+      grid: [2, 2]
+    };
+  }
+
+  return {
+    zoomScale: 1.08,
+    enterY: 90,
+    enterScale: 0.68,
+    rotateX: 8,
+    staggerDelay: 85,
+    duration: 920,
+    grid: [2, 3]
+  };
+}
+
 const FEEDBACK_REASONS = [
   'Produk tidak relevan',
   'Cuma aksesoris',
@@ -976,43 +1079,44 @@ class ScraperApp {
 
   renderRecommendations() {
     const panel = this.$('recommendations-panel');
-    const grid = this.$('recommendation-stage-grid');
-    const tabs = this.$('recommendation-tabs');
-    const title = this.$('recommendationTitle');
-    if (!panel || !grid || !tabs || !title) return;
+    if (!panel) return;
 
     if (!this.state.products.length) {
       panel.classList.add('hidden');
-      grid.innerHTML = '';
-      tabs.innerHTML = '';
       return;
     }
 
     panel.classList.remove('hidden');
     const activeMode = this.state.recommendationMode || 'terbaik';
-    const buckets = this.buildRecommendationBuckets();
-    const activeMeta = RECOMMENDATION_MODES.find((mode) => mode.key === activeMode) || RECOMMENDATION_MODES[0];
-    title.textContent = activeMeta.label;
-
-    tabs.innerHTML = '';
-    for (const mode of RECOMMENDATION_MODES) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `recommendation-tab ${mode.key === activeMode ? 'active' : ''}`;
-      btn.dataset.recommendationMode = mode.key;
-      btn.setAttribute('role', 'tab');
-      btn.setAttribute('aria-selected', String(mode.key === activeMode));
-      btn.innerHTML = `<span>${this.esc(mode.icon)}</span>${this.esc(mode.label)}`;
-      btn.addEventListener('click', () => this.selectRecommendation(mode.key));
-      tabs.appendChild(btn);
+    
+    // Set active mode on stage
+    const stage = document.querySelector('.recommendation-stage');
+    if (stage) {
+      stage.dataset.activeMode = activeMode;
     }
 
-    const inactive = RECOMMENDATION_MODES.filter((mode) => mode.key !== activeMode);
-    const panelOrder = [inactive[0], activeMeta, inactive[1]].filter(Boolean);
-    grid.innerHTML = '';
-    for (const mode of panelOrder) {
-      const stagePanel = this.createRecommendationPanel(mode, buckets[mode.key] || [], mode.key === activeMode);
-      grid.appendChild(stagePanel);
+    // Sync button classes
+    this.updateRecommendationButtons(activeMode);
+    
+    // Sync side panels and active panel header
+    this.updateRecommendationPanels(activeMode);
+    
+    // Populate active panel grid
+    const grid = document.querySelector('.recommendation-product-grid');
+    if (grid) {
+      grid.innerHTML = '';
+      const buckets = this.buildRecommendationBuckets();
+      const products = buckets[activeMode] || [];
+      if (!products.length) {
+        const empty = document.createElement('div');
+        empty.className = 'recommendation-empty';
+        empty.textContent = 'Belum cukup data untuk rekomendasi ini.';
+        grid.appendChild(empty);
+      } else {
+        products.forEach((product) => {
+          grid.appendChild(this.createRecommendationMiniCard(product));
+        });
+      }
     }
   }
 
@@ -1056,60 +1160,10 @@ class ScraperApp {
     };
   }
 
-  createRecommendationPanel(mode, products, active) {
-    const panel = document.createElement('div');
-    panel.className = `recommendation-panel ${active ? 'is-active' : 'is-side'}`;
-    panel.dataset.recommendationMode = mode.key;
-    if (!active) {
-      panel.setAttribute('role', 'button');
-      panel.tabIndex = 0;
-      panel.addEventListener('click', () => this.selectRecommendation(mode.key));
-      panel.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          this.selectRecommendation(mode.key);
-        }
-      });
-    }
-
-    const head = document.createElement('div');
-    head.className = 'recommendation-panel-head';
-    head.innerHTML = `
-      <span class="recommendation-panel-icon">${this.esc(mode.icon)}</span>
-      <span class="recommendation-panel-label">${this.esc(mode.label)}</span>
-      <span class="recommendation-panel-count">${products.length} produk</span>
-    `;
-    panel.appendChild(head);
-
-    if (!active) {
-      const preview = products[0];
-      const previewTitle = preview?.title || 'Belum ada produk';
-      const previewPrice = preview?.price || preview?.price_text || '';
-      const side = document.createElement('div');
-      side.className = 'recommendation-side-preview';
-      side.innerHTML = `<strong>${this.esc(previewTitle)}</strong><span>${this.esc(previewPrice)}</span>`;
-      panel.appendChild(side);
-      return panel;
-    }
-
-    const body = document.createElement('div');
-    body.className = 'recommendation-mini-grid';
-    if (!products.length) {
-      const empty = document.createElement('div');
-      empty.className = 'recommendation-empty';
-      empty.textContent = 'Belum cukup data untuk rekomendasi ini.';
-      body.appendChild(empty);
-    } else {
-      products.forEach((product) => body.appendChild(this.createRecommendationMiniCard(product)));
-    }
-    panel.appendChild(body);
-    return panel;
-  }
-
   createRecommendationMiniCard(product) {
     const item = this.normalizeProduct(product);
     const card = document.createElement('div');
-    card.className = 'recommendation-product-card product-card';
+    card.className = 'recommendation-product-card';
     const id = String(item.id || item.url || item.product_url || item.title || '');
     card.dataset.productId = id;
     card.dataset.id = id;
@@ -1127,32 +1181,26 @@ class ScraperApp {
     };
 
     const details = document.createElement('div');
+    details.className = 'recommendation-product-card-details';
+    
     const h4 = document.createElement('h4');
+    h4.className = 'recommendation-product-card-title';
     h4.textContent = item.title || 'Produk Tokopedia';
-    const strong = document.createElement('strong');
+    
+    const strong = document.createElement('div');
+    strong.className = 'recommendation-product-card-price';
     strong.textContent = item.price || '';
-    const span = document.createElement('span');
-    const ratingStr = item.rating ? `Rating ${item.rating}` : '';
-    const soldStr = item.sold || item.sold_text || item.soldCount || item.sold_count || '';
+    
+    const span = document.createElement('div');
+    span.className = 'recommendation-product-card-meta';
+    const ratingStr = item.rating ? `⭐ ${item.rating}` : '';
+    const soldStr = item.sold || item.sold_text || item.soldCount || item.sold_count ? `${item.sold || item.sold_text || item.soldCount || item.sold_count} terjual` : '';
     span.textContent = [ratingStr, soldStr].filter(Boolean).join(' | ');
 
     details.append(h4, strong, span);
     card.append(img, details);
 
-    card.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      this.openRecommendationProductModal(item, card);
-    });
-
     return card;
-  }
-
-  createSmallImagePlaceholder(text) {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'recommendation-img-placeholder';
-    placeholder.textContent = text;
-    return placeholder;
   }
 
   toggleRecommendations() {
@@ -1161,144 +1209,294 @@ class ScraperApp {
     this.expandRecommendationStage(true);
   }
 
-  selectRecommendation(mode) {
-    if (!RECOMMENDATION_MODES.some((item) => item.key === mode)) return;
-    if (this.state.recommendationMode === mode && this.state.hasUserSelectedRecommendation) return;
+  animateRecommendationProductsEnter(scopeOptions = {}) {
+    const cards = document.querySelectorAll(".recommendation-product-card");
+    if (!cards || !cards.length) return;
+
+    AnimeBridge.run(cards, {
+      opacity: [0, 1],
+      translateY: [scopeOptions.enterY || 72, 0],
+      scale: [scopeOptions.enterScale || 0.72, 1],
+      rotateX: [scopeOptions.rotateX || 8, 0],
+      filter: ["blur(10px)", "blur(0px)"],
+      delay: AnimeBridge.stagger(scopeOptions.staggerDelay || 80, {
+        start: scopeOptions.staggerStart || 120,
+        from: "center",
+        grid: scopeOptions.grid || [2, 3],
+        axis: "x"
+      }),
+      duration: scopeOptions.duration || 920,
+      easing: "easeOutExpo"
+    });
+  }
+
+  animateRecommendationProductsExit() {
+    const cards = document.querySelectorAll(".recommendation-product-card");
+    return new Promise(resolve => {
+      if (!cards || !cards.length) {
+        resolve();
+        return;
+      }
+      AnimeBridge.run(cards, {
+        opacity: [1, 0],
+        translateY: [0, -32],
+        scale: [1, 0.86],
+        filter: ["blur(0px)", "blur(8px)"],
+        delay: AnimeBridge.stagger(45, {
+          from: "center",
+          reversed: true
+        }),
+        duration: 420,
+        easing: "easeInExpo",
+        complete: resolve
+      }) || resolve();
+    });
+  }
+
+  async selectRecommendation(nextMode, triggerEl = null) {
     if (this.recommendationTransitionRunning) return;
-    this.state.hasUserSelectedRecommendation = true;
+    if (nextMode === this.state.recommendationMode) return;
+
     this.recommendationTransitionRunning = true;
 
-    const nextMode = mode;
     const stage = document.querySelector(".recommendation-stage");
-    const activePanel = document.querySelector(".recommendation-panel.is-active");
+    const activePanel = document.querySelector(".recommendation-active-panel");
     const title = document.querySelector(".recommendation-active-title");
-    const cards = document.querySelectorAll(".recommendation-product-card");
-    const clickedButton = document.querySelector(`[data-recommendation-mode="${nextMode}"]`);
+    const panelTitle = document.querySelector(".recommendation-panel-title");
+    const profile = getRecommendationMotionProfile();
 
-    const tl = window.anime.timeline({
-      easing: "easeOutExpo",
-      complete: () => {
-        this.state.recommendationMode = nextMode;
+    if (stage) stage.classList.add("is-morphing");
 
-        // Update content
-        this.renderRecommendations();
-        const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === nextMode);
-        if (modeMeta) {
-          this.applySortMode(modeMeta.sortMode, false);
-          this.renderProducts();
-          this.animateProductCards();
-          this.updateResultCount();
-        }
+    await this.animateRecommendationProductsExit();
 
-        // Animate in new cards and title
-        window.anime({
-          targets: ".recommendation-product-card",
-          opacity: [0, 1],
-          translateY: [26, 0],
-          scale: [0.92, 1],
-          delay: window.anime.stagger(55),
-          duration: 750,
-          easing: "easeOutExpo"
-        });
-
-        window.anime({
-          targets: "#recommendationTitle",
-          opacity: [0, 1],
-          translateY: [18, 0],
-          scale: [0.94, 1],
-          duration: 650,
-          easing: "easeOutExpo"
-        });
-
-        window.anime({
-          targets: ".recommendation-panel.is-active",
-          scale: [1.04, 1],
-          duration: 650,
-          easing: "easeOutExpo",
-          complete: () => {
-            this.recommendationTransitionRunning = false;
-          }
-        });
-      }
+    // Phase 1: title disappears and selected button becomes "portal"
+    await new Promise(resolve => {
+      AnimeBridge.run([title, panelTitle].filter(Boolean), {
+        opacity: [1, 0],
+        translateY: [0, -24],
+        scale: [1, 0.88],
+        filter: ["blur(0px)", "blur(8px)"],
+        duration: profile.reduceMotion ? 0 : 360,
+        easing: "easeInExpo",
+        complete: resolve
+      }) || resolve();
     });
 
-    if (cards.length) {
-      tl.add({
-        targets: cards,
-        opacity: [1, 0],
-        translateY: [0, 18],
-        scale: [1, 0.94],
-        delay: window.anime.stagger(35, { direction: "reverse" }),
-        duration: 360
+    if (triggerEl) {
+      AnimeBridge.run(triggerEl, {
+        scale: [1, 1.16, 1.04],
+        boxShadow: [
+          "0 0 0 rgba(96,165,250,0)",
+          "0 0 70px rgba(96,165,250,0.34)",
+          "0 0 36px rgba(96,165,250,0.20)"
+        ],
+        duration: profile.reduceMotion ? 0 : 720,
+        easing: "easeOutExpo"
       });
     }
 
-    if (title) {
-      tl.add({
-        targets: title,
-        opacity: [1, 0],
-        translateY: [0, -16],
-        scale: [1, 0.92],
-        duration: 320
-      }, "-=260");
-    }
-
-    if (clickedButton) {
-      tl.add({
-        targets: clickedButton,
-        scale: [1, 1.12, 1.04],
-        duration: 520
-      }, "-=220");
-    }
-
-    if (activePanel) {
-      tl.add({
-        targets: activePanel,
-        scale: [1, 1.08],
-        translateY: [0, -10],
+    // Phase 2: active panel zooms in like entering selected mode
+    await new Promise(resolve => {
+      AnimeBridge.run(activePanel, {
+        scale: [1, profile.zoomScale],
+        translateY: [0, -18],
+        borderRadius: ["32px", "42px"],
         boxShadow: [
-          "0 0 0 rgba(96,165,250,0)",
-          "0 28px 90px rgba(96,165,250,0.24)"
+          "0 20px 70px rgba(2,8,23,0.24)",
+          "0 46px 140px rgba(59,130,246,0.28)"
         ],
-        duration: 620
-      }, "-=300");
+        duration: profile.reduceMotion ? 0 : 780,
+        easing: "easeOutExpo",
+        complete: resolve
+      }) || resolve();
+    });
+
+    // Phase 3: update mode/content while title is hidden
+    this.state.recommendationMode = nextMode;
+    if (stage) stage.dataset.activeMode = nextMode;
+    this.updateRecommendationButtons(nextMode);
+    this.updateRecommendationPanels(nextMode);
+    this.updateRecommendationContent(nextMode);
+
+    // Phase 4: active panel settles, title stays subtle, products enter
+    AnimeBridge.run(activePanel, {
+      scale: [profile.zoomScale, 1],
+      translateY: [-18, 0],
+      duration: profile.reduceMotion ? 0 : 700,
+      easing: "easeOutExpo"
+    });
+
+    AnimeBridge.run([title, panelTitle].filter(Boolean), {
+      opacity: [0, 1],
+      translateY: [18, 0],
+      scale: [0.92, 1],
+      filter: ["blur(8px)", "blur(0px)"],
+      duration: profile.reduceMotion ? 0 : 560,
+      delay: 80,
+      easing: "easeOutExpo"
+    });
+
+    requestAnimationFrame(() => {
+      this.animateRecommendationProductsEnter(profile);
+    });
+
+    if (stage) stage.classList.remove("is-morphing");
+
+    setTimeout(() => {
+      this.recommendationTransitionRunning = false;
+    }, profile.reduceMotion ? 0 : 900);
+  }
+
+  updateRecommendationButtons(nextMode) {
+    const btns = document.querySelectorAll('[data-recommendation-mode]');
+    btns.forEach(btn => {
+      if (btn.dataset.recommendationMode === nextMode) {
+        btn.classList.add('is-active');
+      } else {
+        btn.classList.remove('is-active');
+      }
+    });
+  }
+
+  updateRecommendationPanels(nextMode) {
+    const leftPanel = document.querySelector('.recommendation-side-panel[data-side-mode="left"]');
+    const rightPanel = document.querySelector('.recommendation-side-panel[data-side-mode="right"]');
+    
+    let leftMode = "";
+    let rightMode = "";
+    if (nextMode === "terbaik") {
+      leftMode = "termurah";
+      rightMode = "trusted";
+    } else if (nextMode === "termurah") {
+      leftMode = "terbaik";
+      rightMode = "trusted";
+    } else if (nextMode === "trusted") {
+      leftMode = "terbaik";
+      rightMode = "termurah";
+    }
+    
+    if (leftPanel) {
+      leftPanel.dataset.mode = leftMode;
+      this.renderSidePanelContent(leftPanel, leftMode);
+    }
+    if (rightPanel) {
+      rightPanel.dataset.mode = rightMode;
+      this.renderSidePanelContent(rightPanel, rightMode);
     }
 
-    const sidePanels = document.querySelectorAll(".recommendation-panel.is-side");
-    if (sidePanels.length) {
-      tl.add({
-        targets: sidePanels,
-        opacity: [1, 0.65],
-        scale: [1, 0.94],
-        translateX: function(el, i) {
-          return i === 0 ? [-0, -26] : [0, 26];
-        },
-        duration: 520
-      }, "-=520");
+    // Also update active panel header
+    const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === nextMode);
+    const activeIcon = document.querySelector('.active-mode-icon');
+    const activeTitle = document.querySelector('.recommendation-panel-title');
+    const activeCount = document.querySelector('.recommendation-panel-count');
+    
+    const buckets = this.buildRecommendationBuckets();
+    const count = (buckets[nextMode] || []).length;
+    
+    if (activeIcon && modeMeta) activeIcon.textContent = modeMeta.icon;
+    if (activeTitle && modeMeta) activeTitle.textContent = modeMeta.label;
+    if (activeCount) activeCount.textContent = `${count} produk`;
+
+    // Trigger side panels transition animation
+    this.animateSidePanels();
+  }
+
+  renderSidePanelContent(panel, modeKey) {
+    const modeMeta = RECOMMENDATION_MODES.find(m => m.key === modeKey);
+    if (!modeMeta) return;
+    const buckets = this.buildRecommendationBuckets();
+    const products = buckets[modeKey] || [];
+    const count = products.length;
+    const featured = products[0];
+    
+    let featuredHtml = "";
+    if (featured) {
+      featuredHtml = `
+        <div class="recommendation-side-featured">
+          <span class="featured-title">${this.esc(featured.title)}</span>
+          <span class="featured-price">${this.esc(featured.price || featured.price_text)}</span>
+        </div>
+      `;
+    } else {
+      featuredHtml = `
+        <div class="recommendation-side-featured">
+          <span class="featured-title">Belum ada produk</span>
+        </div>
+      `;
+    }
+    
+    panel.innerHTML = `
+      <div class="recommendation-panel-head">
+        <span class="mode-icon">${this.esc(modeMeta.icon)}</span>
+        <div>
+          <h4 class="recommendation-side-title">${this.esc(modeMeta.label)}</h4>
+          <p class="recommendation-side-count">${count} produk</p>
+        </div>
+      </div>
+      ${featuredHtml}
+    `;
+  }
+
+  animateSidePanels() {
+    const panels = document.querySelectorAll(".recommendation-side-panel");
+    if (!panels || !panels.length) return;
+
+    AnimeBridge.run(panels, {
+      opacity: [0.4, 0.78],
+      scale: [0.9, 1],
+      translateX: function(el, index) {
+        return index === 0 ? [-36, 0] : [36, 0];
+      },
+      delay: AnimeBridge.stagger(90),
+      duration: 700,
+      easing: "easeOutExpo"
+    });
+  }
+
+  updateRecommendationContent(nextMode) {
+    const grid = document.querySelector('.recommendation-product-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    
+    const buckets = this.buildRecommendationBuckets();
+    const products = buckets[nextMode] || [];
+    
+    if (!products.length) {
+      const empty = document.createElement('div');
+      empty.className = 'recommendation-empty';
+      empty.textContent = 'Belum cukup data untuk rekomendasi ini.';
+      grid.appendChild(empty);
+    } else {
+      products.forEach((product) => {
+        grid.appendChild(this.createRecommendationMiniCard(product));
+      });
+    }
+    
+    const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === nextMode);
+    if (modeMeta) {
+      this.applySortMode(modeMeta.sortMode, false);
+      this.renderProducts();
+      this.updateResultCount();
     }
   }
 
   animateRecommendationStage() {
     if (!this.canAnimate()) return;
-    window.anime.remove?.('.recommendation-panel, .recommendation-product-card, .recommendation-tab');
-    window.anime({
-      targets: '.recommendation-panel',
+    const activePanel = document.querySelector('.recommendation-active-panel');
+    const sidePanels = document.querySelectorAll('.recommendation-side-panel');
+    const cards = document.querySelectorAll('.recommendation-product-card');
+    
+    AnimeBridge.run([activePanel, ...sidePanels].filter(Boolean), {
       opacity: [0, 1],
       translateY: [24, 0],
       scale: [0.96, 1],
-      delay: window.anime.stagger(70),
+      delay: AnimeBridge.stagger(70),
       duration: 650,
       easing: 'easeOutExpo',
     });
-    window.anime({
-      targets: '.recommendation-product-card',
-      opacity: [0, 1],
-      translateY: [18, 0],
-      scale: [0.94, 1],
-      delay: window.anime.stagger(45),
-      duration: 680,
-      easing: 'easeOutExpo',
-    });
+    
+    const profile = getRecommendationMotionProfile();
+    this.animateRecommendationProductsEnter(profile);
   }
 
   observeRecommendationStage() {
@@ -1330,8 +1528,7 @@ class ScraperApp {
     const startHeight = stage.offsetHeight;
     stage.style.height = `${startHeight}px`;
     const endHeight = stage.scrollHeight;
-    window.anime({
-      targets: stage,
+    AnimeBridge.run(stage, {
       height: [startHeight, endHeight],
       scale: [0.98, 1],
       duration: 650,
@@ -1919,26 +2116,41 @@ class ScraperApp {
   }
 
   bindProductCardClick() {
-    const isInsideRecommendation = (cardEl) => {
-      return Boolean(cardEl.closest(".recommendation-stage"));
-    };
-
     document.addEventListener("click", (event) => {
+      // 1. Category tab buttons
+      const modeBtn = event.target.closest("[data-recommendation-mode]");
+      if (modeBtn) {
+        const mode = modeBtn.dataset.recommendationMode;
+        this.selectRecommendation(mode, modeBtn);
+        return;
+      }
+
+      // 2. Side panels
+      const sidePanel = event.target.closest(".recommendation-side-panel");
+      if (sidePanel) {
+        const mode = sidePanel.dataset.mode;
+        if (mode) {
+          this.selectRecommendation(mode, sidePanel);
+        }
+        return;
+      }
+
+      // 3. Product cards / Recommendation product cards
       const card = event.target.closest(".product-card, .recommendation-product-card");
       if (!card) return;
 
       const clickedAction = event.target.closest("button, a, [data-no-modal]");
       if (clickedAction) return;
 
-      if (isInsideRecommendation(card)) {
+      // Recommendation cards open modal
+      if (card.classList.contains("recommendation-product-card")) {
         const productId = card.dataset.productId;
         const product = window.__MARKETSPY_PRODUCTS__?.find(
           item => String(item.id) === String(productId)
         );
-
-        if (!product) return;
-
-        this.openRecommendationProductModal(product, card);
+        if (product) {
+          this.openRecommendationProductModal(product, card);
+        }
         return;
       }
     });
@@ -1958,17 +2170,15 @@ class ScraperApp {
 
     dialog.showModal();
 
-    window.anime({
-      targets: ".recommendation-modal-card",
+    AnimeBridge.run(".recommendation-modal-card", {
       opacity: [0, 1],
-      translateY: [50, 0],
-      scale: [0.90, 1],
+      translateY: [56, 0],
+      scale: [0.88, 1],
       duration: 1000,
       easing: "easeOutExpo"
     });
 
-    window.anime({
-      targets: ".recommendation-modal-image-wrap",
+    AnimeBridge.run(".recommendation-modal-image-wrap", {
       opacity: [0, 1],
       translateX: [-48, 0],
       scale: [0.96, 1],
@@ -1977,11 +2187,10 @@ class ScraperApp {
       easing: "easeOutExpo"
     });
 
-    window.anime({
-      targets: ".recommendation-modal-content > *",
+    AnimeBridge.run(".recommendation-modal-content > *", {
       opacity: [0, 1],
       translateX: [36, 0],
-      delay: window.anime.stagger(70, { start: 180 }),
+      delay: AnimeBridge.stagger(70, { start: 180 }),
       duration: 850,
       easing: "easeOutExpo"
     });
@@ -1991,10 +2200,9 @@ class ScraperApp {
     const dialog = document.querySelector("#recommendation-product-dialog");
     if (!dialog) return;
 
-    window.anime({
-      targets: ".recommendation-modal-card",
+    AnimeBridge.run(".recommendation-modal-card", {
       opacity: [1, 0],
-      translateY: [0, 28],
+      translateY: [0, 32],
       scale: [1, 0.94],
       duration: 1000,
       easing: "easeOutExpo",

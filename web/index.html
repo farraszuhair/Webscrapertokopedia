@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=ui-20260528">
   <!-- UI_BUILD_MARKER_20260528 -->
+  <!-- UI_RECOMMENDATION_MORPH_20260528 -->
 </head>
 <body>
   <div class="app">
@@ -190,17 +191,50 @@
         </div>
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
-          <section class="recommendation-stage" id="recommendation-stage">
-            <div class="recommendation-header">
-              <span>QUICK RECOMMENDATION</span>
-              <h2 id="recommendationTitle" class="recommendation-active-title">Terbaik</h2>
+          <section class="recommendation-stage" id="recommendation-stage" data-active-mode="terbaik">
+            <div class="recommendation-bg-orbit"></div>
 
-              <div class="recommendation-controls" id="recommendation-tabs">
-                <!-- Dynamically populated inner emoji buttons: ⭐ Terbaik, 💸 Termurah, 🏆 Most Trusted -->
+            <div class="recommendation-header">
+              <div>
+                <span class="recommendation-kicker">QUICK RECOMMENDATION</span>
+                <h2 id="recommendationTitle" class="recommendation-active-title">Terbaik</h2>
+              </div>
+
+              <div class="recommendation-controls">
+                <button class="recommendation-mode-btn is-active" data-recommendation-mode="terbaik">
+                  <span class="mode-icon">⭐</span>
+                  <span>Terbaik</span>
+                </button>
+
+                <button class="recommendation-mode-btn" data-recommendation-mode="termurah">
+                  <span class="mode-icon">💸</span>
+                  <span>Termurah</span>
+                </button>
+
+                <button class="recommendation-mode-btn" data-recommendation-mode="trusted">
+                  <span class="mode-icon">🏆</span>
+                  <span>Most Trusted</span>
+                </button>
               </div>
             </div>
 
-            <div id="recommendation-stage-grid" class="recommendation-stage-grid"></div>
+            <div class="recommendation-world">
+              <aside class="recommendation-side-panel" data-side-mode="left"></aside>
+
+              <main class="recommendation-active-panel">
+                <div class="recommendation-panel-head">
+                  <span class="mode-icon active-mode-icon">⭐</span>
+                  <div>
+                    <h3 class="recommendation-panel-title">Terbaik</h3>
+                    <p class="recommendation-panel-count">6 produk</p>
+                  </div>
+                </div>
+
+                <div class="recommendation-product-grid" id="recommendation-product-grid"></div>
+              </main>
+
+              <aside class="recommendation-side-panel" data-side-mode="right"></aside>
+            </div>
           </section>
         </div>
 
