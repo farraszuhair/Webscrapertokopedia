@@ -11,9 +11,11 @@
   <!-- UI_BUILD_MARKER_20260528 -->
   <!-- UI_RECOMMENDATION_MORPH_20260528 -->
   <!-- UI_FINAL_REVIEW_FLOW_20260528 -->
+  <!-- UI_MODAL_NEXT_QUEUE_FIX_20260528 -->
 </head>
 <body>
   <span id="UI_FINAL_REVIEW_FLOW_20260528" style="display: none;">UI_FINAL_REVIEW_FLOW_20260528</span>
+  <span id="UI_MODAL_NEXT_QUEUE_FIX_20260528" style="display: none;">UI_MODAL_NEXT_QUEUE_FIX_20260528</span>
   <div class="app">
     <header class="header">
       <div class="header-inner">
@@ -209,14 +211,23 @@
 
             <div class="recommendation-header">
               <div>
-                <span class="recommendation-kicker">QUICK RECOMMENDATION</span>
+                <span class="recommendation-kicker">REKOMENDASI CEPAT</span>
                 <h2 id="recommendationTitle" class="recommendation-active-title">Terbaik</h2>
               </div>
 
               <div class="recommendation-controls">
-                <button class="recommendation-mode-btn is-active" data-recommendation-mode="terbaik">⭐ Terbaik</button>
-                <button class="recommendation-mode-btn" data-recommendation-mode="termurah">💸 Termurah</button>
-                <button class="recommendation-mode-btn" data-recommendation-mode="trusted">🏆 Most Trusted</button>
+                <button type="button" class="recommendation-mode-btn is-active" data-recommendation-mode="terbaik">
+                  <span class="mode-icon">⭐</span>
+                  <span>Terbaik</span>
+                </button>
+                <button type="button" class="recommendation-mode-btn" data-recommendation-mode="termurah">
+                  <span class="mode-icon">💸</span>
+                  <span>Termurah</span>
+                </button>
+                <button type="button" class="recommendation-mode-btn" data-recommendation-mode="trusted">
+                  <span class="mode-icon">🏆</span>
+                  <span>Most Trusted</span>
+                </button>
               </div>
             </div>
 
@@ -230,7 +241,7 @@
           </section>
         </div>
 
-        <div id="products-grid" class="products-grid"></div>
+        <div id="products-grid" class="products-grid results-grid"></div>
 
         <div class="results-footer">
           <button class="btn btn-ghost" onclick="app.reset()">Cari Lagi</button>
@@ -245,11 +256,11 @@
 
       <div class="product-modal-layout">
         <div class="product-modal-image-wrap">
-          <img class="product-modal-image" alt="Product image" />
+          <img class="product-modal-image" alt="Gambar produk" />
         </div>
 
         <div class="product-modal-content">
-          <span class="product-modal-kicker">PRODUCT DETAIL</span>
+          <span class="product-modal-kicker">DETAIL PRODUK</span>
           <h2 class="product-modal-title"></h2>
           <p class="product-modal-store"></p>
 
@@ -311,11 +322,11 @@
 
       <div class="recommendation-modal-layout">
         <div class="recommendation-modal-image-wrap">
-          <img class="recommendation-modal-image" alt="Product image" />
+          <img class="recommendation-modal-image" alt="Gambar produk" />
         </div>
 
         <div class="recommendation-modal-content">
-          <span class="recommendation-modal-kicker">RECOMMENDATION DETAIL</span>
+          <span class="recommendation-modal-kicker">DETAIL REKOMENDASI</span>
           <h2 class="recommendation-modal-title"></h2>
           <p class="recommendation-modal-store"></p>
 
