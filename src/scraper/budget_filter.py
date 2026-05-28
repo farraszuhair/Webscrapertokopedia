@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.scraper.normalizer import normalize_products
+from src.config import STRICT_BUDGET_MODE
 from src.utils.currency import calculate_budget_range, format_rupiah, parse_rupiah
 
 
@@ -118,7 +119,7 @@ def filter_by_budget(products: list[dict[str, Any]], budget: Any, tolerance: Any
         budget_value = None
 
     tolerance_value = _safe_tolerance(tolerance)
-    strict_budget_mode = _env_bool("STRICT_BUDGET_MODE", False)
+    strict_budget_mode = _env_bool("STRICT_BUDGET_MODE", STRICT_BUDGET_MODE)
 
     if budget_value is None:
         for product in normalized:

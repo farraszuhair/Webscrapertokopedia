@@ -1,6 +1,9 @@
 from src.server.progress import complete_progress, get_progress, init_progress, update_progress
+import src.server.routes as routes
+from src.server.main import app
 from src.server.routes import _public_product_payload
 from src.server.schemas import SearchRequest
+from fastapi.testclient import TestClient
 
 
 def test_search_request_accepts_requested_api_shape():
@@ -62,6 +65,8 @@ def test_public_product_payload_has_required_demo_shape():
     assert product["price"] == "Rp12.500.000"
     assert product["priceNumber"] == 12_500_000
     assert product["image"] == "https://images.test/p1.jpg"
+    assert product["image_url"] == "https://images.test/p1.jpg"
+    assert product["has_image"] is True
     assert product["storeName"] == "Toko Demo"
     assert product["rating"] == 4.8
     assert product["soldCount"] == 120
@@ -69,3 +74,47 @@ def test_public_product_payload_has_required_demo_shape():
     assert product["source"] == "puppeteer"
     assert product["confidenceScore"] == 0.87
     assert product["relevanceReason"] == "Cocok dengan query"
+
+
+def test_public_product_payload_normalizes_image_aliases():
+    product = _public_product_payload({
+        "id": "p2",
+        "title": "Laptop Gaming",
+        "price_value": 10_000_000,
+        "images": ["//images.test/p2.webp"],
+        "url": "https://tokopedia.test/p2",
+    })
+
+    assert product["image_url"] == "https://images.test/p2.webp"
+    assert product["image"] == "https://images.test/p2.webp"
+    assert product["has_image"] is True
+
+
+def test_image_proxy_returns_image_bytes(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "image/webp"}
+        content = b"image-bytes"
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, headers):
+            assert url == "https://images.test/p2.webp"
+            assert headers["Referer"] == "https://www.tokopedia.com/"
+            return FakeResponse()
+
+    monkeypatch.setattr(routes.httpx, "AsyncClient", FakeAsyncClient)
+
+    response = TestClient(app).get("/api/image-proxy", params={"url": "//images.test/p2.webp"})
+
+    assert response.status_code == 200
+    assert response.content == b"image-bytes"
+    assert response.headers["content-type"].startswith("image/webp")

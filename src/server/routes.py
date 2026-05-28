@@ -16,8 +16,11 @@ import traceback
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+import httpx
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
+from src.ai.ai_filter import is_valid_product_candidate
 from src.ai.feedback_store import feedback_summary_counts, reset_learning
 from src.ai.learning import save_feedback
 from src.ai.memory_store import FEEDBACK_FILE as LEGACY_FEEDBACK_FILE, read_jsonl
@@ -26,12 +29,12 @@ from src.ai.relevance import filter_relevance
 from src.ai.reset import reset_ai_memory
 from src.scraper.budget_filter import FilterResult, filter_by_budget
 from src.scraper.dedupe import deduplicate_products
-from src.scraper.engine_selector import EngineRunResult, EngineSelectionResult, run_scraper_engines
-from src.scraper.normalizer import normalize_products_with_report
+from src.scraper.engine_selector import EngineRunResult, EngineSelectionResult, run_engine, run_scraper_engines
+from src.scraper.normalizer import normalize_image_url, normalize_products_with_report, pick_product_image
 from src.server.lifecycle import register_task, unregister_task
 from src.server.progress import complete_progress, fail_progress, get_progress, init_progress, update_progress
 from src.server.schemas import FeedbackRequest, ProgressResponse, SearchRequest
-from src.config import OVERFETCH_MULTIPLIER
+from src.config import OVERFETCH_MULTIPLIER, STRICT_BUDGET_MODE
 from src.utils.currency import format_rupiah, parse_rupiah
 from src.utils.debug import safe_save_debug, save_json_debug
 from src.utils.eta import ETACalculator
@@ -95,6 +98,43 @@ async def fetch_result(search_id: str):
     if not result:
         raise HTTPException(status_code=404, detail="Result not found or not ready")
     return result
+
+
+@router.get("/api/image-proxy")
+async def image_proxy(url: str = Query(..., min_length=8)):
+    image_url = normalize_image_url(url)
+    if not image_url:
+        raise HTTPException(status_code=400, detail="Invalid image URL")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        ),
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Referer": "https://www.tokopedia.com/",
+    }
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+            response = await client.get(image_url, headers=headers)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Image proxy timeout") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Image proxy failed") from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Image host returned {response.status_code}")
+
+    media_type = response.headers.get("content-type", "image/jpeg").split(";", 1)[0].strip().lower()
+    if not media_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="URL did not return an image")
+
+    return Response(
+        content=response.content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.post("/api/feedback")
@@ -175,7 +215,7 @@ async def handle_learning_reset(payload: dict[str, Any]):
             query=payload.get("query"),
             constraint_key=payload.get("constraint_key"),
         )
-        return {"ok": True, "success": True, "message": "Learning reset", **result}
+        return {"ok": True, "success": True, "message": "Learning memory reset", **result}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -222,9 +262,141 @@ def _budget_info(filter_result: FilterResult) -> dict[str, Any] | None:
     }
 
 
+def _candidate_pool_snapshot(
+    raw_products: list[dict[str, Any]],
+    req: SearchRequest,
+    engine_name: str = "selected",
+) -> dict[str, Any]:
+    normalizer = normalize_products_with_report(raw_products, engine_name)
+    deduped = deduplicate_products(normalizer.output)
+    product_candidates = [product for product in deduped if is_valid_product_candidate(product)]
+    invalid_non_product_removed = len(deduped) - len(product_candidates)
+    budget_result = filter_by_budget(product_candidates, req.budget, req.tolerance)
+    candidates = [product for product in budget_result.kept if is_valid_product_candidate(product)]
+    return {
+        "scraped_raw": len(raw_products),
+        "after_dedupe": len(deduped),
+        "valid_product_candidates": len(product_candidates),
+        "invalid_non_product_removed": invalid_non_product_removed,
+        "budget_valid": len(candidates),
+        "candidate_pool_count": len(candidates),
+        "budget_enabled": budget_result.budget_value is not None,
+    }
+
+
+async def _overfetch_raw_products(
+    search_id: str,
+    req: SearchRequest,
+    raw_products: list[dict[str, Any]],
+    engine_name: str,
+    raw_target: int,
+    eta_calc: ETACalculator,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    desired = int(req.target_count)
+    max_raw = max(desired * 10, 500)
+    max_scroll_rounds = 12
+    attempts = 0
+    products = list(raw_products or [])
+    snapshot = _candidate_pool_snapshot(products, req, engine_name)
+    initial_valid_pool = int(snapshot["candidate_pool_count"])
+    can_load_more = engine_name in {"puppeteer", "rollback"} and len(products) < max_raw
+    stop_reason = "target_met" if initial_valid_pool >= desired else "not_started"
+
+    if initial_valid_pool < desired:
+        log(
+            "PIPELINE",
+            (
+                f"overfetch_start requested={desired} "
+                f"budget_valid={initial_valid_pool} raw={len(products)}"
+            ),
+            "INFO",
+        )
+
+    while (
+        int(snapshot["candidate_pool_count"]) < desired
+        and len(products) < max_raw
+        and can_load_more
+        and attempts < max_scroll_rounds
+    ):
+        attempts += 1
+        next_target = min(max_raw, max(raw_target, len(products) + desired, desired * 4))
+        log(
+            "PIPELINE",
+            (
+                f"overfetch requested={desired} valid_pool={snapshot['candidate_pool_count']} "
+                f"loading_more=true attempt={attempts} next_raw_target={next_target}"
+            ),
+            "INFO",
+        )
+        update_progress(
+            search_id,
+            active_engine=engine_name,
+            stage="overfetching",
+            message="Mencari produk tambahan untuk memenuhi target valid...",
+            found=len(products),
+            valid=int(snapshot["candidate_pool_count"]),
+            elapsed_seconds=eta_calc.get_elapsed(),
+        )
+
+        run = await run_engine(search_id, engine_name, req.query, next_target, eta_calc)
+        if not run.ok or not run.products:
+            can_load_more = False
+            stop_reason = "load_more_exhausted"
+            break
+
+        previous_after_dedupe = int(snapshot["after_dedupe"])
+        previous_valid_pool = int(snapshot["candidate_pool_count"])
+        products.extend(run.products)
+        snapshot = _candidate_pool_snapshot(products, req, engine_name)
+        log(
+            "PIPELINE",
+            f"overfetch_round={attempts} raw={len(products)} budget_valid={snapshot['candidate_pool_count']}",
+            "INFO",
+        )
+        if (
+            int(snapshot["after_dedupe"]) <= previous_after_dedupe
+            and int(snapshot["candidate_pool_count"]) <= previous_valid_pool
+        ):
+            can_load_more = False
+            stop_reason = "no_new_valid_products"
+            break
+
+    final_valid_pool = int(snapshot["candidate_pool_count"])
+    target_display = min(desired, final_valid_pool)
+    if final_valid_pool >= desired:
+        stop_reason = "target_met"
+    elif len(products) >= max_raw:
+        stop_reason = "raw_limit_reached"
+    elif attempts >= max_scroll_rounds:
+        stop_reason = "max_scroll_rounds_reached"
+    elif not can_load_more and stop_reason == "not_started":
+        stop_reason = "load_more_unavailable"
+    log(
+        "PIPELINE",
+        (
+            f"overfetch_done requested={desired} budget_valid={final_valid_pool} "
+            f"reason={stop_reason} target_display={target_display} attempts={attempts} "
+            f"loading_more={str(can_load_more).lower()}"
+        ),
+        "INFO",
+    )
+    return products, {
+        "overfetch_attempted": attempts > 0,
+        "overfetch_attempts": attempts,
+        "overfetch_rounds": attempts,
+        "overfetch_initial_valid_pool": initial_valid_pool,
+        "overfetch_final_valid_pool": final_valid_pool,
+        "overfetch_max_raw": max_raw,
+        "overfetch_exhausted": final_valid_pool < desired,
+        "overfetch_stop_reason": stop_reason,
+        "raw_after_overfetch": len(products),
+    }
+
+
 def _public_product_payload(product: dict[str, Any]) -> dict[str, Any]:
     """Expose the required demo product shape while keeping legacy aliases."""
     payload = dict(product or {})
+    image_url = pick_product_image(payload)
     price_number = parse_rupiah(payload.get("price_value"))
     if price_number is None:
         price_number = parse_rupiah(payload.get("priceNumber"))
@@ -262,7 +434,9 @@ def _public_product_payload(product: dict[str, Any]) -> dict[str, Any]:
         "price_value": price_number,
         "price_raw": price_text,
         "price_text": price_text,
-        "image": str(payload.get("image") or payload.get("image_url") or ""),
+        "image_url": image_url,
+        "image": image_url or "",
+        "has_image": bool(image_url),
         "storeName": store_name,
         "shop_name": store_name,
         "rating": payload.get("rating") or 0,
@@ -272,6 +446,9 @@ def _public_product_payload(product: dict[str, Any]) -> dict[str, Any]:
         "source": str(payload.get("source") or payload.get("source_engine") or "tokopedia"),
         "confidenceScore": round(confidence_score, 3),
         "relevanceReason": relevance_reason,
+        "outside_budget": bool(payload.get("outside_budget", False)),
+        "budget_badge": str(payload.get("budget_badge") or ""),
+        "target_first_fallback": bool(payload.get("target_first_fallback", False)),
     })
     return payload
 
@@ -394,6 +571,7 @@ def is_accessory_like(product: dict[str, Any], query: str) -> bool:
 def _recommendation_payload(product: dict[str, Any] | None, reason: str) -> dict[str, Any] | None:
     if not product:
         return None
+    image_url = pick_product_image(product)
     return {
         "id": product.get("id", ""),
         "title": product.get("title", ""),
@@ -404,7 +582,9 @@ def _recommendation_payload(product: dict[str, Any] | None, reason: str) -> dict
         "sold": product.get("sold") or product.get("sold_text") or "",
         "shop_name": product.get("shop_name") or product.get("shop") or "",
         "shop_location": product.get("shop_location") or product.get("location") or "",
-        "image": product.get("image") or product.get("image_url") or "",
+        "image_url": image_url,
+        "image": image_url or "",
+        "has_image": bool(image_url),
         "url": product.get("url") or product.get("product_url") or "",
         "ai_confidence": product.get("ai_confidence", product.get("relevance_score", 0)),
         "reason": reason,
@@ -462,10 +642,19 @@ def _build_result_warning(
     ai_skip_reason: str | None,
     displayed: int,
     target_display: int,
+    overfetch_stop_reason: str | None = None,
+    strict_budget_mode: bool = True,
 ) -> str:
     warnings: list[str] = []
     if candidate_pool_count < requested:
-        warnings.append(f"Diminta {requested}, tetapi hanya {candidate_pool_count} kandidat sesuai budget.")
+        if strict_budget_mode:
+            warnings.append(
+                f"Diminta {requested}, tetapi hanya {candidate_pool_count} produk sesuai budget setelah overfetch."
+            )
+        else:
+            warnings.append(f"Diminta {requested}, tetapi hanya {candidate_pool_count} kandidat tersedia.")
+    if overfetch_stop_reason and candidate_pool_count < requested:
+        warnings.append(f"Overfetch berhenti: {overfetch_stop_reason}.")
     if fallback_added > 0:
         warnings.append(f"{fallback_added} produk fallback ditambahkan agar hasil mendekati target.")
     if ai_skip_reason:
@@ -477,12 +666,52 @@ def _build_result_warning(
     return " ".join(dict.fromkeys(warnings))
 
 
+def _budget_distance(product: dict[str, Any], min_price: int | None, max_price: int | None) -> int:
+    price = parse_rupiah(product.get("price_value"))
+    if price is None:
+        price = parse_rupiah(product.get("price_raw") or product.get("price_text") or product.get("price"))
+    price = int(price or 0)
+    if min_price is not None and price < min_price:
+        return min_price - price
+    if max_price is not None and price > max_price:
+        return price - max_price
+    return 0
+
+
+def _target_first_budget_fallbacks(
+    budget_result: FilterResult,
+    needed: int,
+) -> list[dict[str, Any]]:
+    if needed <= 0 or budget_result.budget_value is None:
+        return []
+    candidates = [
+        dict(product)
+        for product in budget_result.rejected
+        if is_valid_product_candidate(product)
+        and product.get("reject_reason") in {"below_budget_range", "above_budget_range"}
+    ]
+    candidates.sort(
+        key=lambda product: (
+            _budget_distance(product, budget_result.min_price, budget_result.max_price),
+            parse_rupiah(product.get("price_value")) or 10**18,
+        )
+    )
+    selected = candidates[:needed]
+    for product in selected:
+        product["outside_budget"] = True
+        product["budget_badge"] = "Di luar budget"
+        product["target_first_fallback"] = True
+        product["budget_distance"] = _budget_distance(product, budget_result.min_price, budget_result.max_price)
+    return selected
+
+
 async def _filter_pipeline(
     search_id: str,
     req: SearchRequest,
     raw_products: list[dict[str, Any]],
     eta_calc: ETACalculator,
     engine_name: str = "selected",
+    overfetch_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Full filter pipeline: normalize -> dedupe -> budget -> intent-aware AI -> sort.
@@ -492,13 +721,16 @@ async def _filter_pipeline(
     normalizer = normalize_products_with_report(raw_products, engine, search_id)
     normalized = normalizer.output
     deduped = deduplicate_products(normalized)
+    product_candidates = [product for product in deduped if is_valid_product_candidate(product)]
+    invalid_non_product_removed = len(deduped) - len(product_candidates)
     image_total = len(normalized)
     missing_rate = (normalizer.images_missing_count / image_total) if image_total else 0.0
     log(
-        "IMAGES",
+        "IMAGE",
         (
-            f"engine={engine} images_extracted_count={normalizer.images_extracted_count} "
-            f"images_missing_count={normalizer.images_missing_count} missing_rate={missing_rate:.2%}"
+            f"total={image_total} image_found={normalizer.images_extracted_count} "
+            f"image_missing={normalizer.images_missing_count} engine={engine} "
+            f"missing_rate={missing_rate:.2%}"
         ),
         "INFO",
     )
@@ -519,9 +751,9 @@ async def _filter_pipeline(
         search_id,
         stage="deduplicating",
         percent=65,
-        message=f"Deduped {len(normalized)} raw products into {len(deduped)} candidates",
+        message=f"Deduped {len(normalized)} raw products into {len(product_candidates)} valid products",
         found=len(normalized),
-        valid=len(deduped),
+        valid=len(product_candidates),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
@@ -530,12 +762,23 @@ async def _filter_pipeline(
         stage="budget_filtering",
         percent=68,
         message="Filtering budget..." if req.budget else "Budget kosong: skip budget filter",
-        found=len(deduped),
+        found=len(product_candidates),
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    budget_result = filter_by_budget(deduped, req.budget, req.tolerance)
-    candidates = budget_result.kept
+    budget_result = filter_by_budget(product_candidates, req.budget, req.tolerance)
+    strict_budget_mode = bool(STRICT_BUDGET_MODE)
+    target_first_mode = bool(getattr(req, "target_first_mode", False))
+    budget_valid_count = len([product for product in budget_result.kept if is_valid_product_candidate(product)])
+    candidates = [product for product in budget_result.kept if is_valid_product_candidate(product)]
+    target_first_added = 0
+    if target_first_mode and budget_valid_count < req.target_count:
+        target_first_fill = _target_first_budget_fallbacks(
+            budget_result,
+            req.target_count - budget_valid_count,
+        )
+        target_first_added = len(target_first_fill)
+        candidates.extend(target_first_fill)
     budget_enabled = budget_result.budget_value is not None
     orchestrator_status = get_orchestrator_status()
 
@@ -543,7 +786,9 @@ async def _filter_pipeline(
         "BUDGET",
         (
             f"enabled={str(budget_enabled).lower()} raw={len(raw_products)} "
-            f"deduped={len(deduped)} valid={len(candidates)} "
+            f"deduped={len(deduped)} product_candidates={len(product_candidates)} "
+            f"invalid_non_product_removed={invalid_non_product_removed} budget_valid={budget_valid_count} "
+            f"candidate_pool={len(candidates)} target_first_added={target_first_added} "
             f"min={budget_result.min_price} max={budget_result.max_price} "
             f"rejected={len(budget_result.rejected)}"
         ),
@@ -570,12 +815,27 @@ async def _filter_pipeline(
         },
     )
 
+    overfetch_meta = overfetch_meta or {}
     for candidate in candidates:
         candidate["_requested_target"] = req.target_count
         candidate["_scraped_raw"] = len(raw_products)
         candidate["_after_dedupe"] = len(deduped)
-        candidate["_budget_valid"] = len(candidates)
+        candidate["_valid_product_candidates"] = len(product_candidates)
+        candidate["_invalid_non_product_removed"] = invalid_non_product_removed
+        candidate["_budget_valid"] = budget_valid_count
         candidate["_candidate_pool"] = len(candidates)
+        candidate["_overfetch_attempted"] = bool(overfetch_meta.get("overfetch_attempted", False))
+        candidate["_overfetch_attempts"] = int(overfetch_meta.get("overfetch_attempts", 0) or 0)
+        candidate["_overfetch_rounds"] = int(overfetch_meta.get("overfetch_rounds", overfetch_meta.get("overfetch_attempts", 0)) or 0)
+        candidate["_overfetch_initial_valid_pool"] = int(overfetch_meta.get("overfetch_initial_valid_pool", len(candidates)) or 0)
+        candidate["_overfetch_final_valid_pool"] = int(overfetch_meta.get("overfetch_final_valid_pool", len(candidates)) or 0)
+        candidate["_overfetch_max_raw"] = int(overfetch_meta.get("overfetch_max_raw", 0) or 0)
+        candidate["_overfetch_exhausted"] = bool(overfetch_meta.get("overfetch_exhausted", False))
+        candidate["_overfetch_stop_reason"] = str(overfetch_meta.get("overfetch_stop_reason") or "")
+        candidate["_raw_after_overfetch"] = int(overfetch_meta.get("raw_after_overfetch", len(raw_products)) or 0)
+        candidate["_strict_budget_mode"] = strict_budget_mode
+        candidate["_target_first_mode"] = target_first_mode
+        candidate["_target_first_added"] = target_first_added
 
     ai_result = await filter_relevance(req.query, candidates, req.use_ai, search_id)
     ai_valid, ai_status = ai_result
@@ -595,6 +855,12 @@ async def _filter_pipeline(
     ranked = _sort_products(list(ai_valid), req.sort_mode)
     final = ranked[:target_display]
     public_final = [_public_product_payload(product) for product in final]
+    public_image_found = sum(1 for product in public_final if product.get("has_image"))
+    log(
+        "IMAGE",
+        f"total={len(public_final)} image_found={public_image_found} image_missing={len(public_final) - public_image_found}",
+        "INFO",
+    )
     fallback_added = int(ai_meta.get("fallback_added", ai_meta.get("fallback_expansion_count", 0)) or 0)
     ai_timeouts = int(ai_meta.get("ai_timeouts", 0) or 0)
     ai_skip_reason = ai_meta.get("ai_skip_reason")
@@ -605,6 +871,8 @@ async def _filter_pipeline(
         ai_skip_reason=str(ai_skip_reason) if ai_skip_reason else None,
         displayed=len(public_final),
         target_display=target_display,
+        overfetch_stop_reason=str(overfetch_meta.get("overfetch_stop_reason") or "") or None,
+        strict_budget_mode=strict_budget_mode,
     )
     limited = final_warning or None
 
@@ -630,11 +898,30 @@ async def _filter_pipeline(
         "raw_scraped": len(raw_products),
         "after_dedupe": len(deduped),
         "deduped_count": len(deduped),
-        "budget_valid": len(candidates),
-        "budget_valid_count": len(candidates),
+        "valid_product_candidates": len(product_candidates),
+        "invalid_non_product_removed": invalid_non_product_removed,
+        "budget_valid": budget_valid_count,
+        "budget_valid_count": budget_valid_count,
         "candidate_pool": len(candidates),
+        "candidate_pool_count": len(candidates),
         "ai_input_count": len(candidates),
         "target_display": target_display,
+        "image_found": public_image_found,
+        "image_missing": len(public_final) - public_image_found,
+        "normalizer_image_found": normalizer.images_extracted_count,
+        "normalizer_image_missing": normalizer.images_missing_count,
+        "overfetch_attempted": bool(overfetch_meta.get("overfetch_attempted", False)),
+        "overfetch_attempts": int(overfetch_meta.get("overfetch_attempts", 0) or 0),
+        "overfetch_rounds": int(overfetch_meta.get("overfetch_rounds", overfetch_meta.get("overfetch_attempts", 0)) or 0),
+        "overfetch_initial_valid_pool": int(overfetch_meta.get("overfetch_initial_valid_pool", len(candidates)) or 0),
+        "overfetch_final_valid_pool": int(overfetch_meta.get("overfetch_final_valid_pool", len(candidates)) or 0),
+        "overfetch_max_raw": int(overfetch_meta.get("overfetch_max_raw", 0) or 0),
+        "overfetch_exhausted": bool(overfetch_meta.get("overfetch_exhausted", False)),
+        "overfetch_stop_reason": str(overfetch_meta.get("overfetch_stop_reason") or ""),
+        "raw_after_overfetch": int(overfetch_meta.get("raw_after_overfetch", len(raw_products)) or 0),
+        "strict_budget_mode": strict_budget_mode,
+        "target_first_mode": target_first_mode,
+        "target_first_added": target_first_added,
         "query_constraints": ai_meta.get("query_constraints", {}),
         "feedback_examples_loaded": ai_meta.get("feedback_examples_loaded", 0),
         "learned_patterns_loaded": ai_meta.get("learned_patterns_loaded", 0),
@@ -656,10 +943,17 @@ async def _filter_pipeline(
         "ai_calls_attempted": ai_meta.get("ai_calls_attempted", 0),
         "ai_calls_succeeded": ai_meta.get("ai_calls_succeeded", 0),
         "ai_timeouts": ai_timeouts,
+        "ai_failures": ai_meta.get("ai_failures", 0),
+        "ai_batch_size": ai_meta.get("ai_batch_size"),
+        "prompt_tokens_estimated": ai_meta.get("prompt_tokens_estimated", 0),
+        "prompt_truncated_by_app": ai_meta.get("prompt_truncated_by_app", False),
+        "ctx": ai_meta.get("ctx"),
         "ai_circuit_open": bool(ai_meta.get("ai_circuit_open", False)),
         "classifier_limit": ai_meta.get("classifier_limit"),
         "ai_accepted": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
         "ai_accepted_count": ai_meta.get("ai_accepted", ai_meta.get("ai_accepted_count", 0)),
+        "ai_confirmed": ai_meta.get("ai_confirmed", 0),
+        "ai_rescued": ai_meta.get("ai_rescued", 0),
         "ai_rejected": ai_meta.get("ai_rejected", 0),
         "ai_fallback": ai_meta.get("ai_fallback", 0),
         "fallback_candidates": ai_meta.get("fallback_candidates", 0),
@@ -671,6 +965,8 @@ async def _filter_pipeline(
         "accepted_before_fallback": ai_meta.get("accepted_before_fallback", 0),
         "rejected_as_obvious_junk": ai_meta.get("rejected_as_obvious_junk", 0),
         "rejected_as_obvious_junk_count": ai_meta.get("rejected_as_obvious_junk_count", ai_meta.get("rejected_as_obvious_junk", 0)),
+        "rejected_as_obvious_junk_count_before_rescue": ai_meta.get("rejected_as_obvious_junk_count_before_rescue", 0),
+        "rescued_false_obvious_junk": ai_meta.get("rescued_false_obvious_junk", 0),
         "rejected_reasons_histogram": ai_meta.get("rejected_reasons_histogram", {}),
         "pipeline_debug_path": ai_meta.get("pipeline_debug_path"),
         "why_remaining_products_were_not_displayed": ai_meta.get("why_remaining_products_were_not_displayed"),
@@ -683,6 +979,7 @@ async def _filter_pipeline(
         "ai_warning": final_warning,
         "ai_orchestrator": ai_meta.get("ai_orchestrator", orchestrator_status),
         "ai_model": ai_meta.get("selected_model"),
+        "selected_classifier": ai_meta.get("selected_classifier", ai_meta.get("selected_model")),
         "query_intent": ai_meta.get("query_intent"),
         "sort_mode": req.sort_mode,
         "rule_accepted_count": ai_meta.get("rule_accepted_count", 0),
@@ -696,10 +993,14 @@ async def _filter_pipeline(
         (
             f"requested={req.target_count} raw_target={get_progress(search_id).get('raw_target') if get_progress(search_id) else '?'} "
             f"raw_scraped={len(raw_products)} deduped={len(deduped)} "
-            f"budget_valid={len(candidates)} candidate_pool={len(candidates)} target_display={target_display} "
+            f"valid_product_candidates={len(product_candidates)} "
+            f"invalid_non_product_removed={invalid_non_product_removed} "
+            f"budget_valid={budget_valid_count} candidate_pool={len(candidates)} target_display={target_display} "
             f"semantic_checked={semantic_checked} classifier_checked={classifier_checked} "
             f"ai_calls_attempted={metadata['ai_calls_attempted']} ai_calls_succeeded={metadata['ai_calls_succeeded']} "
-            f"ai_timeouts={metadata['ai_timeouts']} ai_circuit_open={str(metadata['ai_circuit_open']).lower()} "
+            f"ai_timeouts={metadata['ai_timeouts']} ai_failures={metadata['ai_failures']} "
+            f"prompt_tokens_estimated={metadata['prompt_tokens_estimated']} ctx={metadata['ctx']} "
+            f"ai_circuit_open={str(metadata['ai_circuit_open']).lower()} "
             f"ai_accepted={metadata['ai_accepted']} ai_rejected={metadata['ai_rejected']} ai_fallback={metadata['ai_fallback']} "
             f"accepted_before_fallback={metadata['accepted_before_fallback']} "
             f"fallback_candidates={metadata['fallback_candidates']} weak_fallback_candidates={metadata['weak_fallback_candidates']} "
@@ -843,7 +1144,22 @@ async def _finish_compare(
             elapsed_seconds=eta_calc.get_elapsed(),
         )
 
-        filtered = await _filter_pipeline(search_id, req, run.products, eta_calc, run.engine)
+        raw_for_filter, overfetch_meta = await _overfetch_raw_products(
+            search_id,
+            req,
+            run.products,
+            run.engine,
+            run.raw_products_found,
+            eta_calc,
+        )
+        filtered = await _filter_pipeline(
+            search_id,
+            req,
+            raw_for_filter,
+            eta_calc,
+            run.engine,
+            overfetch_meta=overfetch_meta,
+        )
         budget_result: FilterResult = filtered["budget"]
         normalizer = filtered["normalizer"]
         data = filtered["final"]
@@ -949,9 +1265,19 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         elapsed_seconds=eta_calc.get_elapsed(),
     )
 
-    filtered = await _filter_pipeline(
-        search_id, req, selection.products, eta_calc,
+    raw_for_filter, overfetch_meta = await _overfetch_raw_products(
+        search_id,
+        req,
+        selection.products,
         selection.selected_engine or "selected",
+        raw_target,
+        eta_calc,
+    )
+
+    filtered = await _filter_pipeline(
+        search_id, req, raw_for_filter, eta_calc,
+        selection.selected_engine or "selected",
+        overfetch_meta=overfetch_meta,
     )
     budget_result: FilterResult = filtered["budget"]
 

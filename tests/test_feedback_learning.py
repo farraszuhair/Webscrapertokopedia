@@ -13,12 +13,16 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 import src.ai.ai_filter as ai_filter
+import src.ai.memory_store as memory_store
+import src.config as config
 from src.ai.learning import save_feedback
 import src.ai.feedback_store as feedback_store
 from src.ai.memory_store import FEEDBACK_FILE, EXAMPLES_FILE, CATEGORY_RULES_FILE, ensure_memory_dir, read_jsonl
 from src.ai.reset import reset_ai_memory
+from src.server.main import app
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +32,31 @@ def isolate_sqlite_feedback(tmp_path, monkeypatch):
 
 class TestFeedbackSaving:
     """Test saving user feedback."""
+
+    def test_laptop_main_evidence_overrides_accessory_terms_in_constraints(self):
+        title = (
+            "OLACOM Laptop Gaming NVIDIA GeForce RTX 3050 Intel Core i5 13420H "
+            "16GB RAM 512GB /1TB SSD 16.0 WUXGA 300Hz Free Tas Laptop"
+        )
+
+        constraints = feedback_store.extract_query_constraints(title)
+
+        assert constraints["category"] == "laptop"
+        assert constraints["gpu_model"] == "rtx 3050"
+        assert constraints["ram"] == "16gb ram"
+        assert constraints["storage"] == "1tb ssd"
+
+    @pytest.mark.parametrize(
+        ("title", "category"),
+        [
+            ("MSI Thin 15 B12UC Laptop Gaming RTX 3050 Keyboard Biru", "laptop"),
+            ("Acer Nitro V 15 RTX2050 Backlite Keyboard", "laptop"),
+            ("Tas laptop gaming", "accessory"),
+            ("Keyboard gaming mechanical", "accessory"),
+        ],
+    )
+    def test_laptop_category_extraction_examples(self, title, category):
+        assert feedback_store.extract_product_constraints(title)["category"] == category
 
     def test_save_feedback_structure(self):
         """Saved feedback should have all required fields."""
@@ -95,6 +124,44 @@ class TestFeedbackSaving:
 
 class TestAIMemoryReset:
     """Test resetting AI memory."""
+
+    def test_learning_reset_endpoint_clears_sqlite_and_json_memory(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(memory_store, "MEMORY_DIR", tmp_path / "ai_memory")
+        monkeypatch.setattr(memory_store, "FEEDBACK_FILE", tmp_path / "ai_memory" / "feedback.jsonl")
+        monkeypatch.setattr(memory_store, "EXAMPLES_FILE", tmp_path / "ai_memory" / "examples.jsonl")
+        monkeypatch.setattr(memory_store, "CATEGORY_RULES_FILE", tmp_path / "ai_memory" / "category_rules.json")
+        monkeypatch.setattr(config, "FEEDBACK_FILE", tmp_path / "feedback" / "product_feedback.json")
+
+        feedback_store.save_feedback_event(
+            query="RTX 5060",
+            query_intent="main_product",
+            product={"title": "Laptop Gaming RTX 4060", "url": "https://tokopedia.com/p1", "price_value": 1},
+            feedback_type="negative",
+            reasons=["Spesifikasi tidak sesuai query"],
+            learning_scope_hint="query_constraint",
+        )
+        memory_store.ensure_memory_dir()
+        memory_store.FEEDBACK_FILE.write_text('{"x":1}\n', encoding="utf-8")
+        memory_store.EXAMPLES_FILE.write_text('{"x":1}\n', encoding="utf-8")
+        memory_store.CATEGORY_RULES_FILE.write_text('{"version":1,"rules":[{"x":1}]}', encoding="utf-8")
+        config.FEEDBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        config.FEEDBACK_FILE.write_text('[{"x":1}]', encoding="utf-8")
+
+        response = TestClient(app).post("/api/learning/reset", json={"scope": "all"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["message"] == "Learning memory reset"
+        assert payload["feedback_deleted"] >= 1
+        assert payload["patterns_deleted"] >= 1
+        assert feedback_store.load_learned_patterns(
+            "RTX 5060",
+            "main_product",
+            feedback_store.extract_query_constraints("RTX 5060"),
+        ) == []
+        assert memory_store.FEEDBACK_FILE.read_text(encoding="utf-8") == ""
+        assert memory_store.EXAMPLES_FILE.read_text(encoding="utf-8") == ""
+        assert json.loads(config.FEEDBACK_FILE.read_text(encoding="utf-8")) == []
 
     def test_reset_clears_feedback_file(self):
         """Reset should clear feedback.jsonl."""

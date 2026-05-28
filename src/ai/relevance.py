@@ -25,6 +25,7 @@ from src.config import (
     RULE_REJECT_THRESHOLD,
     RULE_REVIEW_THRESHOLD,
 )
+from src.ai.feedback_store import has_accessory_only_evidence, has_laptop_main_evidence
 
 
 RELEVANCE_THRESHOLD = float(os.getenv("AI_RELEVANCE_THRESHOLD", "0.55"))
@@ -132,6 +133,10 @@ def is_laptop_gaming_query(query: str) -> bool:
 
 def has_accessory_evidence(title: str) -> bool:
     t = normalize_text(title)
+    if has_laptop_main_evidence(t):
+        return False
+    if has_accessory_only_evidence(t):
+        return True
     if contains_any(t, ACCESSORY_JUNK_HINTS):
         return True
     tokens = _word_tokens(t)
@@ -144,6 +149,8 @@ def has_accessory_evidence(title: str) -> bool:
 
 def has_gaming_laptop_evidence(title: str) -> bool:
     t = normalize_text(title)
+    if has_laptop_main_evidence(t):
+        return True
     if has_accessory_evidence(t):
         return False
     if contains_any(t, VALID_GAMING_LAPTOP_HINTS):
@@ -210,6 +217,10 @@ def detect_product_category(product: dict[str, Any] | str) -> str:
     title = normalize_text(product.get("title") if isinstance(product, dict) else product)
     if not title:
         return "unknown"
+    if has_laptop_main_evidence(title):
+        return "main_product"
+    if has_accessory_only_evidence(title):
+        return "accessory"
     if has_accessory_evidence(title):
         return "accessory"
     if has_gaming_laptop_evidence(title):

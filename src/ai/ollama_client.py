@@ -37,6 +37,10 @@ FALLBACK_RESPONSE = {
 }
 
 
+def estimate_tokens(text: str) -> int:
+    return max(1, len(text or "") // 4)
+
+
 def _fallback(error: str = "", model: str | None = None) -> dict[str, Any]:
     payload = dict(FALLBACK_RESPONSE)
     payload["_fallback_used"] = True
@@ -68,14 +72,14 @@ def _parse_chat_content(response_payload: dict[str, Any]) -> dict[str, Any] | No
             return None
 
 
-def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_format: bool) -> dict[str, Any]:
+def _chat_payload(prompt: str, selected_model: str, use_json_format: bool) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": selected_model,
         "stream": False,
         "messages": [
             {
                 "role": "system",
-                "content": "You classify marketplace products. Return JSON only.",
+                "content": "You classify marketplace search results. Return JSON only.",
             },
             {"role": "user", "content": prompt},
         ],
@@ -88,14 +92,21 @@ def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_f
     }
     if use_json_format:
         payload["format"] = "json"
+    return payload
 
-    response = requests.post(
-        f"{OLLAMA_BASE_URL}/api/chat",
-        json=payload,
-        timeout=timeout or AI_CHAT_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
-    parsed = _parse_chat_content(response.json())
+
+def _is_format_json_failure(response: requests.Response) -> bool:
+    if response.status_code not in {400, 422}:
+        return False
+    text = str(response.text or "").lower()
+    return "format" in text and "json" in text
+
+
+def _post_chat(prompt: str, selected_model: str, timeout: int | None, use_json_format: bool) -> dict[str, Any]:
+    result = chat_raw(prompt, selected_model, timeout=timeout, use_json_format=use_json_format)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "Ollama chat failed"))
+    parsed = result.get("parsed")
     if not parsed:
         raise ValueError("Ollama response was not valid JSON")
     parsed.setdefault("accepted", True)
@@ -112,64 +123,95 @@ def chat_raw(
     model: str,
     timeout: int | None = None,
     use_json_format: bool = True,
+    prompt_tokens_estimated: int | None = None,
 ) -> dict[str, Any]:
     global CHAT_CALLS_ATTEMPTED, CHAT_CALLS_SUCCEEDED
-    payload: dict[str, Any] = {
+    effective_timeout = timeout if timeout is not None else AI_CHAT_TIMEOUT_SECONDS
+    token_estimate = prompt_tokens_estimated if prompt_tokens_estimated is not None else estimate_tokens(prompt)
+    attempts = 0
+    last_error = ""
+    use_format = bool(use_json_format)
+    base_result: dict[str, Any] = {
+        "ok": False,
         "model": model,
-        "stream": False,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You classify marketplace products. Return JSON only.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "options": {
-            "temperature": 0,
-            "num_ctx": AI_CHAT_NUM_CTX,
-            "num_predict": AI_CHAT_NUM_PREDICT,
-        },
-        "keep_alive": "10m",
+        "content": "",
+        "parsed": None,
+        "error": "",
+        "timeout": False,
+        "attempts": 0,
+        "prompt_tokens_estimated": token_estimate,
+        "ctx": AI_CHAT_NUM_CTX,
+        "num_predict": AI_CHAT_NUM_PREDICT,
     }
-    if use_json_format:
-        payload["format"] = "json"
 
-    try:
+    while True:
+        payload = _chat_payload(prompt, model, use_format)
         CHAT_CALLS_ATTEMPTED += 1
-        log("AI_ORCH", f"POST /api/chat selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED}", "INFO")
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json=payload,
-            timeout=timeout or AI_CHAT_TIMEOUT_SECONDS,
-        )
-        if response.status_code == 404 or (
-            response.status_code == 400 and "not found" in response.text.lower()
-        ):
-            return {"ok": False, "model": model, "content": "", "parsed": None, "error": f"model not found: {model}", "timeout": False}
-        response.raise_for_status()
-        envelope = response.json()
-        content = ""
-        if isinstance(envelope, dict):
-            message = envelope.get("message")
-            content = str((message or {}).get("content") or envelope.get("response") or "")
-        CHAT_CALLS_SUCCEEDED += 1
-        log("AI_ORCH", f"chat_ok selected_model={model} ai_calls_succeeded={CHAT_CALLS_SUCCEEDED}", "INFO")
-        return {
-            "ok": True,
-            "model": model,
-            "content": content,
-            "parsed": _parse_chat_content(envelope),
-            "error": "",
-            "timeout": False,
-        }
-    except Exception as exc:
-        is_timeout = isinstance(exc, (requests.exceptions.Timeout, requests.exceptions.ReadTimeout)) or "timed out" in str(exc).lower()
+        attempts += 1
         log(
             "AI_ORCH",
-            f"chat_failed selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED} ai_calls_succeeded={CHAT_CALLS_SUCCEEDED} error={exc}",
-            "WARN",
+            (
+                f"chat_options model={model} num_ctx={AI_CHAT_NUM_CTX} "
+                f"num_predict={AI_CHAT_NUM_PREDICT} timeout={effective_timeout} "
+                f"prompt_tokens_estimated={token_estimate}"
+            ),
+            "INFO",
         )
-        return {"ok": False, "model": model, "content": "", "parsed": None, "error": str(exc), "timeout": is_timeout}
+        log("AI_ORCH", f"POST /api/chat selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED}", "INFO")
+        try:
+            response = requests.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json=payload,
+                timeout=effective_timeout,
+            )
+            if _is_format_json_failure(response) and use_format:
+                last_error = response.text
+                log("AI_ORCH", "format_json_failed_retrying_without_format=true", "WARN")
+                use_format = False
+                continue
+            if response.status_code == 404 or (
+                response.status_code == 400 and "not found" in response.text.lower()
+            ):
+                return {
+                    **base_result,
+                    "error": f"model not found: {model}",
+                    "attempts": attempts,
+                    "status_code": response.status_code,
+                }
+            response.raise_for_status()
+            envelope = response.json()
+            content = ""
+            if isinstance(envelope, dict):
+                message = envelope.get("message")
+                content = str((message or {}).get("content") or envelope.get("response") or "")
+            CHAT_CALLS_SUCCEEDED += 1
+            log("AI_ORCH", f"chat_ok selected_model={model} ai_calls_succeeded={CHAT_CALLS_SUCCEEDED}", "INFO")
+            return {
+                **base_result,
+                "ok": True,
+                "content": content,
+                "parsed": _parse_chat_content(envelope),
+                "error": "",
+                "timeout": False,
+                "attempts": attempts,
+                "format_json": use_format,
+                "status_code": response.status_code,
+            }
+        except Exception as exc:
+            last_error = str(exc)
+            is_timeout = isinstance(exc, (requests.exceptions.Timeout, requests.exceptions.ReadTimeout)) or "timed out" in str(exc).lower()
+            log(
+                "AI_ORCH",
+                f"chat_failed selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED} ai_calls_succeeded={CHAT_CALLS_SUCCEEDED} error={exc}",
+                "WARN",
+            )
+            return {
+                **base_result,
+                "error": last_error,
+                "timeout": is_timeout,
+                "attempts": attempts,
+                "status_code": getattr(getattr(exc, "response", None), "status_code", None),
+            }
 
 
 def chat_json(
@@ -212,8 +254,9 @@ async def chat_raw_async(
     model: str,
     timeout: int | None = None,
     use_json_format: bool = True,
+    prompt_tokens_estimated: int | None = None,
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(chat_raw, prompt, model, timeout, use_json_format)
+    return await asyncio.to_thread(chat_raw, prompt, model, timeout, use_json_format, prompt_tokens_estimated)
 
 
 def get_embedding(text: str, model: str = "nomic-embed-text") -> list[float] | None:

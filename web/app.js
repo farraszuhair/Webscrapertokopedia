@@ -9,12 +9,15 @@
 
 const FEEDBACK_REASONS = [
   'Produk tidak relevan',
-  'Harga tidak sesuai',
-  'Bukan produk utama',
-  'Duplikat',
-  'Rating/toko mencurigakan',
-  'Data tidak lengkap',
+  'Cuma aksesoris',
   'Spesifikasi tidak sesuai query',
+  'Harga tidak sesuai',
+  'Nama produk salah',
+  'Gambar tidak sesuai',
+  'Toko tidak terpercaya',
+  'Duplikat',
+  'Bukan sesuai intent pencarian',
+  'Data tidak lengkap',
   'Lainnya',
 ];
 
@@ -184,7 +187,7 @@ class ScraperApp {
     const btn = this.$('reset-learning-btn');
     if (!btn) return;
     btn.addEventListener('click', async () => {
-      if (!window.confirm('Yakin reset pembelajaran AI?')) return;
+      if (!window.confirm('Yakin hapus semua pembelajaran AI?')) return;
       const oldText = btn.textContent;
       try {
         btn.disabled = true;
@@ -296,6 +299,7 @@ class ScraperApp {
     const tolerance = Number.parseFloat(this.$('tolerance')?.value || '20');
     const ai = this.$('use_ai')?.checked ?? true;
     const engineMode = this.$('engine_mode')?.value || 'auto';
+    const targetFirstMode = this.$('target_first_mode')?.checked ?? false;
     const budget = this.getBudgetText();
 
     if (!query) {
@@ -328,6 +332,7 @@ class ScraperApp {
           use_ai: ai,
           engine_mode: engineMode,
           sort_mode: this.state.sortMode,
+          target_first_mode: targetFirstMode,
         }),
       });
       const data = await response.json();
@@ -625,6 +630,7 @@ class ScraperApp {
     const item = { ...(product || {}) };
     const priceNumber = Number(item.priceNumber ?? item.price_value ?? item.price_val ?? 0) || 0;
     const confidenceScore = Number(item.confidenceScore ?? item.confidence ?? item.relevance_score ?? item.ai_confidence ?? 0) || 0;
+    const imageUrl = this.resolveProductImage(item);
     return {
       ...item,
       id: String(item.id || item.url || item.product_url || item.title || ''),
@@ -632,7 +638,9 @@ class ScraperApp {
       price: item.price || item.price_raw || item.price_text || (priceNumber ? this.formatRupiah(priceNumber) : ''),
       priceNumber,
       price_value: priceNumber,
-      image: item.image || item.image_url || '',
+      image_url: imageUrl,
+      image: imageUrl || '',
+      has_image: Boolean(imageUrl),
       storeName: item.storeName || item.shop_name || item.shop || item.store || '',
       rating: item.rating || 0,
       soldCount: Number(item.soldCount ?? item.sold_count ?? 0) || 0,
@@ -760,6 +768,8 @@ class ScraperApp {
     const semanticChecked = Number(meta.semantic_checked ?? meta.semantic_checked_count ?? 0);
     const aiChecked = Number(meta.classifier_checked ?? meta.ai_checked ?? data.ai_checked ?? 0);
     const aiAccepted = Number(meta.ai_accepted ?? meta.ai_accepted_count ?? data.ai_accepted_count ?? 0);
+    const aiCallsAttempted = Number(meta.ai_calls_attempted ?? 0);
+    const aiCallsSucceeded = Number(meta.ai_calls_succeeded ?? 0);
 
     this.setText('r-count', displayed || this.state.products.length || 0);
     this.setText('r-target', requested || '-');
@@ -770,6 +780,7 @@ class ScraperApp {
     this.setText('rs-semantic', semanticChecked || 0);
     this.setText('rs-ai-checked', aiChecked || 0);
     this.setText('rs-ai', aiAccepted || 0);
+    this.setText('rs-ai-calls', `${aiCallsSucceeded || 0}/${aiCallsAttempted || 0}`);
     this.setText('rs-displayed', displayed || this.state.products.length || 0);
   }
 
@@ -837,14 +848,18 @@ class ScraperApp {
 
     const imageBox = document.createElement('div');
     imageBox.className = 'recommendation-img';
-    const imageUrl = this.getValidImageUrl(normalized);
+    const imageUrl = this.resolveProductImage(normalized);
     if (imageUrl) {
       const img = document.createElement('img');
       img.src = imageUrl;
       img.alt = title;
       img.loading = 'lazy';
-      img.referrerPolicy = 'no-referrer';
       img.onerror = () => {
+        if (!img.dataset.proxyTried) {
+          img.dataset.proxyTried = '1';
+          img.src = this.proxyImageUrl(imageUrl);
+          return;
+        }
         imageBox.replaceChildren(this.createSmallImagePlaceholder('Gambar gagal dimuat'));
       };
       imageBox.appendChild(img);
@@ -983,16 +998,39 @@ class ScraperApp {
     );
   }
 
+  resolveProductImage(product) {
+    const candidates = [
+      product?.image_url,
+      product?.image,
+      product?.thumbnail,
+      product?.thumb,
+      product?.img,
+      product?.photo,
+      Array.isArray(product?.images) ? product.images[0] : null,
+      product?.media?.image,
+      product?.media?.thumbnail,
+      product?.media?.url,
+    ];
+
+    for (const value of candidates) {
+      if (!value) continue;
+      let url = String(value).trim();
+      if (!url) continue;
+      if (url.startsWith('//')) url = `https:${url}`;
+      if (!/^https?:\/\//i.test(url)) continue;
+      if (['undefined', 'null', 'noimage'].includes(url.toLowerCase().replace(/\s+/g, ''))) continue;
+      return url;
+    }
+
+    return null;
+  }
+
   getValidImageUrl(product) {
-    const url = product?.image || product?.image_url || product?.thumbnail || '';
-    if (!url || typeof url !== 'string') return null;
-    const cleaned = url.trim();
-    if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) return null;
-    if (cleaned.startsWith('data:image')) return null;
-    const lower = cleaned.toLowerCase();
-    if (lower.includes('svg') || lower.includes('base64')) return null;
-    if (['undefined', 'null', 'noimage'].includes(lower.replace(/\s+/g, ''))) return null;
-    return cleaned;
+    return this.resolveProductImage(product);
+  }
+
+  proxyImageUrl(imageUrl) {
+    return `/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
   }
 
   createImagePlaceholder(text) {
@@ -1009,7 +1047,7 @@ class ScraperApp {
   createProductImage(product) {
     const wrapper = document.createElement('div');
     wrapper.className = 'product-image-wrap';
-    const imageUrl = this.getValidImageUrl(product);
+    const imageUrl = this.resolveProductImage(product);
     if (!imageUrl) {
       wrapper.appendChild(this.createImagePlaceholder('Gambar tidak tersedia'));
       return wrapper;
@@ -1020,8 +1058,12 @@ class ScraperApp {
     img.src = imageUrl;
     img.alt = product.title || 'Product image';
     img.loading = 'lazy';
-    img.referrerPolicy = 'no-referrer';
     img.onerror = () => {
+      if (!img.dataset.proxyTried) {
+        img.dataset.proxyTried = '1';
+        img.src = this.proxyImageUrl(imageUrl);
+        return;
+      }
       wrapper.replaceChildren(this.createImagePlaceholder('Gambar gagal dimuat'));
     };
     wrapper.appendChild(img);
@@ -1093,6 +1135,7 @@ class ScraperApp {
     }
     badges.appendChild(this.createBadge(product.ai_source || product.decision_source || 'rule'));
     if (product.source || product.source_engine) badges.appendChild(this.createBadge(product.source || product.source_engine));
+    if (product.outside_budget || product.budget_badge) badges.appendChild(this.createBadge(product.budget_badge || 'Di luar budget'));
     body.appendChild(badges);
 
     const labelLine = document.createElement('div');
@@ -1233,10 +1276,11 @@ class ScraperApp {
     const reasons = feedback.selectedReasons || [];
     if ((feedback.feedbackType || '').toLowerCase() === 'positive') return 'exact_query';
     if (reasons.includes('Spesifikasi tidak sesuai query')) return 'query_constraint';
-    if (reasons.includes('Bukan produk utama')) return 'query_intent';
+    if (reasons.includes('Cuma aksesoris')) return 'query_intent';
+    if (reasons.includes('Bukan sesuai intent pencarian')) return 'query_intent';
     if (reasons.includes('Harga tidak sesuai')) return 'query_constraint';
-    if (reasons.includes('Rating/toko mencurigakan')) return 'exact_query';
-    if (reasons.includes('Data tidak lengkap')) return 'exact_query';
+    if (reasons.includes('Data tidak lengkap')) return 'global';
+    if (reasons.includes('Duplikat')) return 'product_fingerprint';
     return 'exact_query';
   }
 
@@ -1245,6 +1289,7 @@ class ScraperApp {
     if (!product) return;
     const selectedReasons = feedback.selectedReasons || [];
     const learningScopeHint = this._learningScopeHint(feedback);
+    const productImage = this.resolveProductImage(product);
 
     const payload = {
       search_id: this.state.searchId || 'unknown',
@@ -1278,6 +1323,8 @@ class ScraperApp {
         store: product.storeName || product.shop_name || product.shop || '',
         url: product.url || product.product_url || '',
         image: product.image || product.image_url || '',
+        image_url: productImage,
+        has_image: Boolean(productImage),
         product_category: product.product_category || '',
         decision_source: product.ai_source || product.decision_source || '',
         confidence: product.confidenceScore ?? product.confidence ?? product.ai_confidence ?? product.relevance_score ?? 0,

@@ -77,30 +77,65 @@ def _clean_url(url: str) -> str:
     return re.split(r"[?#]", url.strip(), maxsplit=1)[0]
 
 
+def normalize_image_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    url = str(url).strip().strip('"').strip("'")
+    if not url:
+        return None
+    if url.startswith("//"):
+        url = "https:" + url
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return None
+    if url.lower().replace(" ", "") in {"undefined", "null", "noimage"}:
+        return None
+    return url
+
+
+def pick_product_image(product: dict[str, Any]) -> str | None:
+    candidates = [
+        product.get("image_url"),
+        product.get("image"),
+        product.get("thumbnail"),
+        product.get("thumb"),
+        product.get("img"),
+        product.get("photo"),
+        product.get("picture"),
+        product.get("url_gambar"),
+    ]
+
+    images = product.get("images")
+    if isinstance(images, list) and images:
+        candidates.extend(images)
+
+    media = product.get("media")
+    if isinstance(media, dict):
+        candidates.extend([
+            media.get("image"),
+            media.get("thumbnail"),
+            media.get("url"),
+        ])
+
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            nested = (
+                candidate.get("image")
+                or candidate.get("image_url")
+                or candidate.get("thumbnail")
+                or candidate.get("url")
+            )
+            normalized = normalize_image_url(nested)
+        else:
+            normalized = normalize_image_url(candidate)
+        if normalized:
+            return normalized
+
+    return None
+
+
 def normalize_image(raw: dict[str, Any]) -> str | None:
     """Return the first valid http(s) image URL from common scraper fields."""
-    candidates = [
-        raw.get("image"),
-        raw.get("image_url"),
-        raw.get("thumbnail"),
-        raw.get("img"),
-        raw.get("picture"),
-        raw.get("url_gambar"),
-    ]
-    for url in candidates:
-        if not isinstance(url, str):
-            continue
-        cleaned = url.strip().strip('"').strip("'")
-        lowered = cleaned.lower()
-        if (
-            (cleaned.startswith("http://") or cleaned.startswith("https://"))
-            and not cleaned.startswith("data:image")
-            and "base64" not in lowered
-            and "svg" not in lowered
-            and lowered.replace(" ", "") not in {"undefined", "null", "noimage"}
-        ):
-            return cleaned
-    return None
+    return pick_product_image(raw)
 
 
 def _product_id(title: str, url: str, price_value: int | None) -> str:
@@ -186,6 +221,7 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "url": url, # backward compat
         "image_url": image_url,
         "image": image_url, # backward compat
+        "has_image": bool(image_url),
         "source_engine": engine,
         "source_query": _first_text(raw, ("source_query", "query_variant")),
         "category_decision": raw.get("category_decision", ""),

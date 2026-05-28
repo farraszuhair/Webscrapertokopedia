@@ -100,6 +100,14 @@
           </label>
         </div>
 
+        <div class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="target_first_mode">
+            <span>Prioritaskan jumlah target walau sedikit keluar budget</span>
+            <small>Default mati. Jika aktif, produk di luar budget diberi badge khusus.</small>
+          </label>
+        </div>
+
         <div class="form-actions">
           <button id="search-btn" class="btn btn-primary btn-large" onclick="app.startSearch()">Mulai Scraping</button>
           <button id="reset-ai-btn" class="btn btn-ghost" type="button">Reset AI</button>
@@ -199,6 +207,7 @@
           <div><span>Semantic checked</span><b id="rs-semantic">0</b></div>
           <div><span>AI checked</span><b id="rs-ai-checked">0</b></div>
           <div><span>AI accepted</span><b id="rs-ai">0</b></div>
+          <div><span>AI calls</span><b id="rs-ai-calls">0/0</b></div>
           <div><span>Displayed</span><b id="rs-displayed">0</b></div>
         </div>
 

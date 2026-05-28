@@ -145,6 +145,141 @@ def normalize_text(value: str | None) -> str:
     return value
 
 
+def has_laptop_main_evidence(text: str | None) -> bool:
+    t = normalize_text(text)
+
+    laptop_words = [
+        "laptop",
+        "notebook",
+    ]
+    gaming_series = [
+        "rog", "tuf", "loq", "legion", "victus", "omen",
+        "nitro", "predator", "msi thin", "msi katana",
+        "msi cyborg", "msi bravo", "msi modern",
+    ]
+    gpu_words = [
+        "rtx", "gtx", "geforce", "nvidia",
+        "rtx 2050", "rtx2050",
+        "rtx 3050", "rtx3050",
+        "rtx 4050", "rtx4050",
+        "rtx 4060", "rtx4060",
+    ]
+    cpu_words = [
+        "core i5", "core i7", "core i9",
+        "intel i5", "intel i7", "intel i9",
+        "ryzen 5", "ryzen 7", "ryzen 9",
+    ]
+
+    has_laptop = any(word in t for word in laptop_words)
+    has_gpu = any(word in t for word in gpu_words)
+    has_series = any(word in t for word in gaming_series)
+    has_cpu = any(word in t for word in cpu_words)
+    primary_accessory_terms = [
+        "mouse gaming",
+        "keyboard gaming",
+        "headset gaming",
+        "cooling pad",
+        "cooler laptop",
+        "stand laptop",
+        "tas laptop",
+        "sleeve laptop",
+        "charger laptop",
+        "adaptor laptop",
+        "adapter laptop",
+        "lcd laptop",
+        "baterai laptop",
+        "battery laptop",
+        "sparepart laptop",
+        "skin laptop",
+        "sticker laptop",
+        "casing laptop",
+        "case laptop",
+    ]
+
+    has_strong_main_signal = has_gpu or has_series or has_cpu
+    if any(t.startswith(term) for term in primary_accessory_terms) and not has_strong_main_signal:
+        return False
+
+    accessory_without_strong_signal = [
+        "mouse",
+        "mouse pad",
+        "headset",
+        "earphone",
+        "webcam",
+        "cooling pad",
+        "cooler laptop",
+        "stand laptop",
+        "tas laptop",
+        "sleeve laptop",
+        "charger laptop",
+        "adaptor laptop",
+        "adapter laptop",
+        "lcd laptop",
+        "baterai laptop",
+        "battery laptop",
+        "sparepart laptop",
+        "ram for laptop",
+        "ram laptop",
+        "sodimm",
+        "ddr4",
+        "ddr5",
+        "ssd laptop",
+        "skin laptop",
+        "sticker laptop",
+        "casing laptop",
+        "case laptop",
+    ]
+    if any(term in t for term in accessory_without_strong_signal) and not has_strong_main_signal:
+        return False
+    if "keyboard" in t and not has_strong_main_signal:
+        keyboard_is_laptop_spec = (
+            t.startswith("laptop")
+            or t.startswith("notebook")
+            or "backlit keyboard" in t
+            or "backlite keyboard" in t
+        )
+        if not keyboard_is_laptop_spec:
+            return False
+
+    return (
+        has_series
+        or has_gpu
+        or (has_laptop and has_cpu)
+        or (has_laptop and "gaming" in t)
+    )
+
+
+def has_accessory_only_evidence(text: str | None) -> bool:
+    t = normalize_text(text)
+    accessory_terms = [
+        "mouse gaming",
+        "keyboard gaming",
+        "headset gaming",
+        "cooling pad",
+        "cooler laptop",
+        "stand laptop",
+        "tas laptop",
+        "sleeve laptop",
+        "charger laptop",
+        "adaptor laptop",
+        "adapter laptop",
+        "lcd laptop",
+        "baterai laptop",
+        "battery laptop",
+        "sparepart laptop",
+        "skin laptop",
+        "sticker laptop",
+        "casing laptop",
+        "case laptop",
+    ]
+
+    if not any(term in t for term in accessory_terms):
+        return False
+    if has_laptop_main_evidence(t):
+        return False
+    return True
+
+
 def make_product_fingerprint(product: dict[str, Any]) -> str:
     title = normalize_text(product.get("title") or product.get("name") or "")
     store = normalize_text(product.get("store") or product.get("shop_name") or product.get("shop") or "")
@@ -248,13 +383,20 @@ def extract_query_constraints(text: str | None) -> dict[str, Any]:
             constraints["brand"] = brand
             break
 
-    if "laptop" in t or "notebook" in t:
+    if has_laptop_main_evidence(t):
         constraints["category"] = "laptop"
-
-    if any(x in t for x in ["casing", "case", "softcase", "hardcase", "charger", "tas laptop", "mouse", "keyboard"]):
+    elif has_accessory_only_evidence(t):
+        constraints["category"] = "accessory"
+    elif "laptop" in t or "notebook" in t:
+        constraints["category"] = "laptop"
+    elif any(x in t for x in ["casing", "case", "softcase", "hardcase", "charger", "mouse", "keyboard"]):
         constraints["category"] = "accessory"
 
     return constraints
+
+
+def extract_product_constraints(text: str | None) -> dict[str, Any]:
+    return extract_query_constraints(text)
 
 
 def extract_learning_terms(title: str) -> list[str]:
@@ -802,6 +944,7 @@ def reset_learning(scope: str = "all", query: str | None = None, constraint_key:
     scope = normalize_text(scope or "all")
     deleted_events = 0
     deleted_patterns = 0
+    cleared_files: list[str] = []
     with _connect() as conn:
         if scope == "all":
             cur = conn.execute("DELETE FROM feedback_events")
@@ -820,12 +963,41 @@ def reset_learning(scope: str = "all", query: str | None = None, constraint_key:
         else:
             raise ValueError(f"Unsupported learning reset scope: {scope}")
         conn.commit()
+    if scope == "all":
+        cleared_files = _clear_legacy_learning_files()
     return {
         "ok": True,
         "scope": scope,
+        "message": "Learning memory reset",
+        "feedback_deleted": deleted_events,
+        "patterns_deleted": deleted_patterns,
         "deleted_feedback_events": deleted_events,
         "deleted_learned_patterns": deleted_patterns,
+        "cleared_files": cleared_files,
     }
+
+
+def _clear_legacy_learning_files() -> list[str]:
+    cleared: list[str] = []
+    try:
+        import src.ai.memory_store as memory_store
+        from src.config import FEEDBACK_FILE as product_feedback_file
+
+        memory_store.ensure_memory_dir()
+        for path in (memory_store.FEEDBACK_FILE, memory_store.EXAMPLES_FILE):
+            path.write_text("", encoding="utf-8")
+            cleared.append(str(path))
+        memory_store.CATEGORY_RULES_FILE.write_text(
+            json.dumps({"version": 1, "rules": []}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        cleared.append(str(memory_store.CATEGORY_RULES_FILE))
+        product_feedback_file.parent.mkdir(parents=True, exist_ok=True)
+        product_feedback_file.write_text("[]", encoding="utf-8")
+        cleared.append(str(product_feedback_file))
+    except Exception as exc:
+        log("AI_LEARN", f"legacy_learning_file_reset_failed error={exc}", "WARN")
+    return cleared
 
 
 def feedback_summary_counts() -> dict[str, int]:

@@ -2,8 +2,8 @@
 Runtime configuration for MarketSpy AI.
 
 Environment variables can override these defaults, but the checked-in defaults
-are intentionally laptop-friendly: one small active model, short timeouts, and
-rules-first filtering.
+are intentionally laptop-friendly: one small active model, CPU-safe chat
+settings, and rules-first filtering.
 """
 from __future__ import annotations
 
@@ -75,15 +75,19 @@ CLASSIFIER_PRIORITY = [
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip("/")
 OLLAMA_TIMEOUT_SECONDS = _env_int("OLLAMA_TIMEOUT_SECONDS", _env_int("AI_TIMEOUT_SECONDS", 12))
-AI_CHAT_TIMEOUT_SECONDS = int(os.getenv("AI_CHAT_TIMEOUT_SECONDS", "35"))
-AI_CHAT_NUM_CTX = int(os.getenv("AI_CHAT_NUM_CTX", "1024"))
-AI_CHAT_NUM_PREDICT = int(os.getenv("AI_CHAT_NUM_PREDICT", "80"))
-AI_CLASSIFIER_MAX_PRODUCTS = int(os.getenv("AI_CLASSIFIER_MAX_PRODUCTS", "4"))
-AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK = max(1, _env_int("AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK", 2))
-AI_MODEL_CACHE_TTL_SECONDS = max(1, _env_int("AI_MODEL_CACHE_TTL_SECONDS", 60))
+AI_CHAT_TIMEOUT_SECONDS = int(os.getenv("AI_CHAT_TIMEOUT_SECONDS", "75"))
+AI_CHAT_NUM_CTX = int(os.getenv("AI_CHAT_NUM_CTX", "4096"))
+AI_CHAT_NUM_PREDICT = int(os.getenv("AI_CHAT_NUM_PREDICT", "180"))
+AI_AUDIT_MAX_PRODUCTS = int(os.getenv("AI_AUDIT_MAX_PRODUCTS", os.getenv("AI_CLASSIFIER_MAX_PRODUCTS", "3")))
+AI_CLASSIFIER_MAX_PRODUCTS = AI_AUDIT_MAX_PRODUCTS
+AI_BATCH_CLASSIFY = parse_bool(os.getenv("AI_BATCH_CLASSIFY", "true"))
+AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK = max(1, _env_int("AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK", 1))
+AI_MODEL_CACHE_TTL_SECONDS = max(1, _env_int("AI_MODEL_CACHE_TTL_SECONDS", 300))
 
 TARGET_COUNT_DEFAULT = _env_int("TARGET_COUNT_DEFAULT", 50)
 OVERFETCH_MULTIPLIER = _env_int("OVERFETCH_MULTIPLIER", _env_int("SCRAPER_OVERFETCH_MULTIPLIER", 4))
+STRICT_BUDGET_MODE = parse_bool(os.getenv("STRICT_BUDGET_MODE", "true"))
+TARGET_FIRST_MODE = parse_bool(os.getenv("TARGET_FIRST_MODE", "false"))
 
 RULE_ACCEPT_THRESHOLD = _env_float("RULE_ACCEPT_THRESHOLD", 0.76)
 RULE_REVIEW_THRESHOLD = _env_float("RULE_REVIEW_THRESHOLD", 0.50)
@@ -92,6 +96,6 @@ FALLBACK_EXPANSION_THRESHOLD = _env_float("FALLBACK_EXPANSION_THRESHOLD", 0.10)
 WEAK_FALLBACK_THRESHOLD = _env_float("WEAK_FALLBACK_THRESHOLD", 0.05)
 LLM_ACCEPT_THRESHOLD = _env_float("LLM_ACCEPT_THRESHOLD", 0.62)
 
-AI_BATCH_SIZE = max(1, _env_int("AI_BATCH_SIZE", 8))
+AI_BATCH_SIZE = max(1, _env_int("AI_BATCH_SIZE", 3))
 
 FEEDBACK_FILE = Path(os.getenv("FEEDBACK_FILE", "data/feedback/product_feedback.json"))

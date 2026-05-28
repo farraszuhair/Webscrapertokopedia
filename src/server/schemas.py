@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from src.config import TARGET_COUNT_DEFAULT
+from src.config import TARGET_COUNT_DEFAULT, TARGET_FIRST_MODE
 
 
 EngineMode = Literal["auto", "puppeteer", "rollback", "selenium", "compare", "compare_both"]
@@ -27,6 +27,10 @@ class SearchRequest(BaseModel):
     use_ai: bool = Field(default=True, validation_alias=AliasChoices("use_ai", "ai"))
     engine_mode: EngineMode = "auto"
     sort_mode: SortMode = "terbaik"
+    target_first_mode: bool = Field(
+        default=TARGET_FIRST_MODE,
+        validation_alias=AliasChoices("target_first_mode", "target_first"),
+    )
 
 
 class FeedbackRequest(BaseModel):

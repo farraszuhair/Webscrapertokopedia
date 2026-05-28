@@ -36,6 +36,32 @@ class TestNormalizerKeepsWeakProducts:
         result = normalize_product(raw)
         assert result is not None
         assert result["image"] == "https://images.tokopedia.net/rog.jpg"
+        assert result["image_url"] == "https://images.tokopedia.net/rog.jpg"
+        assert result["has_image"] is True
+
+    def test_normalizes_protocol_relative_image_aliases(self):
+        raw = {
+            "title": "Laptop Gaming RTX",
+            "price_raw": "Rp12.000.000",
+            "url": "https://tokopedia.com/c/d",
+            "images": ["//images.tokopedia.net/laptop.webp"],
+        }
+        result = normalize_product(raw)
+        assert result is not None
+        assert result["image_url"] == "https://images.tokopedia.net/laptop.webp"
+        assert result["image"] == "https://images.tokopedia.net/laptop.webp"
+        assert result["has_image"] is True
+
+    def test_uses_media_image_when_flat_fields_missing(self):
+        raw = {
+            "title": "Laptop Gaming RTX",
+            "price_raw": "Rp12.000.000",
+            "url": "https://tokopedia.com/c/d",
+            "media": {"thumbnail": "https://images.tokopedia.net/media.jpg"},
+        }
+        result = normalize_product(raw)
+        assert result is not None
+        assert result["image_url"] == "https://images.tokopedia.net/media.jpg"
 
     def test_drops_product_missing_title(self):
         raw = {"price_raw": "Rp5.000.000", "url": "https://tokopedia.com/x/y"}

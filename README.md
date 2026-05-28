@@ -28,12 +28,14 @@ Default CPU-friendly settings:
 - `AI_CPU_MODE=true`
 - `AI_MODEL=gemma3:4b`
 - `AI_CLASSIFIER_MODEL=gemma3:4b`
-- `AI_CLASSIFIER_MAX_PRODUCTS=4`
-- `AI_CHAT_TIMEOUT_SECONDS=35`
-- `AI_CHAT_NUM_CTX=1024`
-- `AI_CHAT_NUM_PREDICT=80`
-- `AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK=2`
-- `AI_MODEL_CACHE_TTL_SECONDS=60`
+- `AI_AUDIT_MAX_PRODUCTS=3`
+- `AI_BATCH_CLASSIFY=true`
+- `AI_BATCH_SIZE=3`
+- `AI_CHAT_TIMEOUT_SECONDS=75`
+- `AI_CHAT_NUM_CTX=4096`
+- `AI_CHAT_NUM_PREDICT=180`
+- `AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK=1`
+- `AI_MODEL_CACHE_TTL_SECONDS=300`
 
 ## AI Orchestrator Behavior
 
@@ -43,7 +45,7 @@ The active search pipeline is:
 scrape raw -> normalize -> dedupe -> budget filter -> rules -> AI borderline check -> fallback expansion -> rank
 ```
 
-Rules handle obvious accepts and rejects first. Semantic embeddings can improve scoring, but they do not count as classifier acceptance. Ollama `POST /api/chat` is called only for the top borderline products when AI is enabled and a supported classifier is installed. If no AI model is available, deterministic rules and fallback expansion still work.
+Rules handle obvious accepts and rejects first. Semantic embeddings can improve scoring, but they do not count as classifier acceptance. Ollama `POST /api/chat` is called once per search for a compact audit batch of up to 3 products when AI is enabled and a supported classifier is installed. If no AI model is available, deterministic rules and fallback expansion still work.
 
 If `ai_checked` is `0`, result metadata includes one exact `ai_skip_reason`:
 
@@ -126,7 +128,7 @@ Example search:
 
 ### Local AI is timing out
 
-The classifier timeout is 35 seconds by default. After 2 classifier failures in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_circuit_open`, `ai_fallback`, and `fallback_added` in `result_metadata`.
+The classifier timeout is 75 seconds by default with `num_ctx=4096` and `num_predict=180`. After 1 classifier failure in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_failures`, `ai_circuit_open`, `prompt_tokens_estimated`, `ctx`, and `fallback_added` in `result_metadata`.
 
 ### Displayed is much lower than requested
 
