@@ -2898,13 +2898,13 @@ body.modal-open {
 
 .recommendation-product-card {
   display: grid;
-  grid-template-columns: 116px 1fr;
+  grid-template-columns: 112px minmax(0, 1fr);
   gap: 14px;
   align-items: center;
-  min-height: 132px;
+  min-height: 128px;
   padding: 12px;
-  border-radius: 24px;
-  background: rgba(7, 11, 24, 0.58);
+  border-radius: 22px;
+  background: rgba(7, 11, 24, 0.60);
   border: 1px solid rgba(148, 163, 184, 0.14);
   overflow: hidden;
   cursor: pointer;
@@ -2918,23 +2918,20 @@ body.modal-open {
   transform: translateY(-4px) translateZ(10px);
 }
 
+.recommendation-product-image,
 .recommendation-product-card img {
-  width: 116px;
-  height: 104px;
-  border-radius: 18px;
+  width: 112px;
+  height: 96px;
   object-fit: cover;
+  border-radius: 16px;
   display: block;
+  background: #0f172a;
 }
 
-.recommendation-product-card-details {
-  min-width: 0;
-}
-
-.recommendation-product-card-title {
-  margin: 0;
+.recommendation-product-title {
   font-size: 15px;
   line-height: 1.25;
-  font-weight: 800;
+  font-weight: 900;
   color: #e5eefc;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -2942,30 +2939,18 @@ body.modal-open {
   overflow: hidden;
 }
 
-.recommendation-product-card-price {
-  margin-top: 6px;
-  font-size: 17px;
-  font-weight: 900;
+.recommendation-product-price {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 950;
   color: #10b981;
+  white-space: nowrap;
 }
 
-.recommendation-product-card-meta {
+.recommendation-product-meta {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 13px;
   color: #94a3b8;
-}
-
-/* ============================================================
-   RESPONSIVE DESIGN ADAPTATIONS
-   ============================================================ */
-
-@media (max-width: 1100px) {
-  .recommendation-world {
-    gap: 14px;
-  }
-  .recommendation-active-panel {
-    flex: 1.8;
-  }
 }
 
 @media (max-width: 900px) {
@@ -2974,40 +2959,147 @@ body.modal-open {
   }
 
   .recommendation-product-card {
-    grid-template-columns: 96px 1fr;
+    grid-template-columns: 92px minmax(0, 1fr);
   }
 
+  .recommendation-product-image,
   .recommendation-product-card img {
-    width: 96px;
-    height: 88px;
+    width: 92px;
+    height: 84px;
   }
 }
 
-@media (max-width: 768px) {
-  .recommendation-world {
-    flex-direction: column;
-    align-items: stretch;
+/* ============================================================
+   PRODUCT DETAIL / MODAL SIZE BUG FIX
+   ============================================================ */
+
+.product-modal-card,
+.recommendation-modal-card {
+  width: min(980px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+  overflow: auto;
+  border-radius: 28px;
+}
+
+.product-modal-title,
+.recommendation-modal-title {
+  font-size: clamp(24px, 3vw, 42px);
+  line-height: 1.08;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.product-modal-layout,
+.recommendation-modal-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 360px) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.product-modal-image,
+.recommendation-modal-image {
+  width: 100%;
+  max-height: 420px;
+  object-fit: cover;
+  border-radius: 22px;
+}
+
+@media (max-width: 760px) {
+  .product-modal-layout,
+  .recommendation-modal-layout {
+    grid-template-columns: 1fr;
   }
 
-  .recommendation-side-panel {
-    flex: none;
-    opacity: 0.8;
+  .product-modal-title,
+  .recommendation-modal-title {
+    font-size: 26px;
   }
-  
-  .recommendation-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 14px;
-  }
-  
-  .recommendation-controls {
-    width: 100%;
-  }
-  
-  .recommendation-mode-btn {
-    flex: 1;
-    justify-content: center;
-  }
+}
+
+/* ============================================================
+   TARGET PRIORITY COLLAPSIBLE HELPER
+   ============================================================ */
+
+.target-priority-info-box {
+  margin-top: 6px;
+  margin-left: 24px;
+}
+
+.info-toggle {
+  background: none;
+  border: none;
+  color: var(--primary-glow);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: underline;
+  transition: color 0.2s ease;
+}
+
+.info-toggle:hover {
+  color: #93c5fd;
+}
+
+.info-content {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.info-content p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+
+/* ============================================================
+   IMAGE ERROR & PLACEHOLDER HANDLING
+   ============================================================ */
+
+.is-image-missing img {
+  display: none !important;
+}
+
+.is-image-missing .image-placeholder {
+  display: flex !important;
+}
+
+.image-placeholder {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: #0f172a;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: inherit;
+}
+
+/* ============================================================
+   RECOMMENDATION FOCUS LOGO
+   ============================================================ */
+
+.recommendation-focus-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  margin: 0 auto 20px;
+  font-size: 32px;
 }
 
 /* ============================================================
@@ -3016,8 +3108,7 @@ body.modal-open {
 
 @media (prefers-reduced-motion: reduce) {
   .recommendation-product-card:hover,
-  .recommendation-mode-btn:hover,
-  .recommendation-side-panel:hover {
+  .recommendation-mode-btn:hover {
     transform: none !important;
   }
 }

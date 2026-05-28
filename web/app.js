@@ -64,50 +64,271 @@ function getRecommendationMotionProfile() {
 
   if (reduceMotion) {
     return {
-      reduceMotion: true,
+      duration: 0,
       zoomScale: 1,
+      logoScale: 1,
       enterY: 0,
       enterScale: 1,
       rotateX: 0,
       staggerDelay: 0,
-      duration: 0,
       grid: [1, 1]
     };
   }
 
   if (isMobile) {
     return {
+      duration: 650,
       zoomScale: 1.025,
+      logoScale: 1.35,
       enterY: 42,
-      enterScale: 0.82,
+      enterScale: 0.84,
       rotateX: 0,
       staggerDelay: 55,
-      duration: 680,
       grid: [1, 6]
     };
   }
 
   if (isTablet) {
     return {
-      zoomScale: 1.05,
-      enterY: 64,
-      enterScale: 0.76,
-      rotateX: 6,
-      staggerDelay: 70,
       duration: 780,
+      zoomScale: 1.045,
+      logoScale: 1.55,
+      enterY: 64,
+      enterScale: 0.78,
+      rotateX: 5,
+      staggerDelay: 70,
       grid: [2, 2]
     };
   }
 
   return {
-    zoomScale: 1.08,
-    enterY: 90,
-    enterScale: 0.68,
-    rotateX: 8,
+    duration: 900,
+    zoomScale: 1.065,
+    logoScale: 1.75,
+    enterY: 84,
+    enterScale: 0.70,
+    rotateX: 7,
     staggerDelay: 85,
-    duration: 920,
     grid: [2, 3]
   };
+}
+
+/* ─── Standalone helper functions referenced by ScraperApp ─── */
+
+function handleImageError(img) {
+  if (!img) return;
+  const wrap = img.closest('.product-image-wrap, .recommendation-product-image-wrap, .product-modal-image-wrap, .recommendation-modal-image-wrap');
+  if (wrap) {
+    wrap.classList.add('is-image-missing');
+  }
+  const placeholder = document.createElement('div');
+  placeholder.className = 'image-placeholder';
+  placeholder.textContent = 'No image';
+  img.replaceWith(placeholder);
+}
+
+function updateRecommendationButtons(nextMode) {
+  document.querySelectorAll('[data-recommendation-mode]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.recommendationMode === nextMode);
+  });
+  const titleEl = document.getElementById('recommendationTitle');
+  const iconEl = document.querySelector('.active-mode-icon');
+  const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === nextMode);
+  if (titleEl && modeMeta) titleEl.textContent = modeMeta.label;
+  if (iconEl && modeMeta) iconEl.textContent = modeMeta.icon;
+}
+
+function animateRecommendationCardsEnter(profile) {
+  if (!profile || profile.duration === 0) return;
+  const cards = document.querySelectorAll('.recommendation-product-card');
+  if (!cards.length) return;
+
+  AnimeBridge.run(cards, {
+    opacity: [0, 1],
+    translateY: [profile.enterY, 0],
+    scale: [profile.enterScale, 1],
+    rotateX: [profile.rotateX, 0],
+    delay: AnimeBridge.stagger(profile.staggerDelay, { grid: profile.grid, from: 'center' }),
+    duration: profile.duration,
+    easing: 'easeOutExpo',
+  });
+}
+
+function animateRecommendationCardsExit(container, profile) {
+  if (!profile || profile.duration === 0) return Promise.resolve();
+  const cards = (container || document).querySelectorAll('.recommendation-product-card');
+  if (!cards.length) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    AnimeBridge.run(cards, {
+      opacity: [1, 0],
+      translateY: [0, -24],
+      scale: [1, 0.92],
+      duration: Math.round(profile.duration * 0.55),
+      easing: 'easeInQuad',
+      complete: resolve,
+    });
+  });
+}
+
+async function selectRecommendationMode(nextMode, triggerEl) {
+  if (!window.app) return;
+  const prev = window.app.state.recommendationMode;
+  if (nextMode === prev) return;
+
+  window.app.state.hasUserSelectedRecommendation = true;
+  window.app.state.recommendationMode = nextMode;
+
+  const profile = getRecommendationMotionProfile();
+  const stage = document.querySelector('.recommendation-stage');
+
+  // Phase 1: zoom into logo
+  const logo = document.querySelector('.recommendation-focus-logo');
+  if (logo && profile.duration > 0) {
+    AnimeBridge.run(logo, {
+      scale: [1, profile.logoScale],
+      opacity: [1, 0.6],
+      duration: Math.round(profile.duration * 0.45),
+      easing: 'easeInOutQuad',
+    });
+  }
+
+  // Phase 2: exit old cards
+  await animateRecommendationCardsExit(null, profile);
+
+  // Phase 3: update content
+  updateRecommendationButtons(nextMode);
+  if (stage) stage.dataset.activeMode = nextMode;
+  window.app.updateRecommendationContent(nextMode);
+
+  // Phase 4: restore logo and enter new cards
+  if (logo && profile.duration > 0) {
+    AnimeBridge.run(logo, {
+      scale: [profile.logoScale, 1],
+      opacity: [0.6, 1],
+      duration: Math.round(profile.duration * 0.5),
+      easing: 'easeOutExpo',
+    });
+  }
+
+  animateRecommendationCardsEnter(profile);
+
+  // Also apply sort mode
+  const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === nextMode);
+  if (modeMeta) {
+    window.app.applySortMode(modeMeta.sortMode, true);
+  }
+}
+
+const PROGRESS_STAGE_TEXT = {
+  idle: "Menunggu proses...",
+  start: "Menyiapkan mesin scraper...",
+  opening_page: "Membuka halaman marketplace...",
+  scraping: "Mengambil data produk...",
+  scrolling: "Membaca produk tambahan...",
+  dedupe: "Membersihkan produk duplikat...",
+  budget: "Mengecek rentang budget...",
+  semantic: "Mengecek relevansi produk...",
+  ai: "AI sedang audit kandidat...",
+  ranking: "Menyusun rekomendasi terbaik...",
+  done: "Selesai — hasil siap ditampilkan",
+  error: "Pipeline error — cek log"
+};
+
+let lastProgressStage = null;
+let activeScrambleFrame = null;
+
+function getProgressStage(progress) {
+  const raw = String(
+    progress?.stage ||
+    progress?.status ||
+    progress?.statusText ||
+    ""
+  ).toLowerCase();
+
+  if (raw.includes("open") || raw.includes("page")) return "opening_page";
+  if (raw.includes("scroll")) return "scrolling";
+  if (raw.includes("scrap")) return "scraping";
+  if (raw.includes("dedupe") || raw.includes("duplicate")) return "dedupe";
+  if (raw.includes("budget")) return "budget";
+  if (raw.includes("semantic")) return "semantic";
+  if (raw.includes("ai") || raw.includes("classifier")) return "ai";
+  if (raw.includes("rank") || raw.includes("recommend")) return "ranking";
+  if (raw.includes("done") || raw.includes("complete") || raw.includes("success")) return "done";
+  if (raw.includes("error") || raw.includes("failed")) return "error";
+
+  const pct = Number(progress?.percentage || progress?.percent || 0);
+  if (pct <= 5) return "start";
+  if (pct <= 25) return "scraping";
+  if (pct <= 45) return "dedupe";
+  if (pct <= 60) return "budget";
+  if (pct <= 78) return "semantic";
+  if (pct <= 92) return "ai";
+  if (pct < 100) return "ranking";
+  return "done";
+}
+
+function updateProgressStage(progress) {
+  const nextStage = getProgressStage(progress);
+
+  if (nextStage === lastProgressStage) return;
+
+  lastProgressStage = nextStage;
+
+  const text = PROGRESS_STAGE_TEXT[nextStage] || PROGRESS_STAGE_TEXT.start;
+
+  // Update container data-progress-stage attribute
+  const container = document.querySelector(".progress-clean-panel");
+  if (container) {
+    container.setAttribute("data-progress-stage", nextStage);
+  }
+
+  scrambleProgressTo(text, nextStage);
+}
+
+function scrambleProgressTo(targetText, stage) {
+  const el = document.querySelector("#progressScrambleText");
+  if (!el) return;
+
+  if (activeScrambleFrame) {
+    cancelAnimationFrame(activeScrambleFrame);
+    activeScrambleFrame = null;
+  }
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (reduceMotion) {
+    el.textContent = targetText;
+    return;
+  }
+
+  const chars = "01AI<>SCRAPE{}[]#$%";
+  const duration = stage === "done" || stage === "error" ? 650 : 850;
+  const start = performance.now();
+
+  function frame(now) {
+    const progress = Math.min((now - start) / duration, 1);
+    const reveal = Math.floor(targetText.length * progress);
+
+    let output = "";
+
+    for (let i = 0; i < targetText.length; i++) {
+      output += i < reveal
+        ? targetText[i]
+        : chars[Math.floor(Math.random() * chars.length)];
+    }
+
+    el.textContent = output;
+
+    if (progress < 1) {
+      activeScrambleFrame = requestAnimationFrame(frame);
+    } else {
+      el.textContent = targetText;
+      activeScrambleFrame = null;
+    }
+  }
+
+  activeScrambleFrame = requestAnimationFrame(frame);
 }
 
 const FEEDBACK_REASONS = [
@@ -179,7 +400,52 @@ class ScraperApp {
     this.bindProductModalEvents();
     this.bindRecommendationModalEvents();
     this.bindProductCardClick();
+    this.bindTargetPriorityInfo();
     this.fetchAiStatus();
+  }
+
+  bindTargetPriorityInfo() {
+    const toggleBtn = document.querySelector('[data-toggle-target-priority-info]');
+    const content = document.querySelector('.target-priority-info-box .info-content');
+    if (!toggleBtn || !content) return;
+
+    toggleBtn.addEventListener('click', () => {
+      const isHidden = content.hasAttribute('hidden');
+      if (isHidden) {
+        content.removeAttribute('hidden');
+        content.style.height = '0px';
+        content.style.opacity = '0';
+        content.style.overflow = 'hidden';
+        
+        const height = content.scrollHeight;
+        
+        AnimeBridge.run(content, {
+          height: [0, height],
+          opacity: [0, 1],
+          duration: 350,
+          easing: 'easeOutQuad',
+          complete: () => {
+            content.style.height = 'auto';
+            content.style.overflow = '';
+          }
+        });
+        toggleBtn.classList.add('is-active');
+      } else {
+        content.style.overflow = 'hidden';
+        const height = content.scrollHeight;
+        AnimeBridge.run(content, {
+          height: [height, 0],
+          opacity: [1, 0],
+          duration: 300,
+          easing: 'easeOutQuad',
+          complete: () => {
+            content.setAttribute('hidden', '');
+            content.style.height = '';
+          }
+        });
+        toggleBtn.classList.remove('is-active');
+      }
+    });
   }
 
   show(panelId) {
@@ -507,86 +773,10 @@ class ScraperApp {
     this.state.elapsedTimer = null;
   }
 
-  scrambleToText(el, targetText, duration = 900) {
-    if (!el) return;
-
-    const chars = "01#$%AI<>SCRAPE{}[]";
-    const start = performance.now();
-
-    const frame = (now) => {
-      const progress = Math.min((now - start) / duration, 1);
-      const revealCount = Math.floor(targetText.length * progress);
-
-      let output = "";
-
-      for (let i = 0; i < targetText.length; i++) {
-        if (i < revealCount) {
-          output += targetText[i];
-        } else {
-          output += chars[Math.floor(Math.random() * chars.length)];
-        }
-      }
-
-      el.textContent = output;
-
-      if (progress < 1) {
-        requestAnimationFrame(frame);
-      } else {
-        el.textContent = targetText;
-      }
-    };
-
-    requestAnimationFrame(frame);
-  }
-
-  startScrambleProgress() {
-    const el = document.querySelector(".progress-scramble-text");
-    if (!el) return;
-
-    this.stopScrambleProgress();
-
-    const progressMessages = [
-      "Mengambil data marketplace...",
-      "Membaca kartu produk...",
-      "Membersihkan duplikat...",
-      "Mengecek budget...",
-      "AI sedang audit kandidat...",
-      "Menyusun rekomendasi terbaik...",
-      "Menyiapkan hasil..."
-    ];
-
-    this._scrambleIndex = 0;
-    const play = () => {
-      const text = progressMessages[this._scrambleIndex % progressMessages.length];
-      this.scrambleToText(el, text, 900);
-      this._scrambleIndex += 1;
-    };
-
-    play();
-    this._scrambleTimer = setInterval(play, 1400);
-  }
-
-  stopScrambleProgress(finalText = "Selesai — hasil siap ditampilkan") {
-    if (this._scrambleTimer) {
-      clearInterval(this._scrambleTimer);
-      this._scrambleTimer = null;
-    }
-
-    const el = document.querySelector(".progress-scramble-text");
-    if (el) this.scrambleToText(el, finalText, 850);
-  }
-
-  startProgressAnimation() {
-    this.startScrambleProgress();
-  }
-
-  stopProgressAnimation() {
-    let finalText = "Selesai — hasil siap ditampilkan";
-    if (this.state.lastProgress && this.state.lastProgress.error) {
-      finalText = "Pipeline error — cek log";
-    }
-    this.stopScrambleProgress(finalText);
-  }
+  startProgressAnimation() {}
+  stopProgressAnimation() {}
+  startScrambleProgress() {}
+  stopScrambleProgress() {}
 
   async fetchProgress() {
     if (!this.state.searchId) return;
@@ -625,14 +815,24 @@ class ScraperApp {
     this.state.localEtaSeconds = null;
     this.state.lastEtaFallbackSignature = null;
     this.state.lastProgress = null;
-    this.stopProgressAnimation();
-    this.stopScrambleProgress("Menunggu proses...");
+    
+    // Reset staged progress scramble
+    lastProgressStage = null;
+    if (activeScrambleFrame) {
+      cancelAnimationFrame(activeScrambleFrame);
+      activeScrambleFrame = null;
+    }
+    const scrambleEl = document.querySelector("#progressScrambleText");
+    if (scrambleEl) {
+      scrambleEl.textContent = "Menunggu proses...";
+    }
+
     this.renderProgress({
       percent: 0,
       progress_percent: 0,
-      stage: 'preparing',
-      phase: 'initializing',
-      message: 'Initializing...',
+      stage: 'idle',
+      phase: 'idle',
+      message: 'Idle...',
       found: 0,
       valid: 0,
       target: 0,
@@ -643,7 +843,7 @@ class ScraperApp {
       active_engine: 'none',
       attempt: 1,
       max_attempts: 1,
-      logs: [{ stage: 'initializing', message: 'Initializing...' }],
+      logs: [{ stage: 'idle', message: 'Idle...' }],
     });
     document.querySelectorAll('.stage-item').forEach((el) => el.classList.remove('active', 'done'));
   }
@@ -791,14 +991,7 @@ class ScraperApp {
     this.updateStagePipeline(phase, pct);
     this.renderProgressLogs(progress.logs || []);
 
-    if (!progress.done && !this._progressAnimationStarted) {
-      this._progressAnimationStarted = true;
-      this.startProgressAnimation();
-    }
-    if (progress.done) {
-      this.stopProgressAnimation();
-      this._progressAnimationStarted = false;
-    }
+    updateProgressStage(progress);
   }
 
   renderProgressLogs(logs) {
@@ -1168,37 +1361,53 @@ class ScraperApp {
     card.dataset.productId = id;
     card.dataset.id = id;
 
-    const img = document.createElement('img');
+    const imgWrap = document.createElement('div');
+    imgWrap.className = 'recommendation-product-image-wrap';
+
     const imageUrl = this.resolveProductImage(item);
-    img.src = imageUrl || '';
-    img.alt = item.title || 'Product image';
-    img.loading = 'lazy';
-    img.onerror = () => {
-      if (imageUrl && !img.dataset.proxyTried) {
-        img.dataset.proxyTried = '1';
-        img.src = this.proxyImageUrl(imageUrl);
-      }
-    };
+    
+    if (!imageUrl) {
+      const placeholder = document.createElement("div");
+      placeholder.className = "image-placeholder";
+      placeholder.textContent = "No image";
+      imgWrap.classList.add("is-image-missing");
+      imgWrap.appendChild(placeholder);
+    } else {
+      const img = document.createElement('img');
+      img.className = 'recommendation-product-image';
+      img.src = imageUrl;
+      img.alt = item.title || 'Product image';
+      img.loading = 'lazy';
+      img.onerror = () => {
+        if (imageUrl && !img.dataset.proxyTried) {
+          img.dataset.proxyTried = '1';
+          img.src = this.proxyImageUrl(imageUrl);
+          return;
+        }
+        handleImageError(img);
+      };
+      imgWrap.appendChild(img);
+    }
 
     const details = document.createElement('div');
     details.className = 'recommendation-product-card-details';
     
     const h4 = document.createElement('h4');
-    h4.className = 'recommendation-product-card-title';
+    h4.className = 'recommendation-product-title';
     h4.textContent = item.title || 'Produk Tokopedia';
     
     const strong = document.createElement('div');
-    strong.className = 'recommendation-product-card-price';
+    strong.className = 'recommendation-product-price';
     strong.textContent = item.price || '';
     
     const span = document.createElement('div');
-    span.className = 'recommendation-product-card-meta';
+    span.className = 'recommendation-product-meta';
     const ratingStr = item.rating ? `⭐ ${item.rating}` : '';
     const soldStr = item.sold || item.sold_text || item.soldCount || item.sold_count ? `${item.sold || item.sold_text || item.soldCount || item.sold_count} terjual` : '';
     span.textContent = [ratingStr, soldStr].filter(Boolean).join(' | ');
 
     details.append(h4, strong, span);
-    card.append(img, details);
+    card.append(imgWrap, details);
 
     return card;
   }
@@ -1210,248 +1419,26 @@ class ScraperApp {
   }
 
   animateRecommendationProductsEnter(scopeOptions = {}) {
-    const cards = document.querySelectorAll(".recommendation-product-card");
-    if (!cards || !cards.length) return;
-
-    AnimeBridge.run(cards, {
-      opacity: [0, 1],
-      translateY: [scopeOptions.enterY || 72, 0],
-      scale: [scopeOptions.enterScale || 0.72, 1],
-      rotateX: [scopeOptions.rotateX || 8, 0],
-      filter: ["blur(10px)", "blur(0px)"],
-      delay: AnimeBridge.stagger(scopeOptions.staggerDelay || 80, {
-        start: scopeOptions.staggerStart || 120,
-        from: "center",
-        grid: scopeOptions.grid || [2, 3],
-        axis: "x"
-      }),
-      duration: scopeOptions.duration || 920,
-      easing: "easeOutExpo"
-    });
+    const profile = getRecommendationMotionProfile();
+    animateRecommendationCardsEnter(profile);
   }
 
   animateRecommendationProductsExit() {
-    const cards = document.querySelectorAll(".recommendation-product-card");
-    return new Promise(resolve => {
-      if (!cards || !cards.length) {
-        resolve();
-        return;
-      }
-      AnimeBridge.run(cards, {
-        opacity: [1, 0],
-        translateY: [0, -32],
-        scale: [1, 0.86],
-        filter: ["blur(0px)", "blur(8px)"],
-        delay: AnimeBridge.stagger(45, {
-          from: "center",
-          reversed: true
-        }),
-        duration: 420,
-        easing: "easeInExpo",
-        complete: resolve
-      }) || resolve();
-    });
+    const profile = getRecommendationMotionProfile();
+    return animateRecommendationCardsExit(null, profile);
   }
 
   async selectRecommendation(nextMode, triggerEl = null) {
-    if (this.recommendationTransitionRunning) return;
-    if (nextMode === this.state.recommendationMode) return;
-
-    this.recommendationTransitionRunning = true;
-
-    const stage = document.querySelector(".recommendation-stage");
-    const activePanel = document.querySelector(".recommendation-active-panel");
-    const title = document.querySelector(".recommendation-active-title");
-    const panelTitle = document.querySelector(".recommendation-panel-title");
-    const profile = getRecommendationMotionProfile();
-
-    if (stage) stage.classList.add("is-morphing");
-
-    await this.animateRecommendationProductsExit();
-
-    // Phase 1: title disappears and selected button becomes "portal"
-    await new Promise(resolve => {
-      AnimeBridge.run([title, panelTitle].filter(Boolean), {
-        opacity: [1, 0],
-        translateY: [0, -24],
-        scale: [1, 0.88],
-        filter: ["blur(0px)", "blur(8px)"],
-        duration: profile.reduceMotion ? 0 : 360,
-        easing: "easeInExpo",
-        complete: resolve
-      }) || resolve();
-    });
-
-    if (triggerEl) {
-      AnimeBridge.run(triggerEl, {
-        scale: [1, 1.16, 1.04],
-        boxShadow: [
-          "0 0 0 rgba(96,165,250,0)",
-          "0 0 70px rgba(96,165,250,0.34)",
-          "0 0 36px rgba(96,165,250,0.20)"
-        ],
-        duration: profile.reduceMotion ? 0 : 720,
-        easing: "easeOutExpo"
-      });
-    }
-
-    // Phase 2: active panel zooms in like entering selected mode
-    await new Promise(resolve => {
-      AnimeBridge.run(activePanel, {
-        scale: [1, profile.zoomScale],
-        translateY: [0, -18],
-        borderRadius: ["32px", "42px"],
-        boxShadow: [
-          "0 20px 70px rgba(2,8,23,0.24)",
-          "0 46px 140px rgba(59,130,246,0.28)"
-        ],
-        duration: profile.reduceMotion ? 0 : 780,
-        easing: "easeOutExpo",
-        complete: resolve
-      }) || resolve();
-    });
-
-    // Phase 3: update mode/content while title is hidden
-    this.state.recommendationMode = nextMode;
-    if (stage) stage.dataset.activeMode = nextMode;
-    this.updateRecommendationButtons(nextMode);
-    this.updateRecommendationPanels(nextMode);
-    this.updateRecommendationContent(nextMode);
-
-    // Phase 4: active panel settles, title stays subtle, products enter
-    AnimeBridge.run(activePanel, {
-      scale: [profile.zoomScale, 1],
-      translateY: [-18, 0],
-      duration: profile.reduceMotion ? 0 : 700,
-      easing: "easeOutExpo"
-    });
-
-    AnimeBridge.run([title, panelTitle].filter(Boolean), {
-      opacity: [0, 1],
-      translateY: [18, 0],
-      scale: [0.92, 1],
-      filter: ["blur(8px)", "blur(0px)"],
-      duration: profile.reduceMotion ? 0 : 560,
-      delay: 80,
-      easing: "easeOutExpo"
-    });
-
-    requestAnimationFrame(() => {
-      this.animateRecommendationProductsEnter(profile);
-    });
-
-    if (stage) stage.classList.remove("is-morphing");
-
-    setTimeout(() => {
-      this.recommendationTransitionRunning = false;
-    }, profile.reduceMotion ? 0 : 900);
+    await selectRecommendationMode(nextMode, triggerEl);
   }
 
   updateRecommendationButtons(nextMode) {
-    const btns = document.querySelectorAll('[data-recommendation-mode]');
-    btns.forEach(btn => {
-      if (btn.dataset.recommendationMode === nextMode) {
-        btn.classList.add('is-active');
-      } else {
-        btn.classList.remove('is-active');
-      }
-    });
+    updateRecommendationButtons(nextMode);
   }
 
-  updateRecommendationPanels(nextMode) {
-    const leftPanel = document.querySelector('.recommendation-side-panel[data-side-mode="left"]');
-    const rightPanel = document.querySelector('.recommendation-side-panel[data-side-mode="right"]');
-    
-    let leftMode = "";
-    let rightMode = "";
-    if (nextMode === "terbaik") {
-      leftMode = "termurah";
-      rightMode = "trusted";
-    } else if (nextMode === "termurah") {
-      leftMode = "terbaik";
-      rightMode = "trusted";
-    } else if (nextMode === "trusted") {
-      leftMode = "terbaik";
-      rightMode = "termurah";
-    }
-    
-    if (leftPanel) {
-      leftPanel.dataset.mode = leftMode;
-      this.renderSidePanelContent(leftPanel, leftMode);
-    }
-    if (rightPanel) {
-      rightPanel.dataset.mode = rightMode;
-      this.renderSidePanelContent(rightPanel, rightMode);
-    }
-
-    // Also update active panel header
-    const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === nextMode);
-    const activeIcon = document.querySelector('.active-mode-icon');
-    const activeTitle = document.querySelector('.recommendation-panel-title');
-    const activeCount = document.querySelector('.recommendation-panel-count');
-    
-    const buckets = this.buildRecommendationBuckets();
-    const count = (buckets[nextMode] || []).length;
-    
-    if (activeIcon && modeMeta) activeIcon.textContent = modeMeta.icon;
-    if (activeTitle && modeMeta) activeTitle.textContent = modeMeta.label;
-    if (activeCount) activeCount.textContent = `${count} produk`;
-
-    // Trigger side panels transition animation
-    this.animateSidePanels();
-  }
-
-  renderSidePanelContent(panel, modeKey) {
-    const modeMeta = RECOMMENDATION_MODES.find(m => m.key === modeKey);
-    if (!modeMeta) return;
-    const buckets = this.buildRecommendationBuckets();
-    const products = buckets[modeKey] || [];
-    const count = products.length;
-    const featured = products[0];
-    
-    let featuredHtml = "";
-    if (featured) {
-      featuredHtml = `
-        <div class="recommendation-side-featured">
-          <span class="featured-title">${this.esc(featured.title)}</span>
-          <span class="featured-price">${this.esc(featured.price || featured.price_text)}</span>
-        </div>
-      `;
-    } else {
-      featuredHtml = `
-        <div class="recommendation-side-featured">
-          <span class="featured-title">Belum ada produk</span>
-        </div>
-      `;
-    }
-    
-    panel.innerHTML = `
-      <div class="recommendation-panel-head">
-        <span class="mode-icon">${this.esc(modeMeta.icon)}</span>
-        <div>
-          <h4 class="recommendation-side-title">${this.esc(modeMeta.label)}</h4>
-          <p class="recommendation-side-count">${count} produk</p>
-        </div>
-      </div>
-      ${featuredHtml}
-    `;
-  }
-
-  animateSidePanels() {
-    const panels = document.querySelectorAll(".recommendation-side-panel");
-    if (!panels || !panels.length) return;
-
-    AnimeBridge.run(panels, {
-      opacity: [0.4, 0.78],
-      scale: [0.9, 1],
-      translateX: function(el, index) {
-        return index === 0 ? [-36, 0] : [36, 0];
-      },
-      delay: AnimeBridge.stagger(90),
-      duration: 700,
-      easing: "easeOutExpo"
-    });
-  }
+  updateRecommendationPanels(nextMode) {}
+  renderSidePanelContent(panel, modeKey) {}
+  animateSidePanels() {}
 
   updateRecommendationContent(nextMode) {
     const grid = document.querySelector('.recommendation-product-grid');
@@ -2527,6 +2514,65 @@ class ScraperApp {
       selectedReasons: [],
       customReason: '',
       correctedLabel: 'relevan',
+    });
+  }
+
+  _openFeedbackModal(productId) {
+    const product = this.state.products.find(
+      (p) => String(p.id || p.url || p.title || '') === String(productId)
+    );
+    if (!product) return;
+    const card = Array.from(document.querySelectorAll('.product-card'))
+      .find((item) => item.dataset.id === String(productId) || item.dataset.productId === String(productId));
+    this.openProductModal(product, card);
+    this.revealReasonPanel();
+  }
+
+  /* ─── FLIP card exit animation for review queue ─── */
+  animateCardExitAndRelayout(card) {
+    if (!card) return;
+    const grid = card.parentElement;
+    if (!grid) { card.remove(); return; }
+
+    // FLIP: snapshot old positions of siblings
+    const siblings = Array.from(grid.querySelectorAll('.product-card, .recommendation-product-card'))
+      .filter((el) => el !== card);
+    const oldRects = new Map();
+    siblings.forEach((el) => oldRects.set(el, el.getBoundingClientRect()));
+
+    // Animate the card out
+    if (this.canAnimate()) {
+      AnimeBridge.run(card, {
+        opacity: [1, 0],
+        scale: [1, 0.85],
+        translateX: [0, -40],
+        duration: 420,
+        easing: 'easeInQuad',
+        complete: () => {
+          card.remove();
+          this._flipRelayout(grid, siblings, oldRects);
+        },
+      });
+    } else {
+      card.remove();
+    }
+  }
+
+  _flipRelayout(grid, siblings, oldRects) {
+    if (!this.canAnimate() || !siblings.length) return;
+    siblings.forEach((el) => {
+      const oldRect = oldRects.get(el);
+      if (!oldRect) return;
+      const newRect = el.getBoundingClientRect();
+      const dx = oldRect.left - newRect.left;
+      const dy = oldRect.top - newRect.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      AnimeBridge.run(el, {
+        translateX: [dx, 0],
+        translateY: [dy, 0],
+        duration: 450,
+        easing: 'easeOutExpo',
+      });
     });
   }
 

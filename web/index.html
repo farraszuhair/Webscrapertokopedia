@@ -10,8 +10,10 @@
   <link rel="stylesheet" href="style.css?v=ui-20260528">
   <!-- UI_BUILD_MARKER_20260528 -->
   <!-- UI_RECOMMENDATION_MORPH_20260528 -->
+  <!-- UI_FINAL_REVIEW_FLOW_20260528 -->
 </head>
 <body>
+  <span id="UI_FINAL_REVIEW_FLOW_20260528" style="display: none;">UI_FINAL_REVIEW_FLOW_20260528</span>
   <div class="app">
     <header class="header">
       <div class="header-inner">
@@ -106,8 +108,19 @@
           <label class="checkbox-label">
             <input type="checkbox" id="target_first_mode">
             <span>Prioritaskan jumlah target walau sedikit keluar budget</span>
-            <small>Default mati. Jika aktif, produk di luar budget diberi badge khusus.</small>
           </label>
+          <div class="target-priority-info-box">
+            <button type="button" class="info-toggle" data-toggle-target-priority-info>
+              Apa maksud opsi ini?
+            </button>
+
+            <div class="info-content" hidden>
+              <p>
+                Jika aktif, sistem akan memprioritaskan jumlah target produk.
+                Produk yang sedikit keluar dari budget tetap bisa muncul, tetapi diberi badge khusus agar mudah dibedakan.
+              </p>
+            </div>
+          </div>
         </div>
 
         <div class="form-actions">
@@ -120,8 +133,8 @@
       <section id="progress-panel" class="panel progress-panel hidden">
         <h2 class="panel-title">Scraping Berlangsung</h2>
 
-        <div class="progress-clean-panel">
-          <div class="progress-scramble-text">Menunggu proses...</div>
+        <div class="progress-clean-panel" data-progress-stage="idle">
+          <div class="progress-scramble-text" id="progressScrambleText">Menunggu proses...</div>
 
           <div class="progress-time-row">
             <div class="progress-time-pill">
@@ -201,40 +214,19 @@
               </div>
 
               <div class="recommendation-controls">
-                <button class="recommendation-mode-btn is-active" data-recommendation-mode="terbaik">
-                  <span class="mode-icon">⭐</span>
-                  <span>Terbaik</span>
-                </button>
-
-                <button class="recommendation-mode-btn" data-recommendation-mode="termurah">
-                  <span class="mode-icon">💸</span>
-                  <span>Termurah</span>
-                </button>
-
-                <button class="recommendation-mode-btn" data-recommendation-mode="trusted">
-                  <span class="mode-icon">🏆</span>
-                  <span>Most Trusted</span>
-                </button>
+                <button class="recommendation-mode-btn is-active" data-recommendation-mode="terbaik">⭐ Terbaik</button>
+                <button class="recommendation-mode-btn" data-recommendation-mode="termurah">💸 Termurah</button>
+                <button class="recommendation-mode-btn" data-recommendation-mode="trusted">🏆 Most Trusted</button>
               </div>
             </div>
 
-            <div class="recommendation-world">
-              <aside class="recommendation-side-panel" data-side-mode="left"></aside>
+            <main class="recommendation-active-panel">
+              <div class="recommendation-focus-logo">
+                <span class="active-mode-icon">⭐</span>
+              </div>
 
-              <main class="recommendation-active-panel">
-                <div class="recommendation-panel-head">
-                  <span class="mode-icon active-mode-icon">⭐</span>
-                  <div>
-                    <h3 class="recommendation-panel-title">Terbaik</h3>
-                    <p class="recommendation-panel-count">6 produk</p>
-                  </div>
-                </div>
-
-                <div class="recommendation-product-grid" id="recommendation-product-grid"></div>
-              </main>
-
-              <aside class="recommendation-side-panel" data-side-mode="right"></aside>
-            </div>
+              <div class="recommendation-product-grid" id="recommendation-product-grid"></div>
+            </main>
           </section>
         </div>
 

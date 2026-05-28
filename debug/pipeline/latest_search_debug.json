@@ -1,19 +1,19 @@
 {
   "query": "laptop gaming",
-  "search_id": "3fda8511-a7af-4eb3-910a-c78e70b18e05",
+  "search_id": "43ec0217-29cb-41ca-9e53-0971f57930b8",
   "requested": 50,
   "scraped_raw": 450,
-  "after_dedupe": 273,
-  "valid_product_candidates": 263,
-  "invalid_non_product_removed": 10,
-  "budget_valid": 57,
-  "candidate_pool_count": 57,
+  "after_dedupe": 287,
+  "valid_product_candidates": 279,
+  "invalid_non_product_removed": 8,
+  "budget_valid": 65,
+  "candidate_pool_count": 65,
   "target_display": 50,
   "overfetch_attempted": true,
   "overfetch_attempts": 1,
   "overfetch_rounds": 1,
-  "overfetch_initial_valid_pool": 39,
-  "overfetch_final_valid_pool": 57,
+  "overfetch_initial_valid_pool": 44,
+  "overfetch_final_valid_pool": 65,
   "overfetch_max_raw": 500,
   "overfetch_exhausted": false,
   "overfetch_stop_reason": "target_met",
@@ -30,27 +30,29 @@
     "phone_model": null,
     "category": "laptop"
   },
-  "feedback_examples_loaded": 3,
-  "learned_patterns_loaded": 17,
-  "query_scoped_patterns": 8,
+  "feedback_examples_loaded": 5,
+  "learned_patterns_loaded": 27,
+  "query_scoped_patterns": 14,
   "constraint_scoped_patterns": 0,
-  "intent_scoped_patterns": 9,
+  "intent_scoped_patterns": 13,
   "global_patterns": 0,
   "constraint_mismatch_products": 0,
-  "learning_adjusted_products": 31,
-  "learned_positive_matches": 31,
+  "learning_adjusted_products": 59,
+  "learned_positive_matches": 59,
   "learned_negative_matches": 0,
-  "accepted_before_fallback": 57,
+  "accepted_before_fallback": 64,
   "fallback_candidates_count": 0,
   "weak_fallback_candidates_count": 0,
   "fallback_added": 0,
   "final_displayed": 50,
-  "rejected_as_obvious_junk_count": 0,
-  "rejected_as_obvious_junk_count_before_rescue": 0,
+  "rejected_as_obvious_junk_count": 1,
+  "rejected_as_obvious_junk_count_before_rescue": 1,
   "rescued_false_obvious_junk": 0,
   "fallback_candidates_count_after_rescue": 0,
-  "rejected_reasons_histogram": {},
-  "semantic_checked": 57,
+  "rejected_reasons_histogram": {
+    "obvious_junk": 1
+  },
+  "semantic_checked": 65,
   "classifier_checked": 1,
   "ai_checked": 1,
   "ai_calls_attempted": 1,
@@ -58,7 +60,7 @@
   "ai_timeouts": 0,
   "ai_failures": 0,
   "ai_batch_size": 3,
-  "prompt_tokens_estimated": 461,
+  "prompt_tokens_estimated": 468,
   "prompt_truncated_by_app": false,
   "ctx": 4096,
   "ai_accepted": 1,
@@ -70,22 +72,19 @@
     "ai_orchestrator": 1,
     "rule_accept": 49
   },
-  "sample_rejected": [],
-  "sample_rescued": [],
-  "sample_fallback": [],
-  "not_displayed_product_reasons": [
+  "sample_rejected": [
     {
-      "id": "d84e09c1b5f50483",
-      "title": "Axioo Hype 7 X8 Ryzen 7 6800H 16GB 1TB SSD W11 14.0FHD IPS",
-      "price_value": 10509000,
-      "url": "https://www.tokopedia.com/laptopmurahid/axioo-hype-7-x8-ryzen-7-6800h-32gb-1tb-ssd-nvme-win-11-pro-14-fhd-ips-1730830652100674879",
-      "decision_source": "rule_accept",
-      "reason": "Accepted by intent rule (main_product -> main_product)",
-      "rule_score": 0.778,
-      "semantic_score": 0.704,
-      "base_combined_score": 0.778,
+      "id": "7c1f1f9683dcfc6f",
+      "title": "ADVAN PIXWAR R7 6800H 16GB DDR5 512 W11 15.6\"FHD IPS BATTERY 58WH 1Y GREY",
+      "price_value": 9023000,
+      "url": "https://www.tokopedia.com/agresidsemarang/advan-pixwar-r7-6800h-16gb-ddr5-512-w11-15-6-fhd-ips-battery-58wh-1y-grey-1732669567950685983",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by clear intent mismatch (sparepart does not match main_product)",
+      "rule_score": 0.08,
+      "semantic_score": 0.698,
+      "base_combined_score": 0.593,
       "constraint_penalty": 0.0,
-      "combined_score": 0.778,
+      "combined_score": 0.593,
       "query_constraints": {
         "gpu_model": null,
         "cpu_model": null,
@@ -97,9 +96,47 @@
       },
       "product_constraints": {
         "gpu_model": null,
-        "cpu_model": "ryzen 7 6800h",
+        "cpu_model": null,
         "brand": null,
-        "storage": "1tb ssd",
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": null
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.0,
+      "learned_matches": []
+    }
+  ],
+  "sample_rescued": [],
+  "sample_fallback": [],
+  "not_displayed_product_reasons": [
+    {
+      "id": "7c1f1f9683dcfc6f",
+      "title": "ADVAN PIXWAR R7 6800H 16GB DDR5 512 W11 15.6\"FHD IPS BATTERY 58WH 1Y GREY",
+      "price_value": 9023000,
+      "url": "https://www.tokopedia.com/agresidsemarang/advan-pixwar-r7-6800h-16gb-ddr5-512-w11-15-6-fhd-ips-battery-58wh-1y-grey-1732669567950685983",
+      "decision_source": "rule_reject",
+      "reason": "Rejected by clear intent mismatch (sparepart does not match main_product)",
+      "rule_score": 0.08,
+      "semantic_score": 0.698,
+      "base_combined_score": 0.593,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.593,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
         "ram": null,
         "phone_model": null,
         "category": null
@@ -107,7 +144,7 @@
       "constraint_mismatch_reasons": [],
       "learned_adjustment": 0.0,
       "learned_matches": [],
-      "not_displayed_reason": "Accepted by intent rule (main_product -> main_product)"
+      "not_displayed_reason": "obvious_junk"
     },
     {
       "id": "5f11e2445b47d3b4",
@@ -145,6 +182,41 @@
       "not_displayed_reason": "Accepted by intent rule (main_product -> main_product)"
     },
     {
+      "id": "fc9e0cbb1d0f71c7",
+      "title": "lenovo legion 5 amd ryzen 7 5800h (second)",
+      "price_value": 10700000,
+      "url": "https://www.tokopedia.com/anugerah-komputer/lenovo-legion-5-amd-ryzen-7-5800h-second-1731364036845144049",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.802,
+      "semantic_score": 0.764,
+      "base_combined_score": 0.802,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.802,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": null,
+        "cpu_model": "ryzen 7 5800h",
+        "brand": "lenovo",
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.0,
+      "learned_matches": [],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
       "id": "65eed1d87cf5e63b",
       "title": "HP VICTUS 15 fa1094tx rtx2050 I5 12450h 8GB 512GB 15.6fhd IPS 144HZ win11 ohs",
       "price_value": 12000000,
@@ -155,7 +227,7 @@
       "semantic_score": 0.745,
       "base_combined_score": 0.78,
       "constraint_penalty": 0.0,
-      "combined_score": 0.78,
+      "combined_score": 0.88,
       "query_constraints": {
         "gpu_model": null,
         "cpu_model": null,
@@ -175,8 +247,61 @@
         "category": "laptop"
       },
       "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
+      "id": "9f89f4e3425681e8",
+      "title": "Lenovo LOQ i5-12450HX / 20 / 512 / RTX2050 4GB / 15.6\u2033 FHD 144Hz / WIN11+OHS 2021",
+      "price_value": 11450000,
+      "url": "https://www.tokopedia.com/mitraterradigital/lenovo-loq-i5-12450hx-20-512-rtx2050-4gb-15-6-fhd-144hz-win11-ohs-2021",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.783,
+      "semantic_score": 0.718,
+      "base_combined_score": 0.783,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.883,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": "rtx 2050",
+        "cpu_model": "i5 12450hx",
+        "brand": "lenovo",
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
       "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
     },
     {
@@ -190,7 +315,7 @@
       "semantic_score": 0.689,
       "base_combined_score": 0.78,
       "constraint_penalty": 0.0,
-      "combined_score": 0.78,
+      "combined_score": 0.88,
       "query_constraints": {
         "gpu_model": null,
         "cpu_model": null,
@@ -210,8 +335,149 @@
         "category": "laptop"
       },
       "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
+      "id": "af19c4da669b59fe",
+      "title": "HP VICTUS 15-fb1888AX/fb1889AX RYZEN 5 7535HS 8GB 512GBSSD RTX2050 WINS11 OHS21",
+      "price_value": 10399000,
+      "url": "https://www.tokopedia.com/rossoneristoreid/hp-victus-15-fb1888ax-fb1889ax-ryzen-5-7535hs-8gb-512gbssd-rtx2050-wins11-ohs21",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.78,
+      "semantic_score": 0.68,
+      "base_combined_score": 0.78,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.88,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": "rtx 2050",
+        "cpu_model": "ryzen 5 7535hs",
+        "brand": "hp",
+        "storage": "512gbssd",
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
+      "id": "f83d62a06a9da31d",
+      "title": "ACER NITRO V ANV15-41-R2VJ RYZEN 5 7535HS 8GB 512GB SSD RTX 2050 4GB 15,6\" FHD 144Hz W11 OHS21 BLACK",
+      "price_value": 9459000,
+      "url": "https://www.tokopedia.com/infonetmalpoinsquare/acer-nitro-v-anv15-41-r2vj-ryzen-5-7535hs-8gb-512gb-ssd-rtx-2050-4gb-15-6-fhd-144hz-w11-ohs21-black",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.78,
+      "semantic_score": 0.695,
+      "base_combined_score": 0.78,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.88,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": "rtx 2050",
+        "cpu_model": "ryzen 5 7535hs",
+        "brand": "acer",
+        "storage": "512gb ssd",
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
+      "id": "842378acfb837fc6",
+      "title": "LENOVO LOQ 15IAX9-1HID CI5-12450HX/12GB/SSD 512GB/RTX2050 4GB/LUNA GREY/WIN11+OHS 2021/15.6\u201dFHD IPS 144Hz",
+      "price_value": 10700000,
+      "url": "https://www.tokopedia.com/viralcomputerbali/lenovo-loq-15iax9-1hid-ci5-12450hx-12gb-ssd-512gb-rtx2050-4gb-luna-grey-win11-ohs-2021-15-6-fhd-ips-144hz",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.78,
+      "semantic_score": 0.687,
+      "base_combined_score": 0.78,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.88,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": "rtx 2050",
+        "cpu_model": null,
+        "brand": "lenovo",
+        "storage": "12gb ssd",
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
       "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
     },
     {
@@ -250,6 +516,94 @@
       "not_displayed_reason": "Accepted by intent rule (main_product -> main_product)"
     },
     {
+      "id": "4bf7749b22231de0",
+      "title": "Lenovo LOQ 15IRX9 i5-13450HX RAM 12GB SSD 512GB VGA RTX3050 Fullset",
+      "price_value": 9500000,
+      "url": "https://www.tokopedia.com/cuaninc-122/lenovo-loq-15irx9-i5-13450hx-ram-12gb-ssd-512gb-vga-rtx3050-fullset-1735130446638449953",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.78,
+      "semantic_score": 0.706,
+      "base_combined_score": 0.78,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.88,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": "rtx 3050",
+        "cpu_model": "i5 13450hx",
+        "brand": "lenovo",
+        "storage": "12gb ssd",
+        "ram": "ram 12gb",
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
+      "id": "8bb6055ffd36c1e6",
+      "title": "HP VICTUS 15-FA1666TX I5-12450H 8GB 512GB SSD RTX2050 15.6\" FHD WIN11+OHS 2021",
+      "price_value": 10199000,
+      "url": "https://www.tokopedia.com/infonetmalpoinsquare/hp-victus-15-fa1666tx-i5-12450h-8gb-512gb-ssd-rtx2050-15-6-fhd-win11-ohs-2021",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.78,
+      "semantic_score": 0.702,
+      "base_combined_score": 0.78,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.88,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": "rtx 2050",
+        "cpu_model": "i5 12450h",
+        "brand": "hp",
+        "storage": "512gb ssd",
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
       "id": "a2c004946a50138b",
       "title": "ACER ASPIRE 7 A715-76G-53GV 15.6\" i5-12450H 8GB 512GB SSD RTX2050 W11",
       "price_value": 10500000,
@@ -260,7 +614,7 @@
       "semantic_score": 0.725,
       "base_combined_score": 0.776,
       "constraint_penalty": 0.0,
-      "combined_score": 0.776,
+      "combined_score": 0.876,
       "query_constraints": {
         "gpu_model": null,
         "cpu_model": null,
@@ -280,8 +634,61 @@
         "category": "laptop"
       },
       "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
+    },
+    {
+      "id": "75cbfbc85fa3759a",
+      "title": "HP VICTUS 15-FA2715TX - i5 13420H 16GB 512GB RTX2050 4GB W11 OHS+M365 15.6FHD IPS 144Hz BK 2Y ADP MICA SILVER",
+      "price_value": 9893000,
+      "url": "https://www.tokopedia.com/gigacom-/hp-victus-15-fa2715tx-i5-13420h-16gb-512gb-rtx2050-4gb-w11-ohs-m365-15-6fhd-ips-144hz-bk-2y-adp-mica-silver-1731327916959106128",
+      "decision_source": "rule_accept",
+      "reason": "Accepted because strong laptop/GPU evidence overrides accessory word",
+      "rule_score": 0.78,
+      "semantic_score": 0.69,
+      "base_combined_score": 0.78,
+      "constraint_penalty": 0.0,
+      "combined_score": 0.88,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": "rtx 2050",
+        "cpu_model": "i5 13420h",
+        "brand": "hp",
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.1,
+      "learned_matches": [
+        {
+          "pattern": "rtx",
+          "scope": "exact_query",
+          "weight": 0.1,
+          "reason": "positive",
+          "support_count": 1,
+          "pattern_type": "boost"
+        }
+      ],
       "not_displayed_reason": "Accepted because strong laptop/GPU evidence overrides accessory word"
     },
     {
