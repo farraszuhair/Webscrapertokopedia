@@ -30,3 +30,7 @@ data/*.db-wal
 data/*.db-shm
 data/*.sqlite
 data/*.sqlite3
+data/marketspy_feedback.db
+data/*.db
+data/*.sqlite
+data/*.sqlite3

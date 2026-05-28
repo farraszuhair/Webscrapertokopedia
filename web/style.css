@@ -3112,3 +3112,166 @@ body.modal-open {
     transform: none !important;
   }
 }
+
+/* ============================================================
+   UI_MODAL_NEXT_QUEUE_FIX_20260528 — COMPREHENSIVE OVERRIDES
+   ============================================================ */
+
+/* --- 1. CATEGORY BUTTON CLICK FIX: z-index + pointer-events --- */
+.recommendation-header {
+  position: relative;
+  z-index: 30;
+}
+
+.recommendation-controls {
+  position: relative;
+  z-index: 40;
+  pointer-events: auto;
+}
+
+.recommendation-mode-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+.recommendation-active-panel {
+  position: relative;
+  z-index: 5;
+}
+
+.recommendation-stage::before,
+.recommendation-stage::after,
+.recommendation-bg-orbit,
+.recommendation-focus-logo {
+  pointer-events: none;
+}
+
+/* --- 2. REMOVE SIDE PANELS --- */
+.recommendation-world {
+  display: block;
+}
+
+.recommendation-side-panel {
+  display: none !important;
+}
+
+.recommendation-active-panel {
+  width: 100%;
+  max-width: none;
+}
+
+/* --- 3. MODAL SIZE + IMAGE FIX --- */
+.recommendation-product-dialog {
+  width: min(1080px, calc(100vw - 32px));
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #e5eefc;
+}
+
+.recommendation-product-dialog::backdrop {
+  background: rgba(2, 8, 23, 0.78);
+  backdrop-filter: blur(14px);
+}
+
+.recommendation-modal-card {
+  width: min(1080px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+  overflow: auto;
+  border-radius: 30px;
+  padding: 24px;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  background:
+    radial-gradient(circle at top left, rgba(96, 165, 250, 0.14), transparent 35%),
+    linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 42, 0.98));
+}
+
+.recommendation-modal-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 420px) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.recommendation-modal-title {
+  font-size: clamp(26px, 3.4vw, 48px);
+  line-height: 1.08;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.recommendation-modal-image-wrap {
+  min-height: 420px;
+  border-radius: 24px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.recommendation-modal-image {
+  width: 100%;
+  height: 100%;
+  max-height: 520px;
+  object-fit: cover;
+  display: block;
+}
+
+.image-placeholder {
+  width: 100%;
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #94a3b8;
+  background:
+    radial-gradient(circle at center, rgba(96, 165, 250, 0.12), transparent 45%),
+    rgba(15, 23, 42, 0.88);
+  border-radius: inherit;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px;
+}
+
+.image-placeholder strong {
+  font-size: 16px;
+  color: #cbd5e1;
+}
+
+.image-placeholder span {
+  font-size: 13px;
+}
+
+@media (max-width: 760px) {
+  .recommendation-modal-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendation-modal-title {
+    font-size: 28px;
+  }
+
+  .recommendation-modal-image-wrap {
+    min-height: 240px;
+  }
+}
+
+/* --- 4. RECOMMENDATION PRODUCT IMAGE WRAP --- */
+.recommendation-product-image-wrap {
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.88);
+}
+
+.recommendation-product-image-wrap .image-placeholder {
+  min-height: 96px;
+  font-size: 12px;
+}
+
+/* --- 5. FEEDBACK SAVE ROW --- */
+.feedback-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
