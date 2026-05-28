@@ -22,8 +22,8 @@ const FEEDBACK_REASONS = [
 ];
 
 const RECOMMENDATION_MODES = [
-  { key: 'best', label: 'Terbaik', shortLabel: 'Terbaik', icon: '⭐', sortMode: 'terbaik' },
-  { key: 'cheapest', label: 'Termurah', shortLabel: 'Termurah', icon: '💸', sortMode: 'termurah' },
+  { key: 'terbaik', label: 'Terbaik', shortLabel: 'Terbaik', icon: '⭐', sortMode: 'terbaik' },
+  { key: 'termurah', label: 'Termurah', shortLabel: 'Termurah', icon: '💸', sortMode: 'termurah' },
   { key: 'trusted', label: 'Most Trusted', shortLabel: 'Trusted', icon: '🏆', sortMode: 'most_trusted' },
 ];
 
@@ -49,11 +49,15 @@ class ScraperApp {
       lastProgress: null,
       aiStatus: null,
       engineMode: 'auto',
-      recommendationMode: 'best',
+      recommendationMode: 'terbaik',
       hasUserSelectedRecommendation: false,
       autoExpandedOnce: false,
       activeFeedbackProductId: null,
     };
+
+    this.activeProduct = null;
+    this.activeProductCard = null;
+    this.isModalAnimating = false;
 
     this.$ = (id) => document.getElementById(id);
     this.panels = ['search-panel', 'progress-panel', 'error-panel', 'results-panel'];
@@ -69,7 +73,8 @@ class ScraperApp {
     this.bindResetAI();
     this.bindResetLearning();
     this.bindQuickSort();
-    this._createFeedbackModal();
+    this.bindProductModalEvents();
+    this.bindProductCardClick();
     this.fetchAiStatus();
   }
 
@@ -398,85 +403,85 @@ class ScraperApp {
     this.state.elapsedTimer = null;
   }
 
-  startProgressAnimation() {
-    if (!window.anime) return;
-    this.stopProgressAnimation();
-    
-    const messages = [
-      'Mengambil data marketplace...',
-      'Membaca kartu produk...',
-      'Membersihkan duplikat...',
-      'Mengecek budget...',
-      'AI sedang audit kandidat...',
-      'Menyusun rekomendasi terbaik...',
-      'Menyiapkan hasil...',
-    ];
+  scrambleToText(el, targetText, duration = 900) {
+    if (!el) return;
 
-    let messageIndex = 0;
-    const scrambleText = (element) => {
-      if (!element) return;
-      const message = messages[messageIndex % messages.length];
-      messageIndex++;
-      element.textContent = message;
-    };
+    const chars = "01#$%AI<>SCRAPE{}[]";
+    const start = performance.now();
 
-    this._progressMessageTimer = setInterval(() => {
-      const el = this.$('ai-progress-scramble') || this.$('progress-message');
-      if (el) scrambleText(el);
-    }, 2100);
+    const frame = (now) => {
+      const progress = Math.min((now - start) / duration, 1);
+      const revealCount = Math.floor(targetText.length * progress);
 
-    const stage = this.$('ai-progress-stage');
-    if (stage) stage.setAttribute('data-progress-running', 'true');
+      let output = "";
 
-    const path = this.$('ai-progress-path');
-    const pathGlow = this.$('ai-progress-path-glow');
-    const orb = this.$('ai-progress-orb');
-
-    if (pathGlow) pathGlow.classList.add('is-animating');
-
-    if (orb && window.anime) {
-      const pathElement = this.$('ai-progress-path');
-      if (pathElement && typeof window.anime.path === 'function') {
-        const pathMotion = window.anime.path(pathElement);
-        if (pathMotion) {
-          this._progressAnimationTimeline = window.anime({
-            targets: orb,
-            translateX: pathMotion('x'),
-            translateY: pathMotion('y'),
-            rotate: pathMotion('angle'),
-            duration: 4200,
-            easing: 'easeInOutSine',
-            loop: true,
-          });
-          return;
+      for (let i = 0; i < targetText.length; i++) {
+        if (i < revealCount) {
+          output += targetText[i];
+        } else {
+          output += chars[Math.floor(Math.random() * chars.length)];
         }
       }
 
-      this._progressAnimationTimeline = window.anime({
-        targets: orb,
-        translateX: [0, 100, 150, 100, 0, -50, 0],
-        translateY: [0, -50, 0, 50, 0, -30, 0],
-        rotate: [0, 180, 360, 180, 0, -90, 0],
-        duration: 4200,
-        easing: 'easeInOutSine',
-        loop: true,
-      });
+      el.textContent = output;
+
+      if (progress < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        el.textContent = targetText;
+      }
+    };
+
+    requestAnimationFrame(frame);
+  }
+
+  startScrambleProgress() {
+    const el = document.querySelector(".progress-scramble-text");
+    if (!el) return;
+
+    this.stopScrambleProgress();
+
+    const progressMessages = [
+      "Mengambil data marketplace...",
+      "Membaca kartu produk...",
+      "Membersihkan duplikat...",
+      "Mengecek budget...",
+      "AI sedang audit kandidat...",
+      "Menyusun rekomendasi terbaik...",
+      "Menyiapkan hasil..."
+    ];
+
+    this._scrambleIndex = 0;
+    const play = () => {
+      const text = progressMessages[this._scrambleIndex % progressMessages.length];
+      this.scrambleToText(el, text, 900);
+      this._scrambleIndex += 1;
+    };
+
+    play();
+    this._scrambleTimer = setInterval(play, 1400);
+  }
+
+  stopScrambleProgress(finalText = "Selesai — hasil siap ditampilkan") {
+    if (this._scrambleTimer) {
+      clearInterval(this._scrambleTimer);
+      this._scrambleTimer = null;
     }
+
+    const el = document.querySelector(".progress-scramble-text");
+    if (el) this.scrambleToText(el, finalText, 850);
+  }
+
+  startProgressAnimation() {
+    this.startScrambleProgress();
   }
 
   stopProgressAnimation() {
-    if (this._progressMessageTimer) {
-      clearInterval(this._progressMessageTimer);
-      this._progressMessageTimer = null;
+    let finalText = "Selesai — hasil siap ditampilkan";
+    if (this.state.lastProgress && this.state.lastProgress.error) {
+      finalText = "Pipeline error — cek log";
     }
-    if (this._progressAnimationTimeline) {
-      this._progressAnimationTimeline.pause();
-      this._progressAnimationTimeline = null;
-    }
-    const stage = this.$('ai-progress-stage');
-    if (stage) stage.setAttribute('data-progress-running', 'false');
-    const pathGlow = this.$('ai-progress-path-glow');
-    if (pathGlow) pathGlow.classList.remove('is-animating');
+    this.stopScrambleProgress(finalText);
   }
 
   async fetchProgress() {
@@ -517,6 +522,7 @@ class ScraperApp {
     this.state.lastEtaFallbackSignature = null;
     this.state.lastProgress = null;
     this.stopProgressAnimation();
+    this.stopScrambleProgress("Menunggu proses...");
     this.renderProgress({
       percent: 0,
       progress_percent: 0,
@@ -570,8 +576,8 @@ class ScraperApp {
     if (progress.eta_seconds != null && Number.isFinite(Number(progress.eta_seconds))) {
       const signature = `${progress.updated_at_epoch_ms || ''}:${progress.eta_seconds}`;
       if (!this.state.estimatedCompletionEpochMs || signature !== this.state.lastEtaFallbackSignature) {
-        this.state.estimatedCompletionEpochMs = Date.now() + Math.max(0, Number(progress.eta_seconds)) * 1000;
-        this.state.lastEtaFallbackSignature = signature;
+         this.state.estimatedCompletionEpochMs = Date.now() + Math.max(0, Number(progress.eta_seconds)) * 1000;
+         this.state.lastEtaFallbackSignature = signature;
       }
       return;
     }
@@ -596,18 +602,26 @@ class ScraperApp {
   }
 
   renderLiveTimers() {
+    const elapsedTextEl = this.$('elapsedText');
+    const etaTextEl = this.$('etaText');
+    const seconds = this.state.progressStartedAtMs
+      ? Math.floor((Date.now() - Number(this.state.progressStartedAtMs)) / 1000)
+      : 0;
+    this.state.localElapsedSeconds = Math.max(0, seconds);
+    const elapsedFormatted = this.formatDuration(this.state.localElapsedSeconds);
+
+    if (elapsedTextEl) elapsedTextEl.textContent = elapsedFormatted;
+
+    const etaText = this.etaDisplayText();
+    if (etaTextEl) etaTextEl.textContent = etaText;
+
     const elapsedEl = this.$('pm-elapsed');
     const resultElapsedEl = this.$('rt-elapsed');
-    if (elapsedEl && this.state.progressStartedAtMs) {
-      const seconds = Math.floor((Date.now() - Number(this.state.progressStartedAtMs)) / 1000);
-      this.state.localElapsedSeconds = Math.max(0, seconds);
-      elapsedEl.textContent = this.formatDuration(this.state.localElapsedSeconds);
-      if (resultElapsedEl) resultElapsedEl.textContent = this.formatDuration(this.state.localElapsedSeconds);
-    }
+    if (elapsedEl) elapsedEl.textContent = elapsedFormatted;
+    if (resultElapsedEl) resultElapsedEl.textContent = elapsedFormatted;
 
     const etaEl = this.$('pm-eta');
     const resultEtaEl = this.$('rt-eta');
-    const etaText = this.etaDisplayText();
     if (etaEl) etaEl.textContent = etaText;
     if (resultEtaEl) resultEtaEl.textContent = etaText;
   }
@@ -627,12 +641,16 @@ class ScraperApp {
     this.updateEtaDeadline(progress);
 
     const pct = Math.max(0, Math.min(100, Number(progress.progress_percent ?? progress.percent ?? 0)));
-    this.$('progress-pct').textContent = `${Math.round(pct)}%`;
-    this.$('progress-bar').style.width = `${pct}%`;
+    const pctEl = this.$('progress-pct');
+    if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
+    const barEl = this.$('progress-bar');
+    if (barEl) barEl.style.width = `${pct}%`;
     const stage = progress.stage || progress.phase;
     const phase = progress.phase || stage;
-    this.$('progress-stage-label').textContent = this.stageLabel(stage);
-    this.$('progress-message').textContent = progress.statusText || progress.status_text || progress.message || '';
+    const stageLabelEl = this.$('progress-stage-label');
+    if (stageLabelEl) stageLabelEl.textContent = this.stageLabel(stage);
+    const msgEl = this.$('progress-message');
+    if (msgEl) msgEl.textContent = progress.statusText || progress.status_text || progress.message || '';
     
     const elapsedEl = this.$('elapsedText');
     const etaEl = this.$('etaText');
@@ -647,17 +665,25 @@ class ScraperApp {
       etaEl.textContent = this.etaDisplayText();
     }
 
-    this.$('pm-found').textContent = progress.foundCount ?? progress.found ?? 0;
-    this.$('pm-valid').textContent = progress.valid ?? 0;
-    this.$('pm-target').textContent = progress.targetCount ?? progress.target ?? '-';
+    const foundEl = this.$('pm-found');
+    if (foundEl) foundEl.textContent = progress.foundCount ?? progress.found ?? 0;
+    const validEl = this.$('pm-valid');
+    if (validEl) validEl.textContent = progress.valid ?? 0;
+    const targetEl = this.$('pm-target');
+    if (targetEl) targetEl.textContent = progress.targetCount ?? progress.target ?? '-';
+    
     if (this.state.progressStartedAtMs) {
       this.renderLiveTimers();
     } else {
-      this.$('pm-elapsed').textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '-';
-      this.$('pm-eta').textContent = this.etaDisplayText();
+      const pmElapsedEl = this.$('pm-elapsed');
+      if (pmElapsedEl) pmElapsedEl.textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '-';
+      const pmEtaEl = this.$('pm-eta');
+      if (pmEtaEl) pmEtaEl.textContent = this.etaDisplayText();
     }
-    this.$('pm-engine').textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
-    this.$('pm-attempt').textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
+    const engineEl = this.$('pm-engine');
+    if (engineEl) engineEl.textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
+    const attemptEl = this.$('pm-attempt');
+    if (attemptEl) attemptEl.textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
     this.updateStagePipeline(phase, pct);
     this.renderProgressLogs(progress.logs || []);
 
@@ -750,13 +776,14 @@ class ScraperApp {
     this.state.comparison = data.comparison || [];
     this.state.selectedEngine = data.selected_engine || null;
     this.state.products = (data.data || []).map((product) => this.normalizeProduct(product));
+    window.__MARKETSPY_PRODUCTS__ = this.state.products;
     this.state.recommendations = data.recommendations || {};
     this.state.metadata = data.result_metadata || {};
     this.state.engineMode = data.engine_mode || 'auto';
     this.state.metadata.engine_mode = this.state.engineMode;
     this.state.sortMode = data.sort_mode || this.state.metadata.sort_mode || this.state.sortMode || 'terbaik';
     this.state.recommendationsOpen = true;
-    this.state.recommendationMode = 'best';
+    this.state.recommendationMode = 'terbaik';
     this.state.hasUserSelectedRecommendation = false;
     this.state.autoExpandedOnce = false;
 
@@ -894,10 +921,11 @@ class ScraperApp {
     if (!item) return;
     this.state.selectedEngine = engine;
     this.state.products = (item.data || item.products || []).map((product) => this.normalizeProduct(product));
+    window.__MARKETSPY_PRODUCTS__ = this.state.products;
     this.state.recommendations = item.recommendations || {};
     this.state.metadata = item.result_metadata || {};
     this.state.recommendationsOpen = true;
-    this.state.recommendationMode = 'best';
+    this.state.recommendationMode = 'terbaik';
     this.renderComparison({ engine_mode: this.state.engineMode, engine_runs: this.state.comparison });
     this.renderRecommendations();
     this.renderResultSummary(item);
@@ -949,7 +977,7 @@ class ScraperApp {
     const panel = this.$('recommendations-panel');
     const grid = this.$('recommendation-stage-grid');
     const tabs = this.$('recommendation-tabs');
-    const title = this.$('recommendation-stage-title');
+    const title = this.$('recommendationTitle');
     if (!panel || !grid || !tabs || !title) return;
 
     if (!this.state.products.length) {
@@ -960,7 +988,7 @@ class ScraperApp {
     }
 
     panel.classList.remove('hidden');
-    const activeMode = this.state.recommendationMode || 'best';
+    const activeMode = this.state.recommendationMode || 'terbaik';
     const buckets = this.buildRecommendationBuckets();
     const activeMeta = RECOMMENDATION_MODES.find((mode) => mode.key === activeMode) || RECOMMENDATION_MODES[0];
     title.textContent = activeMeta.label;
@@ -1008,13 +1036,13 @@ class ScraperApp {
     };
 
     return {
-      best: [...list].sort((a, b) =>
+      terbaik: [...list].sort((a, b) =>
         rating(b) - rating(a)
         || confidence(b) - confidence(a)
         || sold(b) - sold(a)
         || semantic(b) - semantic(a)
       ).slice(0, 6),
-      cheapest: [...list].sort((a, b) =>
+      termurah: [...list].sort((a, b) =>
         price(a) - price(b)
         || rating(b) - rating(a)
       ).slice(0, 6),
@@ -1143,8 +1171,13 @@ class ScraperApp {
     const oldCards = document.querySelectorAll('.recommendation-mini-card');
     const update = () => {
       this.state.recommendationMode = mode;
-      this.renderRecommendations();
-      this.animateRecommendationStage();
+      const modeMeta = RECOMMENDATION_MODES.find((m) => m.key === mode);
+      if (modeMeta) {
+        this.applySortMode(modeMeta.sortMode, true);
+      } else {
+        this.renderRecommendations();
+        this.animateRecommendationStage();
+      }
     };
 
     if (this.canAnimate() && oldCards.length) {
@@ -1309,6 +1342,7 @@ class ScraperApp {
       btn.classList.toggle('active', btn.dataset.sortMode === nextMode);
     });
     this.state.products = this.sortProducts(this.state.products, nextMode);
+    window.__MARKETSPY_PRODUCTS__ = this.state.products;
     if (rerender) {
       this.renderProducts();
       this.animateProductCards();
@@ -1466,6 +1500,7 @@ class ScraperApp {
     const card = document.createElement('div');
     card.className = 'product-card';
     const id = String(product.id || product.url || product.title || '');
+    card.dataset.productId = id;
     card.dataset.id = id;
 
     const title = product.title || 'Produk Tokopedia';
@@ -1484,12 +1519,8 @@ class ScraperApp {
     const aiLabel = product.ai_label || (product.ai_decision === false ? 'tidak_relevan' : 'relevan');
     const aiReason = product.relevanceReason || product.ai_confidence_explanation || product.ai_explanation || product.ai_reason || '';
 
-    const link = document.createElement('a');
-    link.href = url || '#';
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.className = 'product-link';
-    link.appendChild(this.createProductImage(product));
+    // Append image wrapper directly to card (no wrapping <a>)
+    card.appendChild(this.createProductImage(product));
 
     const body = document.createElement('div');
     body.className = 'product-body';
@@ -1527,249 +1558,267 @@ class ScraperApp {
 
     if (aiReason) this.appendText(body, 'ai-reason', aiReason);
 
-    link.appendChild(body);
-    card.appendChild(link);
+    card.appendChild(body);
 
     const footer = document.createElement('div');
-    footer.className = 'product-footer feedback-row';
-    const positive = document.createElement('button');
-    positive.className = 'btn-feedback btn-benar feedback-positive';
-    positive.dataset.id = id;
-    positive.dataset.action = 'benar';
-    positive.type = 'button';
-    positive.title = 'Produk ini benar';
-    positive.textContent = 'Benar';
-    const negative = document.createElement('button');
-    negative.className = 'btn-feedback btn-salah feedback-negative';
-    negative.dataset.id = id;
-    negative.dataset.action = 'salah';
-    negative.type = 'button';
-    negative.title = 'Produk ini salah';
-    negative.textContent = 'Salah';
+    footer.className = 'product-footer';
     const open = document.createElement('a');
     open.className = 'btn-open-product';
     open.href = url || '#';
     open.target = '_blank';
     open.rel = 'noopener';
     open.textContent = 'Buka';
-    footer.append(positive, negative, open);
+    footer.append(open);
     card.appendChild(footer);
-
-    card.querySelectorAll('.btn-feedback').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const pid = btn.dataset.id;
-        if (btn.dataset.action === 'salah') {
-          this._openFeedbackModal(pid);
-          return;
-        }
-        this._submitFeedback(pid, {
-          userAction: 'benar',
-          feedbackType: 'positive',
-          selectedReasons: [],
-          customReason: '',
-          correctedLabel: 'relevan',
-        });
-      });
-    });
 
     return card;
   }
 
-  _createFeedbackModal() {
-    const modal = document.createElement('dialog');
-    modal.id = 'feedback-dialog';
-    modal.className = 'feedback-dialog';
-    modal.innerHTML = `
-      <div class="feedback-modal-backdrop"></div>
-      <div class="feedback-modal-card">
-        <div class="feedback-modal-header">
-          <span class="feedback-modal-kicker">AI LEARNING</span>
-          <h2>Kenapa produk ini salah?</h2>
-          <p>Pilih satu atau lebih alasan biar AI belajar dari kesalahan.</p>
-        </div>
-        
-        <div class="feedback-product-preview">
-          <img class="feedback-product-image" alt="Product" />
-          <div>
-            <h3 class="feedback-product-title"></h3>
-            <p class="feedback-product-price"></p>
-          </div>
-        </div>
-        
-        <div class="feedback-reason-grid" id="feedback-reason-grid"></div>
-        
-        <textarea class="feedback-note" id="feedback-note" placeholder="Tambahin catatan kalau perlu..." maxlength="500"></textarea>
-        
-        <div class="feedback-modal-actions">
-          <button type="button" class="btn-ghost" data-feedback-cancel>Batal</button>
-          <button type="button" class="btn-primary" data-feedback-save>Simpan Feedback</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
+  openProductModal(product, cardEl) {
+    const dialog = document.querySelector("#product-feedback-dialog");
+    if (!dialog || this.isModalAnimating) return;
 
-    modal.querySelector('[data-feedback-cancel]')?.addEventListener('click', () => this._closeFeedbackModal());
-    modal.querySelector('[data-feedback-save]')?.addEventListener('click', () => this._submitModalFeedback());
+    this.activeProduct = product;
+    this.activeProductCard = cardEl;
 
-    const reasonsDiv = modal.querySelector('#feedback-reason-grid');
-    FEEDBACK_REASONS.forEach((reason) => {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'feedback-reason-chip';
-      chip.dataset.reason = reason;
-      chip.textContent = reason;
-      chip.addEventListener('click', (e) => {
-        e.preventDefault();
-        chip.classList.toggle('is-selected');
-      });
-      reasonsDiv?.appendChild(chip);
-    });
+    this.fillProductModal(product);
 
-    this._modal = modal;
-    this._modalPid = null;
-  }
+    const reasonPanel = dialog.querySelector(".feedback-reason-panel");
+    if (reasonPanel) reasonPanel.hidden = true;
 
-  _openFeedbackModal(productId) {
-    const product = this.state.products.find((p) => String(p.id || p.url || p.title || '') === String(productId));
-    if (!product) return;
+    dialog.showModal();
+    this.isModalAnimating = true;
 
-    this._modalPid = productId;
-    this.state.activeFeedbackProductId = productId;
-    
-    const imageUrl = this.resolveProductImage(product);
-    const img = this._modal.querySelector('.feedback-product-image');
-    if (img) {
-      if (imageUrl) {
-        img.src = imageUrl;
-        img.style.display = 'block';
-        img.onerror = () => {
-          img.src = this.proxyImageUrl(imageUrl);
-          img.onerror = () => {
-            img.style.display = 'none';
-          };
-        };
-      } else {
-        img.style.display = 'none';
+    window.anime({
+      targets: ".product-modal-card",
+      opacity: [0, 1],
+      translateY: [48, 0],
+      scale: [0.92, 1],
+      duration: 1000,
+      easing: "easeOutExpo",
+      complete: () => {
+        this.isModalAnimating = false;
       }
-    }
-
-    this._modal.querySelector('.feedback-product-title').textContent = product.title || 'Produk';
-    this._modal.querySelector('.feedback-product-price').textContent = product.price || '-';
-
-    this._modal.querySelectorAll('.feedback-reason-chip').forEach((chip) => {
-      chip.classList.remove('is-selected');
-    });
-    const note = this._modal.querySelector('#feedback-note');
-    if (note) note.value = '';
-
-    document.querySelectorAll('.product-card').forEach((card) => {
-      const isActive = card.dataset.id === String(productId);
-      card.classList.toggle('feedback-focus', isActive);
-      card.classList.toggle('feedback-dimmed', !isActive);
     });
 
-    this._modal.classList.add('is-open');
-    document.body.classList.add('modal-open');
+    window.anime({
+      targets: ".product-modal-image-wrap",
+      opacity: [0, 1],
+      translateX: [-40, 0],
+      duration: 1000,
+      delay: 120,
+      easing: "easeOutExpo"
+    });
 
-    if (this.canAnimate()) {
-      window.anime.remove?.('.feedback-modal-backdrop, .feedback-modal-card, .feedback-reason-chip');
-      window.anime({
-        targets: '.feedback-modal-backdrop',
-        opacity: [0, 1],
-        duration: 1000,
-        easing: 'easeOutExpo',
-      });
-      window.anime({
-        targets: '.feedback-modal-card',
-        opacity: [0, 1],
-        translateY: [42, 0],
-        scale: [0.90, 1],
-        duration: 1000,
-        easing: 'easeOutExpo',
-      });
-      window.anime({
-        targets: '.feedback-reason-chip',
-        opacity: [0, 1],
-        translateY: [12, 0],
-        delay: window.anime.stagger(40, { start: 200 }),
-        duration: 1000,
-        easing: 'easeOutExpo',
-      });
-      window.anime({
-        targets: '.product-card.feedback-focus',
-        scale: [1, 0.985],
-        duration: 400,
-        easing: 'easeOutExpo',
-      });
-    }
+    window.anime({
+      targets: ".product-modal-content > *",
+      opacity: [0, 1],
+      translateX: [32, 0],
+      delay: window.anime.stagger(70, { start: 180 }),
+      duration: 850,
+      easing: "easeOutExpo"
+    });
   }
 
-  _closeFeedbackModal(animate = true) {
-    const cleanup = () => {
-      this._modal?.classList.remove('is-open');
-      document.body.classList.remove('modal-open');
-      document.querySelectorAll('.product-card.feedback-focus, .product-card.feedback-dimmed').forEach((card) => {
-        card.classList.remove('feedback-focus', 'feedback-dimmed');
-      });
-      this._modalPid = null;
-      this.state.activeFeedbackProductId = null;
-    };
+  closeProductModal() {
+    const dialog = document.querySelector("#product-feedback-dialog");
+    if (!dialog || this.isModalAnimating) return;
 
-    if (!animate || !this.canAnimate()) {
-      cleanup();
-      return Promise.resolve();
-    }
+    this.isModalAnimating = true;
 
-    const chips = this._modal?.querySelectorAll('.feedback-reason-chip');
-    const card = this._modal?.querySelector('.feedback-modal-card');
-    const backdrop = this._modal?.querySelector('.feedback-modal-backdrop');
-
-    if (chips && chips.length) {
-      window.anime.remove?.('.feedback-reason-chip');
-      window.anime({
-        targets: chips,
-        opacity: [1, 0],
-        translateY: [0, 12],
-        delay: window.anime.stagger(20, { direction: 'reverse' }),
-        duration: 800,
-        easing: 'easeInExpo',
-      });
-    }
-
-    window.anime.remove?.('.feedback-modal-card, .feedback-modal-backdrop, .product-card.feedback-focus');
-    const animation = window.anime({
-      targets: [card, backdrop].filter(Boolean),
+    window.anime({
+      targets: ".product-modal-card",
       opacity: [1, 0],
-      translateY: [card ? 0 : undefined, 28],
+      translateY: [0, 28],
       scale: [1, 0.94],
       duration: 1000,
-      easing: 'easeInExpo',
-      complete: cleanup,
+      easing: "easeOutExpo",
+      complete: () => {
+        dialog.close();
+        this.activeProduct = null;
+        this.activeProductCard = null;
+        this.isModalAnimating = false;
+      }
     });
-    window.anime({
-      targets: '.product-card.feedback-focus',
-      scale: [0.985, 1],
-      duration: 400,
-      easing: 'easeOutExpo',
-    });
-    return animation.finished || Promise.resolve();
   }
 
-  async _submitModalFeedback() {
-    if (!this._modalPid) return;
-    const selectedReasons = Array.from(this._modal.querySelectorAll('.feedback-reason-chip.is-selected'))
-      .map((chip) => chip.dataset.reason);
-    const customReason = this._modal.querySelector('#feedback-note')?.value.trim() || '';
-    const saved = await this._submitFeedback(this._modalPid, {
-      userAction: 'salah',
-      feedbackType: 'negative',
-      selectedReasons,
-      customReason,
-      correctedLabel: 'tidak_relevan',
+  fillProductModal(product) {
+    const dialog = document.querySelector("#product-feedback-dialog");
+    if (!dialog) return;
+
+    const img = dialog.querySelector(".product-modal-image");
+    if (img) {
+      const imageUrl = this.resolveProductImage(product);
+      img.src = imageUrl || '';
+      img.onerror = () => {
+        if (imageUrl && !img.dataset.proxyTried) {
+          img.dataset.proxyTried = '1';
+          img.src = this.proxyImageUrl(imageUrl);
+        } else {
+          img.src = '';
+        }
+      };
+    }
+
+    dialog.querySelector(".product-modal-title").textContent = product.title || 'Produk';
+    dialog.querySelector(".product-modal-store").textContent = product.storeName || product.shop_name || product.shop || '';
+    dialog.querySelector(".product-modal-price").textContent = product.price || '';
+
+    const ratingEl = dialog.querySelector(".product-modal-rating");
+    if (ratingEl) {
+      ratingEl.textContent = product.rating ? `⭐ ${product.rating}` : '';
+      ratingEl.style.display = product.rating ? 'inline' : 'none';
+    }
+
+    const soldEl = dialog.querySelector(".product-modal-sold");
+    if (soldEl) {
+      const soldText = product.sold || product.sold_text || product.soldCount || product.sold_count || '';
+      soldEl.textContent = soldText ? `🛍️ ${soldText}` : '';
+      soldEl.style.display = soldText ? 'inline' : 'none';
+    }
+
+    const confEl = dialog.querySelector(".product-modal-confidence");
+    if (confEl) {
+      const aiValue = product.confidenceScore ?? product.ai_confidence ?? product.relevance_score;
+      const aiNumeric = Number(aiValue);
+      confEl.textContent = (aiValue != null && Number.isFinite(aiNumeric)) ? `🧠 AI Confidence: ${aiNumeric.toFixed(2)}` : '';
+      confEl.style.display = (aiValue != null && Number.isFinite(aiNumeric)) ? 'inline' : 'none';
+    }
+
+    const openBtn = dialog.querySelector(".open-product-btn");
+    if (openBtn) {
+      openBtn.href = product.url || '#';
+    }
+
+    const reasonGrid = dialog.querySelector(".feedback-reason-grid");
+    if (reasonGrid) {
+      reasonGrid.innerHTML = '';
+      FEEDBACK_REASONS.forEach((reason) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "feedback-reason-chip";
+        chip.dataset.reason = reason;
+        chip.textContent = reason;
+        chip.addEventListener("click", (e) => {
+          e.preventDefault();
+          chip.classList.toggle("is-selected");
+        });
+        reasonGrid.appendChild(chip);
+      });
+    }
+
+    const noteTextarea = dialog.querySelector(".feedback-note");
+    if (noteTextarea) {
+      noteTextarea.value = '';
+    }
+  }
+
+  revealReasonPanel() {
+    const panel = document.querySelector(".feedback-reason-panel");
+    if (!panel) return;
+
+    panel.hidden = false;
+
+    window.anime({
+      targets: ".feedback-reason-panel",
+      opacity: [0, 1],
+      translateY: [24, 0],
+      duration: 650,
+      easing: "easeOutExpo"
     });
-    if (saved) await this._closeFeedbackModal(true);
+
+    window.anime({
+      targets: ".feedback-reason-chip",
+      opacity: [0, 1],
+      translateY: [14, 0],
+      scale: [0.94, 1],
+      delay: window.anime.stagger(45),
+      duration: 650,
+      easing: "easeOutExpo"
+    });
+  }
+
+  bindProductModalEvents() {
+    const dialog = document.querySelector("#product-feedback-dialog");
+    if (!dialog) return;
+
+    dialog.querySelector("[data-product-modal-close]")?.addEventListener("click", () => {
+      this.closeProductModal();
+    });
+
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) {
+        this.closeProductModal();
+      }
+    });
+
+    dialog.querySelector("[data-feedback-correct]")?.addEventListener("click", async () => {
+      if (!this.activeProduct) return;
+      const pid = this.activeProduct.id;
+
+      const success = await this._submitFeedback(pid, {
+        userAction: 'benar',
+        feedbackType: 'positive',
+        selectedReasons: [],
+        customReason: '',
+        correctedLabel: 'relevan',
+      });
+
+      if (success) {
+        setTimeout(() => {
+          this.closeProductModal();
+        }, 800);
+      }
+    });
+
+    dialog.querySelector("[data-feedback-wrong]")?.addEventListener("click", () => {
+      this.revealReasonPanel();
+    });
+
+    dialog.querySelector("[data-feedback-save]")?.addEventListener("click", async () => {
+      if (!this.activeProduct) return;
+      const pid = this.activeProduct.id;
+
+      const selectedReasons = Array.from(dialog.querySelectorAll(".feedback-reason-chip.is-selected"))
+        .map(chip => chip.dataset.reason);
+      const note = dialog.querySelector(".feedback-note")?.value.trim() || '';
+
+      const success = await this._submitFeedback(pid, {
+        userAction: 'salah',
+        feedbackType: 'negative',
+        selectedReasons,
+        customReason: note,
+        correctedLabel: 'tidak_relevan',
+      });
+
+      if (success) {
+        this.closeProductModal();
+      }
+    });
+
+    dialog.querySelector("[data-feedback-reason-cancel]")?.addEventListener("click", () => {
+      const panel = dialog.querySelector(".feedback-reason-panel");
+      if (panel) panel.hidden = true;
+    });
+  }
+
+  bindProductCardClick() {
+    document.addEventListener("click", (event) => {
+      const ignore = event.target.closest("a, button, [data-no-product-modal]");
+      if (ignore) return;
+
+      const card = event.target.closest(".product-card");
+      if (!card) return;
+
+      const productId = card.dataset.productId;
+      const product = window.__MARKETSPY_PRODUCTS__?.find(
+        item => String(item.id) === String(productId)
+      );
+
+      if (!product) return;
+
+      this.openProductModal(product, card);
+    });
   }
 
   _learningScopeHint(feedback) {
@@ -1851,7 +1900,7 @@ class ScraperApp {
         return false;
       }
       const card = Array.from(document.querySelectorAll('.product-card'))
-        .find((item) => item.dataset.id === String(productId));
+        .find((item) => item.dataset.id === String(productId) || item.dataset.productId === String(productId));
       if (card) {
         card.classList.add('feedback-sent');
         card.title = `Feedback: ${feedback.userAction}`;
