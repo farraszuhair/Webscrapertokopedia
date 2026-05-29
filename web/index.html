@@ -26,7 +26,7 @@
             <p>Scraping produk yang rapi, bertahap, dan mudah diaudit</p>
           </div>
         </div>
-        <div id="status-badge" class="status-badge status-idle">Idle</div>
+        <div id="status-badge" class="status-badge status-idle">Menunggu</div>
       </div>
     </header>
 
@@ -52,25 +52,25 @@
         </div>
 
         <div class="form-group">
-          <label for="engine_mode">Engine Mode</label>
+          <label for="engine_mode">Mode Engine</label>
           <select id="engine_mode">
             <option value="auto">Auto</option>
-            <option value="puppeteer">Puppeteer only</option>
-            <option value="selenium">Selenium only</option>
-            <option value="compare_both">Compare both</option>
+            <option value="puppeteer">Puppeteer saja</option>
+            <option value="selenium">Selenium saja</option>
+            <option value="compare_both">Bandingkan keduanya</option>
           </select>
         </div>
 
         <div id="ai-status-card" class="ai-status-card">
           <div class="ai-status-head">
             <strong>AI Orchestrator</strong>
-            <span id="ai-status-badge" class="ai-status-badge is-checking">Checking...</span>
+            <span id="ai-status-badge" class="ai-status-badge is-checking">Mengecek...</span>
           </div>
           <p id="ai-status-message" class="ai-status-message">Memeriksa model Ollama lokal...</p>
           <div class="ai-status-grid">
-            <span>Classifier</span><b id="ai-status-classifier">-</b>
-            <span>Semantic</span><b id="ai-status-semantic">-</b>
-            <span>JSON Repair</span><b id="ai-status-json">-</b>
+            <span>Klasifikasi</span><b id="ai-status-classifier">-</b>
+            <span>Semantik</span><b id="ai-status-semantic">-</b>
+            <span>Perbaikan JSON</span><b id="ai-status-json">-</b>
           </div>
           <pre id="ai-install-command" class="ai-install-command hidden"></pre>
         </div>
@@ -128,7 +128,7 @@
         <div class="form-actions">
           <button id="search-btn" class="btn btn-primary btn-large" onclick="app.startSearch()">Mulai Scraping</button>
           <button id="reset-ai-btn" class="btn btn-ghost" type="button">Reset AI</button>
-          <button id="reset-learning-btn" class="btn btn-ghost" type="button">Reset Learning</button>
+          <button id="reset-learning-btn" class="btn btn-ghost" type="button">Reset Pembelajaran</button>
         </div>
       </section>
 
@@ -138,9 +138,22 @@
         <div class="progress-clean-panel" data-progress-stage="idle">
           <div class="progress-scramble-text" id="progressScrambleText">Menunggu proses...</div>
 
+          <div class="scrape-runner-visual" aria-hidden="true">
+            <svg class="scrape-runner-svg" viewBox="0 0 420 80">
+              <path
+                class="scrape-runner-path"
+                d="M10 55 C70 10, 130 10, 190 55 S310 100, 410 25"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="4"
+                stroke-linecap="round"
+              />
+            </svg>
+          </div>
+
           <div class="progress-time-row">
             <div class="progress-time-pill">
-              <span>Elapsed</span>
+              <span>Durasi</span>
               <strong id="elapsedText">00:00</strong>
             </div>
 
@@ -171,27 +184,27 @@
           </div>
           <div class="result-header-tools">
             <div class="result-time-card">
-              <span>Elapsed</span>
+              <span>Durasi</span>
               <b id="rt-elapsed">00:00</b>
             </div>
             <div class="result-time-card">
               <span>ETA</span>
               <b id="rt-eta">Menghitung...</b>
             </div>
-            <div id="result-status-badge" class="status-badge status-done">Ready</div>
+            <div id="result-status-badge" class="status-badge status-done">Siap</div>
           </div>
         </div>
 
         <div id="result-summary" class="result-summary">
-          <div class="result-stat-card"><span>Requested</span><b id="rs-requested">0</b></div>
-          <div class="result-stat-card"><span>Scraped raw</span><b id="rs-raw">0</b></div>
-          <div class="result-stat-card"><span>After dedupe</span><b id="rs-deduped">0</b></div>
-          <div class="result-stat-card"><span>Budget valid</span><b id="rs-budget">0</b></div>
-          <div class="result-stat-card"><span>Semantic checked</span><b id="rs-semantic">0</b></div>
-          <div class="result-stat-card"><span>AI checked</span><b id="rs-ai-checked">0</b></div>
-          <div class="result-stat-card"><span>AI accepted</span><b id="rs-ai">0</b></div>
-          <div class="result-stat-card"><span>AI calls</span><b id="rs-ai-calls">0/0</b></div>
-          <div class="result-stat-card"><span>Displayed</span><b id="rs-displayed">0</b></div>
+          <div class="result-stat-card"><span>Diminta</span><b id="rs-requested">0</b></div>
+          <div class="result-stat-card"><span>Scrape mentah</span><b id="rs-raw">0</b></div>
+          <div class="result-stat-card"><span>Setelah dedupe</span><b id="rs-deduped">0</b></div>
+          <div class="result-stat-card"><span>Budget lolos</span><b id="rs-budget">0</b></div>
+          <div class="result-stat-card"><span>Semantik dicek</span><b id="rs-semantic">0</b></div>
+          <div class="result-stat-card"><span>AI dicek</span><b id="rs-ai-checked">0</b></div>
+          <div class="result-stat-card"><span>AI diterima</span><b id="rs-ai">0</b></div>
+          <div class="result-stat-card"><span>Panggilan AI</span><b id="rs-ai-calls">0/0</b></div>
+          <div class="result-stat-card"><span>Ditampilkan</span><b id="rs-displayed">0</b></div>
         </div>
 
         <div id="r-budget-bar" class="r-budget-bar hidden">
@@ -201,22 +214,27 @@
         <div id="r-warning" class="result-warning hidden"></div>
 
         <div id="comparison-panel" class="comparison-panel hidden">
-          <h3>Engine Comparison</h3>
+          <h3>Perbandingan Engine</h3>
           <div id="comparison-grid" class="comparison-grid"></div>
         </div>
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
-          <section class="recommendation-stage" id="recommendation-stage" data-active-mode="terbaik">
+          <section class="recommendation-stage" id="recommendation-stage" data-active-mode="all">
+            <span data-ui-marker="UI_CHECKED_TRAY_ENTERFROM_20260528" hidden>UI_CHECKED_TRAY_ENTERFROM_20260528</span>
             <div class="recommendation-bg-orbit"></div>
 
             <div class="recommendation-header">
               <div>
                 <span class="recommendation-kicker">REKOMENDASI CEPAT</span>
-                <h2 id="recommendationTitle" class="recommendation-active-title">Terbaik</h2>
+                <h2 id="recommendationTitle" class="recommendation-active-title">Semua Barang</h2>
               </div>
 
               <div class="recommendation-controls">
-                <button type="button" class="recommendation-mode-btn is-active" data-recommendation-mode="terbaik">
+                <button type="button" class="recommendation-mode-btn is-active" data-recommendation-mode="all">
+                  <span class="mode-icon">🧺</span>
+                  <span>Semua Barang</span>
+                </button>
+                <button type="button" class="recommendation-mode-btn" data-recommendation-mode="terbaik">
                   <span class="mode-icon">⭐</span>
                   <span>Terbaik</span>
                 </button>
@@ -233,10 +251,22 @@
 
             <main class="recommendation-active-panel">
               <div class="recommendation-focus-logo">
-                <span class="active-mode-icon">⭐</span>
+                <span class="active-mode-icon">🧺</span>
               </div>
 
-              <div class="recommendation-product-grid" id="recommendation-product-grid"></div>
+              <div class="recommendation-product-grid" id="recommendation-product-grid" data-layout-grid="active-products"></div>
+
+              <section class="checked-products-box" data-layout-grid="checked-products">
+                <div class="checked-products-header">
+                  <div>
+                    <span class="checked-products-kicker">HASIL REVIEW</span>
+                    <h3>Sudah Dicek</h3>
+                  </div>
+                  <p class="checked-products-count">0 produk</p>
+                </div>
+
+                <div class="checked-products-grid"></div>
+              </section>
             </main>
           </section>
         </div>

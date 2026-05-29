@@ -12,6 +12,12 @@ python app.py
 
 Open http://127.0.0.1:3000.
 
+If port `3000` is busy, start on another port:
+
+```bash
+PORT=3001 python app.py
+```
+
 ## Supported Ollama Models
 
 Only these models are supported:
@@ -84,13 +90,22 @@ If more than 70% of extracted products are missing images, debug JSON is written
 
 ## UI Controls
 
-- `Terbaik` sorts current results by confidence, rating, sold count, then price.
-- `Termurah` sorts current results by price ascending.
-- `Most Trusted` sorts current results by store trust, rating, sold count, and review count.
+- `Semua Barang` shows products in the original displayed order.
+- `Terbaik` sorts recommendations by rating, AI confidence, then sold count.
+- `Termurah` sorts recommendations by price ascending, then rating.
+- `Most Trusted` sorts recommendations by sold count, rating, then AI confidence.
 
 Quick sort buttons sort the current products in the browser. They do not rescrape and do not call AI.
 
 Engine Comparison appears only when engine mode is `Compare both` (`compare_both`). It is hidden for Auto, Puppeteer only, and Selenium only.
+
+## UI Review Flow
+
+The recommendation panel has four categories: `Semua Barang`, `Terbaik`, `Termurah`, and `Most Trusted`.
+
+When a recommendation card is opened and marked `Benar` or `Salah`, feedback is posted to `/api/feedback`, the product exits the active recommendation grid, and the same product appears in the adaptive `Sudah Dicek` tray below the grid. The tray keeps reviewed products visible across category switches; `Semua Barang` shows all checked products.
+
+The scraping progress panel uses staged Indonesian progress text, elapsed time, ETA, and a lightweight SVG running-line animation while scraping is active. Result and recommendation cards use delayed hover stagger animation and scroll-adaptive entrance animation with an IntersectionObserver fallback when Anime.js `onScroll` is unavailable.
 
 ## API
 
@@ -130,6 +145,18 @@ Example search:
 
 The classifier timeout is 75 seconds by default with `num_ctx=4096` and `num_predict=180`. After 1 classifier failure in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_failures`, `ai_circuit_open`, `prompt_tokens_estimated`, `ctx`, and `fallback_added` in `result_metadata`.
 
+If timeouts are frequent on CPU-only machines, keep `AI_AUDIT_MAX_PRODUCTS=3`, confirm `gemma3:4b` is pulled, and avoid running other heavy Ollama jobs during scraping.
+
+### Port 3000 is busy
+
+Set a different port before starting:
+
+```bash
+PORT=3001 python app.py
+```
+
+Then open http://127.0.0.1:3001.
+
 ### Displayed is much lower than requested
 
 Check `requested`, `budget_valid`, `candidate_pool`, `rule_accepted`, `ai_checked`, `fallback_added`, `displayed`, and `limited_reason` in `result_metadata`.
@@ -137,6 +164,12 @@ Check `requested`, `budget_valid`, `candidate_pool`, `rule_accepted`, `ai_checke
 ### Product images are missing
 
 Check `images_extracted_count` and `images_missing_count` in logs/debug files. Placeholders mean no valid marketplace image URL was extracted or the browser rejected the image load.
+
+If many images are missing, rerun the search, check `debug/pipeline/latest_search_debug.json`, and confirm the marketplace page is not serving lazy-loaded or blocked image URLs.
+
+### UI does not update
+
+The active frontend is served from `web/index.html`, `web/app.js`, `web/style.css`, and `web/vendor/anime.min.js`. If the UI does not show the latest recommendation tray, hard refresh the browser and confirm `UI_CHECKED_TRAY_ENTERFROM_20260528` appears in the page source. If it does not, the wrong file was patched or the browser is showing cached content.
 
 ## Tests
 
