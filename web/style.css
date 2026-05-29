@@ -3470,3 +3470,104 @@ body.modal-open {
     justify-content: center;
   }
 }
+
+/* ============================================================
+   UI_FAST_CATEGORY_TRANSITION_20260528
+   ============================================================ */
+
+.recommendation-controls {
+  position: relative;
+  z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.recommendation-mode-btn {
+  position: relative;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 999px;
+  transform: translateZ(0);
+  will-change: transform, opacity;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.recommendation-mode-btn:hover {
+  border-color: rgba(147, 197, 253, 0.64);
+  color: #ffffff;
+  transform: translateZ(0);
+}
+
+.recommendation-mode-btn.is-active {
+  background: linear-gradient(135deg, #2563eb, #60a5fa);
+  border-color: rgba(147, 197, 253, 0.7);
+  color: #ffffff;
+}
+
+.recommendation-mode-btn:not(.is-active) {
+  opacity: 0.72;
+}
+
+.recommendation-mode-btn:not(.is-active):hover {
+  opacity: 1;
+}
+
+.recommendation-active-panel {
+  will-change: transform;
+}
+
+.recommendation-focus-logo {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.recommendation-product-grid {
+  contain: layout paint;
+}
+
+.recommendation-product-card {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: layout paint;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.recommendation-stage.is-fast-switching .recommendation-product-card {
+  pointer-events: none;
+  box-shadow: none !important;
+}
+
+.recommendation-stage.is-fast-switching .recommendation-controls,
+.recommendation-stage.is-fast-switching .recommendation-mode-btn {
+  pointer-events: auto;
+}
+
+.recommendation-product-image-wrap {
+  width: 112px;
+  height: 96px;
+  contain: layout paint;
+  flex: 0 0 auto;
+}
+
+.recommendation-product-image-wrap .recommendation-product-image,
+.recommendation-product-image-wrap .image-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 900px) {
+  .recommendation-product-image-wrap {
+    width: 92px;
+    height: 84px;
+  }
+}

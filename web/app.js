@@ -9,21 +9,69 @@
 
 const AnimeBridge = (() => {
   const animeGlobal = window.anime;
+  const activeAnimations = new WeakMap();
+
+  function resolveTargets(targets) {
+    if (!targets) return [];
+    if (typeof targets === "string") return Array.from(document.querySelectorAll(targets));
+    if (targets instanceof Element || targets === window || targets === document) return [targets];
+    return Array.from(targets).filter(Boolean);
+  }
+
+  function stop(targets) {
+    const resolvedTargets = resolveTargets(targets);
+
+    if (animeGlobal && typeof animeGlobal.remove === "function") {
+      try {
+        animeGlobal.remove(resolvedTargets);
+      } catch (_error) {}
+    }
+
+    resolvedTargets.forEach(target => {
+      const animation = activeAnimations.get(target);
+      if (animation && typeof animation.pause === "function") {
+        animation.pause();
+      }
+      activeAnimations.delete(target);
+    });
+
+    return resolvedTargets;
+  }
 
   function run(targets, params) {
-    if (typeof animate === "function") {
-      return animate(targets, params);
+    if (!targets) return null;
+
+    const resolvedTargets = stop(targets);
+    if (!resolvedTargets.length) return null;
+
+    let animation = null;
+    const originalComplete = typeof params?.complete === "function" ? params.complete : null;
+    const runParams = {
+      ...(params || {}),
+      complete: (...args) => {
+        resolvedTargets.forEach(target => {
+          if (activeAnimations.get(target) === animation) {
+            activeAnimations.delete(target);
+          }
+        });
+
+        if (originalComplete) originalComplete(...args);
+      }
+    };
+
+    if (typeof window.animate === "function") {
+      animation = window.animate(resolvedTargets, runParams);
+    } else if (animeGlobal && typeof animeGlobal === "function") {
+      animation = animeGlobal({ targets: resolvedTargets, ...runParams });
+    } else if (animeGlobal && typeof animeGlobal.animate === "function") {
+      animation = animeGlobal.animate(resolvedTargets, runParams);
     }
 
-    if (animeGlobal && typeof animeGlobal === "function") {
-      return animeGlobal({ targets, ...params });
+    if (animation) {
+      resolvedTargets.forEach(target => activeAnimations.set(target, animation));
     }
 
-    if (animeGlobal && typeof animeGlobal.animate === "function") {
-      return animeGlobal.animate(targets, params);
-    }
-
-    return null;
+    return animation;
   }
 
   function timeline(params = {}) {
@@ -43,14 +91,27 @@ const AnimeBridge = (() => {
       return window.stagger(value, params);
     }
 
-    if (animeGlobal && typeof animeGlobal.stagger === "function") {
+    if (animeGlobal && typeof animeGlobal.stagger === "function" && animeGlobal.stagger.length > 1) {
       return animeGlobal.stagger(value, params);
     }
 
-    return function(el, index) {
+    return function(_el, index) {
       const start = Number(params.start || 0);
       const step = Array.isArray(value) ? 60 : Number(value || 0);
-      return start + index * step;
+      const count = Number(params.count || 0);
+      let order = index;
+
+      if (count > 1 && params.from === "center") {
+        order = Math.abs(index - (count - 1) / 2);
+      } else if (count > 1 && params.from === "last") {
+        order = count - 1 - index;
+      }
+
+      if (count > 1 && params.reversed) {
+        order = count - 1 - order;
+      }
+
+      return Math.max(0, start + order * step);
     };
   }
 
@@ -66,62 +127,20 @@ const AnimeBridge = (() => {
     return null;
   }
 
-  return { run, timeline, stagger, createLayout };
+  return { run, timeline, stagger, createLayout, stop };
 })();
 
 function getRecommendationMotionProfile() {
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const isMobile = window.matchMedia("(max-width: 700px)").matches;
-  const isTablet = window.matchMedia("(min-width: 701px) and (max-width: 1100px)").matches;
-
-  if (reduceMotion) {
-    return {
-      duration: 0,
-      zoomScale: 1,
-      logoScale: 1,
-      enterY: 0,
-      enterScale: 1,
-      rotateX: 0,
-      staggerDelay: 0,
-      grid: [1, 1]
-    };
-  }
-
-  if (isMobile) {
-    return {
-      duration: 650,
-      zoomScale: 1.02,
-      logoScale: 1.35,
-      enterY: 36,
-      enterScale: 0.86,
-      rotateX: 0,
-      staggerDelay: 50,
-      grid: [1, 6]
-    };
-  }
-
-  if (isTablet) {
-    return {
-      duration: 760,
-      zoomScale: 1.04,
-      logoScale: 1.5,
-      enterY: 54,
-      enterScale: 0.8,
-      rotateX: 4,
-      staggerDelay: 65,
-      grid: [2, 2]
-    };
-  }
-
+  const profile = getFastCategoryMotionProfile();
   return {
-    duration: 860,
-    zoomScale: 1.055,
-    logoScale: 1.7,
-    enterY: 72,
-    enterScale: 0.74,
-    rotateX: 6,
-    staggerDelay: 75,
-    grid: [2, 3]
+    duration: profile.enterDuration,
+    zoomScale: 1.01,
+    logoScale: profile.logoScale,
+    enterY: profile.enterY,
+    enterScale: profile.enterScale,
+    rotateX: 0,
+    staggerDelay: profile.stagger,
+    grid: [1, 1]
   };
 }
 
@@ -141,6 +160,9 @@ function handleImageError(img) {
 
 let activeRecommendationMode = "all";
 let recommendationTransitionRunning = false;
+let categoryTransitionId = 0;
+let recommendationCacheVersion = 0;
+let recommendationProductCache = new Map();
 
 let activeModalMode = null;
 let activeModalProducts = [];
@@ -150,6 +172,8 @@ let modalTransitionRunning = false;
 let feedbackSubmitting = false;
 const reviewedProductIds = new Set();
 const hoverTimers = new WeakMap();
+const activeHoverTimerIds = new Set();
+const activeHoverCards = new Set();
 let checkedLayout = null;
 let adaptiveScrollObserver = null;
 let adaptiveScrollAnimation = null;
@@ -215,11 +239,17 @@ function isProductReviewed(product) {
   return Boolean(id && (reviewState.checkedById.has(id) || reviewedProductIds.has(id)));
 }
 
+function invalidateRecommendationCache() {
+  recommendationCacheVersion += 1;
+  recommendationProductCache.clear();
+}
+
 function resetReviewState() {
   reviewState.checkedById.clear();
   reviewState.checkedOrder.length = 0;
   reviewState.activeMode = "all";
   reviewedProductIds.clear();
+  invalidateRecommendationCache();
 }
 
 function markProductAsReviewed(product, result, extra = {}) {
@@ -241,11 +271,20 @@ function markProductAsReviewed(product, result, extra = {}) {
     sourceMode: activeRecommendationMode || "all"
   });
 
+  invalidateRecommendationCache();
   return id;
 }
 
 function getActiveRecommendationProducts(mode) {
-  return getRecommendationProducts(mode).filter(product => !isProductReviewed(product));
+  const reviewedIds = new Set([
+    ...reviewState.checkedById.keys(),
+    ...reviewedProductIds
+  ]);
+
+  return getRecommendationProducts(mode).filter(product => {
+    const id = getProductReviewId(product);
+    return !id || !reviewedIds.has(id);
+  });
 }
 
 function getCheckedProductsForMode(mode) {
@@ -256,29 +295,31 @@ function getCheckedProductsForMode(mode) {
 
   if (normalizedMode === "all") return records;
 
+  const modeProductIds = new Set(
+    getRecommendationProducts(normalizedMode).map(product => getProductReviewId(product))
+  );
+
   return records.filter(record => {
     if (record.sourceMode === normalizedMode) return true;
-
-    const modeProducts = getRecommendationProducts(normalizedMode);
-    return modeProducts.some(product => getProductReviewId(product) === record.id);
+    return modeProductIds.has(record.id);
   });
 }
 
 function updateRecommendationButtons(nextMode) {
   document.querySelectorAll('[data-recommendation-mode]').forEach((btn) => {
-    btn.classList.toggle('is-active', btn.dataset.recommendationMode === nextMode);
+    const mode = normalizeRecommendationMode(btn.dataset.recommendationMode);
+    const isActive = mode === nextMode;
+
+    btn.classList.toggle('is-active', isActive);
+    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
-  const titleEl = document.getElementById('recommendationTitle');
-  const iconEl = document.querySelector('.active-mode-icon');
-  const modeMeta = RECOMMENDATION_MODES[nextMode];
-  if (titleEl && modeMeta) titleEl.textContent = modeMeta.label;
-  if (iconEl && modeMeta) iconEl.textContent = modeMeta.icon;
 }
 
 function updateRecommendationTitle(mode) {
   const titleEl = document.getElementById('recommendationTitle');
   if (titleEl) {
-    const meta = RECOMMENDATION_MODES[mode];
+    const normalizedMode = normalizeRecommendationMode(mode) || "all";
+    const meta = RECOMMENDATION_MODES[normalizedMode];
     if (meta) titleEl.textContent = meta.label;
   }
 }
@@ -286,19 +327,76 @@ function updateRecommendationTitle(mode) {
 function updateRecommendationLogo(mode) {
   const iconEl = document.querySelector('.active-mode-icon');
   if (iconEl) {
-    const meta = RECOMMENDATION_MODES[mode];
+    const normalizedMode = normalizeRecommendationMode(mode) || "all";
+    const meta = RECOMMENDATION_MODES[normalizedMode];
     if (meta) iconEl.textContent = meta.icon;
   }
 }
 
-function updateRecommendationContent(mode) {
-  if (window.app) {
-    window.app.updateRecommendationContent(mode);
-  }
+function renderRecommendationProductCard(product) {
+  const item = window.app && typeof window.app.normalizeProduct === "function"
+    ? window.app.normalizeProduct(product)
+    : { ...(product || {}) };
+  const id = getProductReviewId(item);
+  const imageUrl = resolveProductImage(item);
+  const title = item.title || "Produk Tokopedia";
+  const ratingStr = item.rating ? `Rating ${item.rating}` : "";
+  const soldValue = item.sold || item.sold_text || item.soldCount || item.sold_count || "";
+  const soldStr = soldValue ? `${soldValue} terjual` : "";
+  const meta = [ratingStr, soldStr].filter(Boolean).join(" | ");
+
+  const imageHtml = imageUrl
+    ? `<img class="recommendation-product-image" src="${escapeHtml(imageUrl)}" data-original-src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" decoding="async" />`
+    : `<div class="image-placeholder">Tidak ada gambar</div>`;
+
+  return `
+    <article class="recommendation-product-card" data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}">
+      <div class="recommendation-product-image-wrap${imageUrl ? "" : " is-image-missing"}">
+        ${imageHtml}
+      </div>
+      <div class="recommendation-product-card-details">
+        <h4 class="recommendation-product-title">${escapeHtml(title)}</h4>
+        <div class="recommendation-product-price">${escapeHtml(formatProductPrice(item))}</div>
+        <div class="recommendation-product-meta">${escapeHtml(meta)}</div>
+      </div>
+    </article>
+  `;
+}
+
+function setupProductImageErrorHandlers(scope = document) {
+  scope.querySelectorAll(".recommendation-product-image").forEach(img => {
+    if (img.dataset.errorHandlerBound === "true") return;
+    img.dataset.errorHandlerBound = "true";
+
+    img.onerror = () => {
+      const originalSrc = img.dataset.originalSrc || img.src;
+      if (originalSrc && window.app && typeof window.app.proxyImageUrl === "function" && !img.dataset.proxyTried) {
+        img.dataset.proxyTried = "1";
+        img.src = window.app.proxyImageUrl(originalSrc);
+        return;
+      }
+
+      handleImageError(img);
+    };
+  });
 }
 
 function renderRecommendationContent(mode) {
-  updateRecommendationContent(mode);
+  const grid = document.querySelector(".recommendation-product-grid");
+  if (!grid) return;
+
+  const normalizedMode = normalizeRecommendationMode(mode) || "all";
+  const products = getActiveRecommendationProducts(normalizedMode);
+
+  grid.innerHTML = products.length
+    ? products.slice(0, 12).map(product => renderRecommendationProductCard(product)).join("")
+    : '<div class="recommendation-empty">Semua produk di kategori ini sudah dicek.</div>';
+
+  setupProductImageErrorHandlers(grid);
+}
+
+function updateRecommendationContent(mode) {
+  renderRecommendationContent(mode);
 }
 
 function animateRecommendationCardsEnter(profile) {
@@ -335,158 +433,307 @@ function animateRecommendationCardsExit(container, profile) {
 }
 
 async function selectRecommendationMode(nextMode, triggerEl) {
+  nextMode = normalizeRecommendationMode(nextMode);
   if (!nextMode) return;
   if (nextMode === activeRecommendationMode) return;
-  if (recommendationTransitionRunning) return;
+
+  const transitionId = ++categoryTransitionId;
 
   recommendationTransitionRunning = true;
-
-  try {
-    await runRecommendationMorphTransition(nextMode, triggerEl);
-  } catch (error) {
-    console.error("[RECOMMENDATION] transition failed:", error);
-
-    activeRecommendationMode = nextMode;
-    reviewState.activeMode = nextMode;
-    if (window.app) {
-      window.app.state.recommendationMode = nextMode;
-      window.app.state.hasUserSelectedRecommendation = true;
-    }
-    updateRecommendationButtons(nextMode);
-    updateRecommendationTitle(nextMode);
-    updateRecommendationLogo(nextMode);
-    updateRecommendationContent(nextMode);
-  } finally {
-    recommendationTransitionRunning = false;
-  }
-}
-
-async function runRecommendationMorphTransition(nextMode, triggerEl) {
-  const profile = getRecommendationMotionProfile();
-  const oldCards = document.querySelectorAll('.recommendation-product-grid .recommendation-product-card');
-  const titleEl = document.getElementById('recommendationTitle');
-  const logo = document.querySelector('.recommendation-focus-logo');
-  const panel = document.querySelector('.recommendation-active-panel');
-  const stage = document.querySelector('.recommendation-stage');
-
-  // Step 1: old products exit stagger
-  if (oldCards.length > 0) {
-    await new Promise(resolve => {
-      AnimeBridge.run(oldCards, {
-        opacity: [1, 0],
-        translateY: [0, -24],
-        scale: [1, 0.92],
-        delay: AnimeBridge.stagger(profile.staggerDelay, { start: 0, reversed: true }),
-        duration: Math.round(profile.duration * 0.4),
-        easing: 'easeInExpo',
-        complete: resolve
-      }) || resolve();
-    });
-  }
-
-  // Step 2: title fades out
-  if (titleEl) {
-    await new Promise(resolve => {
-      AnimeBridge.run(titleEl, {
-        opacity: [1, 0],
-        translateY: [0, -12],
-        duration: Math.round(profile.duration * 0.35),
-        easing: 'easeInQuad',
-        complete: resolve
-      }) || resolve();
-    });
-  }
-
-  // Step 3: clicked icon/logo zooms
-  if (logo && profile.duration > 0) {
-    await new Promise(resolve => {
-      AnimeBridge.run(logo, {
-        scale: [1, profile.logoScale],
-        opacity: [1, 0.6],
-        duration: Math.round(profile.duration * 0.45),
-        easing: 'easeInOutQuad',
-        complete: resolve
-      }) || resolve();
-    });
-  }
-
-  // Step 4: active panel zooms in
-  if (panel && profile.duration > 0) {
-    await new Promise(resolve => {
-      AnimeBridge.run(panel, {
-        scale: [1, profile.zoomScale],
-        duration: Math.round(profile.duration * 0.45),
-        easing: 'easeInOutQuad',
-        complete: resolve
-      }) || resolve();
-    });
-  }
-
-  // Step 5: content swaps
   activeRecommendationMode = nextMode;
   reviewState.activeMode = nextMode;
+
   if (window.app) {
     window.app.state.recommendationMode = nextMode;
     window.app.state.hasUserSelectedRecommendation = true;
   }
-  updateRecommendationButtons(nextMode);
+
+  const stage = document.querySelector(".recommendation-stage");
   if (stage) stage.dataset.activeMode = nextMode;
+
+  updateRecommendationButtons(nextMode);
   updateRecommendationTitle(nextMode);
   updateRecommendationLogo(nextMode);
-  updateRecommendationContent(nextMode);
 
-  // Step 6: new title fades in
-  if (titleEl) {
-    await new Promise(resolve => {
-      AnimeBridge.run(titleEl, {
-        opacity: [0, 1],
-        translateY: [12, 0],
-        duration: Math.round(profile.duration * 0.45),
-        easing: 'easeOutExpo',
-        complete: resolve
-      }) || resolve();
-    });
+  try {
+    await runFastCategoryTransition(nextMode, triggerEl, transitionId);
+  } catch (error) {
+    console.error("[RECOMMENDATION] fast transition failed:", error);
+
+    if (isTransitionStillActive(transitionId)) {
+      renderRecommendationContent(nextMode);
+      renderCheckedProductsBox(nextMode);
+    }
+  } finally {
+    if (isTransitionStillActive(transitionId)) {
+      recommendationTransitionRunning = false;
+    }
+  }
+}
+
+function getFastCategoryMotionProfile() {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const isMobile = window.matchMedia("(max-width: 700px)").matches;
+  const isTablet = window.matchMedia("(min-width: 701px) and (max-width: 1100px)").matches;
+
+  if (reduceMotion) {
+    return {
+      exitDuration: 0,
+      enterDuration: 0,
+      panelDuration: 0,
+      stagger: 0,
+      exitY: 0,
+      enterY: 0,
+      enterScale: 1,
+      logoScale: 1
+    };
   }
 
-  // Restore logo and panel scales
-  if (logo && profile.duration > 0) {
-    AnimeBridge.run(logo, {
-      scale: [profile.logoScale, 1],
-      opacity: [0.6, 1],
-      duration: Math.round(profile.duration * 0.5),
-      easing: 'easeOutExpo'
-    });
-  }
-  if (panel && profile.duration > 0) {
-    AnimeBridge.run(panel, {
-      scale: [profile.zoomScale, 1],
-      duration: Math.round(profile.duration * 0.5),
-      easing: 'easeOutExpo'
-    });
+  if (isMobile) {
+    return {
+      exitDuration: 150,
+      enterDuration: 260,
+      panelDuration: 280,
+      stagger: 18,
+      exitY: -14,
+      enterY: 22,
+      enterScale: 0.97,
+      logoScale: 1.16
+    };
   }
 
-  // Step 7: new products enter stagger
-  const newCards = document.querySelectorAll('.recommendation-product-grid .recommendation-product-card');
-  if (newCards.length > 0) {
-    await new Promise(resolve => {
-      AnimeBridge.run(newCards, {
-        opacity: [0, 1],
-        translateY: [profile.enterY, 0],
-        scale: [profile.enterScale, 1],
-        rotateX: [profile.rotateX, 0],
-        delay: AnimeBridge.stagger(profile.staggerDelay, { grid: profile.grid, from: 'center' }),
-        duration: profile.duration,
-        easing: 'easeOutExpo',
-        complete: resolve
-      }) || resolve();
+  if (isTablet) {
+    return {
+      exitDuration: 170,
+      enterDuration: 300,
+      panelDuration: 320,
+      stagger: 22,
+      exitY: -18,
+      enterY: 28,
+      enterScale: 0.96,
+      logoScale: 1.2
+    };
+  }
+
+  return {
+    exitDuration: 180,
+    enterDuration: 340,
+    panelDuration: 360,
+    stagger: 24,
+    exitY: -20,
+    enterY: 32,
+    enterScale: 0.955,
+    logoScale: 1.22
+  };
+}
+
+function isTransitionStillActive(id) {
+  return id === categoryTransitionId;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function resetCardInlineMotion(cards) {
+  cards.forEach(card => {
+    card.style.transform = "";
+    card.style.opacity = "";
+    card.style.boxShadow = "";
+  });
+}
+
+function cancelAllHoverTimers() {
+  activeHoverTimerIds.forEach(timer => clearTimeout(timer));
+  activeHoverTimerIds.clear();
+
+  activeHoverCards.forEach(card => {
+    hoverTimers.delete(card);
+    if (card.isConnected) {
+      card.style.transform = "";
+      card.style.opacity = "";
+      card.style.boxShadow = "";
+    }
+  });
+  activeHoverCards.clear();
+}
+
+function getEventElement(event) {
+  return event?.target instanceof Element ? event.target : event?.target?.parentElement || null;
+}
+
+function animateActiveButtonPulse(button, profile) {
+  if (!button || profile.panelDuration === 0) return;
+
+  AnimeBridge.run(button, {
+    scale: [1, 1.08],
+    translateY: [0, -3],
+    duration: 130,
+    easing: "easeOutCubic",
+    complete: () => {
+      AnimeBridge.run(button, {
+        scale: [1.08, 1],
+        translateY: [-3, 0],
+        duration: 130,
+        easing: "easeOutCubic"
+      });
+    }
+  });
+
+  const icon = button.querySelector(".mode-icon");
+  if (icon) {
+    AnimeBridge.run(icon, {
+      scale: [1, 1.35],
+      duration: 150,
+      easing: "easeOutBack",
+      complete: () => {
+        AnimeBridge.run(icon, {
+          scale: [1.35, 1],
+          duration: 170,
+          easing: "easeOutCubic"
+        });
+      }
     });
   }
 }
 
-function getRecommendationProducts(mode) {
+function animateFocusLogoPulse(focusLogo, profile) {
+  if (!focusLogo || profile.panelDuration === 0) return;
+
+  AnimeBridge.run(focusLogo, {
+    scale: [1, profile.logoScale],
+    opacity: [0.82, 1],
+    duration: Math.round(profile.panelDuration * 0.48),
+    easing: "easeOutCubic",
+    complete: () => {
+      AnimeBridge.run(focusLogo, {
+        scale: [profile.logoScale, 1],
+        opacity: [1, 1],
+        duration: Math.round(profile.panelDuration * 0.52),
+        easing: "easeOutCubic"
+      });
+    }
+  });
+}
+
+function animatePanelPulse(panel, profile) {
+  if (!panel || profile.panelDuration === 0) return;
+
+  AnimeBridge.run(panel, {
+    scale: [1, 1.01],
+    translateY: [0, -4],
+    duration: Math.round(profile.panelDuration * 0.5),
+    easing: "easeOutCubic",
+    complete: () => {
+      AnimeBridge.run(panel, {
+        scale: [1.01, 1],
+        translateY: [-4, 0],
+        duration: Math.round(profile.panelDuration * 0.5),
+        easing: "easeOutCubic"
+      });
+    }
+  });
+}
+
+async function runFastCategoryTransition(nextMode, triggerEl, transitionId) {
+  const profile = getFastCategoryMotionProfile();
+  const transitionStartedAt = performance.now();
+
+  const stage = document.querySelector(".recommendation-stage");
+  const panel = document.querySelector(".recommendation-active-panel");
+  const grid = document.querySelector(".recommendation-product-grid");
+  const focusLogo = document.querySelector(".recommendation-focus-logo");
+  const oldCards = grid ? [...grid.querySelectorAll(".recommendation-product-card")] : [];
+
+  if (!stage || !grid) return;
+
+  stage.dataset.activeMode = nextMode;
+  stage.classList.add("is-fast-switching");
+
+  cancelAllHoverTimers();
+  resetCardInlineMotion(oldCards);
+
+  animateActiveButtonPulse(triggerEl, profile);
+  animateFocusLogoPulse(focusLogo, profile);
+  animatePanelPulse(panel, profile);
+
+  if (oldCards.length && profile.exitDuration > 0) {
+    AnimeBridge.run(oldCards, {
+      opacity: [1, 0],
+      translateX: [0, -18],
+      translateY: [0, profile.exitY],
+      scale: [1, 0.965],
+      delay: AnimeBridge.stagger(profile.stagger, {
+        from: "center",
+        reversed: true,
+        count: oldCards.length
+      }),
+      duration: profile.exitDuration,
+      easing: "easeInQuad"
+    });
+  }
+
+  await sleep(profile.exitDuration * 0.72);
+
+  if (!isTransitionStillActive(transitionId)) return;
+
+  renderRecommendationContent(nextMode);
+  renderCheckedProductsBox(nextMode);
+
+  await nextFrameTwice();
+
+  if (!isTransitionStillActive(transitionId)) return;
+
+  const newCards = [...grid.querySelectorAll(".recommendation-product-card")];
+
+  if (newCards.length && profile.enterDuration > 0) {
+    AnimeBridge.run(newCards, {
+      opacity: [0, 1],
+      translateX: [18, 0],
+      translateY: [profile.enterY, 0],
+      scale: [profile.enterScale, 1],
+      delay: AnimeBridge.stagger(profile.stagger, {
+        start: 20,
+        from: "center",
+        count: newCards.length
+      }),
+      duration: profile.enterDuration,
+      easing: "easeOutCubic"
+    });
+  }
+
+  const cleanupDeadline = profile.panelDuration === 0 ? 0 : profile.panelDuration + 40;
+  const cleanupDelay = Math.max(0, cleanupDeadline - (performance.now() - transitionStartedAt));
+  await sleep(cleanupDelay);
+
+  if (isTransitionStillActive(transitionId)) {
+    stage.classList.remove("is-fast-switching");
+  }
+}
+
+function buildRecommendationProducts(mode) {
   if (!window.app) return [];
+  const normalizedMode = normalizeRecommendationMode(mode) || "all";
   const buckets = window.app.buildRecommendationBuckets();
-  return buckets[mode] || [];
+  return buckets[normalizedMode] || [];
+}
+
+function getCachedRecommendationProducts(mode) {
+  const normalizedMode = normalizeRecommendationMode(mode) || "all";
+  const key = `${recommendationCacheVersion}:${normalizedMode}`;
+
+  if (recommendationProductCache.has(key)) {
+    return recommendationProductCache.get(key);
+  }
+
+  const products = buildRecommendationProducts(normalizedMode);
+  recommendationProductCache.set(key, products);
+
+  return products;
+}
+
+function getRecommendationProducts(mode) {
+  return getCachedRecommendationProducts(mode);
 }
 
 function cssEscapeValue(value) {
@@ -1469,41 +1716,54 @@ function setupProductHoverStagger() {
   window.__MARKETSPY_HOVER_STAGGER_BOUND__ = true;
 
   document.addEventListener("mouseenter", event => {
-    const card = event.target.closest(
+    const target = getEventElement(event);
+    const card = target?.closest(
       ".recommendation-product-card, .checked-product-card, .product-card"
     );
 
     if (!card) return;
-    if (event.target !== card) return;
+    if (target !== card) return;
     if (hoverTimers.has(card)) return;
 
     const timer = window.setTimeout(() => {
+      activeHoverTimerIds.delete(timer);
+      activeHoverCards.delete(card);
+      hoverTimers.delete(card);
       if (!card.matches(":hover")) return;
+      if (card.closest(".recommendation-stage.is-fast-switching")) return;
       animateCardHoverIn(card);
     }, 500);
 
     hoverTimers.set(card, timer);
+    activeHoverTimerIds.add(timer);
+    activeHoverCards.add(card);
   }, true);
 
   document.addEventListener("mouseleave", event => {
-    const card = event.target.closest(
+    const target = getEventElement(event);
+    const card = target?.closest(
       ".recommendation-product-card, .checked-product-card, .product-card"
     );
 
     if (!card) return;
-    if (event.target !== card) return;
+    if (target !== card) return;
 
     const timer = hoverTimers.get(card);
     if (timer) {
       clearTimeout(timer);
+      activeHoverTimerIds.delete(timer);
       hoverTimers.delete(card);
     }
+    activeHoverCards.delete(card);
 
     animateCardHoverOut(card);
   }, true);
 }
 
 function animateCardHoverIn(card) {
+  if (!card || !card.isConnected) return;
+  if (card.closest(".recommendation-stage.is-fast-switching")) return;
+
   const container = card.closest(
     ".recommendation-product-grid, .checked-products-grid, .results-grid"
   );
@@ -1534,6 +1794,9 @@ function animateCardHoverIn(card) {
 }
 
 function animateCardHoverOut(card) {
+  if (!card || !card.isConnected) return;
+  if (card.closest(".recommendation-stage.is-fast-switching")) return;
+
   const container = card.closest(
     ".recommendation-product-grid, .checked-products-grid, .results-grid"
   );
@@ -1558,7 +1821,8 @@ if (!window.__MARKETSPY_RECOMMENDATION_CLICK_BOUND__) {
   window.__MARKETSPY_RECOMMENDATION_CLICK_BOUND__ = true;
 
   document.addEventListener("click", event => {
-    const btn = event.target.closest("[data-recommendation-mode]");
+    const target = getEventElement(event);
+    const btn = target?.closest("[data-recommendation-mode]");
     if (!btn) return;
 
     event.preventDefault();
@@ -1578,14 +1842,15 @@ if (!window.__MARKETSPY_MODAL_FEEDBACK_BOUND__) {
   window.__MARKETSPY_MODAL_FEEDBACK_BOUND__ = true;
 
   document.addEventListener("click", async event => {
-    const correctBtn = event.target.closest("[data-modal-feedback-correct]");
+    const target = getEventElement(event);
+    const correctBtn = target?.closest("[data-modal-feedback-correct]");
     if (correctBtn) {
       event.preventDefault();
       await handleModalFeedback("positive");
       return;
     }
 
-    const wrongBtn = event.target.closest("[data-modal-feedback-wrong]");
+    const wrongBtn = target?.closest("[data-modal-feedback-wrong]");
     if (wrongBtn) {
       event.preventDefault();
 
@@ -1607,7 +1872,7 @@ if (!window.__MARKETSPY_MODAL_FEEDBACK_BOUND__) {
       return;
     }
 
-    const saveWrongBtn = event.target.closest("[data-modal-feedback-save]");
+    const saveWrongBtn = target?.closest("[data-modal-feedback-save]");
     if (saveWrongBtn) {
       event.preventDefault();
 
@@ -1622,7 +1887,7 @@ if (!window.__MARKETSPY_MODAL_FEEDBACK_BOUND__) {
       return;
     }
 
-    const cancelBtn = event.target.closest("[data-modal-feedback-cancel]");
+    const cancelBtn = target?.closest("[data-modal-feedback-cancel]");
     if (cancelBtn) {
       event.preventDefault();
       const panel = document.querySelector(".modal-feedback-reason-panel");
@@ -2572,6 +2837,7 @@ class ScraperApp {
 
     this.applySortMode(this.state.sortMode, false);
     this.state.recommendationSourceProducts = [...this.state.products];
+    invalidateRecommendationCache();
     this.renderResultSummary(data);
     this.renderResultTimers();
     this.renderBudgetBar(data.budget_info);
@@ -2717,6 +2983,7 @@ class ScraperApp {
     activeModalProduct = null;
     resetReviewState();
     this.state.recommendationSourceProducts = [...this.state.products];
+    invalidateRecommendationCache();
     this.renderComparison({ engine_mode: this.state.engineMode, engine_runs: this.state.comparison });
     this.renderRecommendations();
     this.renderResultSummary(item);
@@ -2784,29 +3051,13 @@ class ScraperApp {
       stage.dataset.activeMode = activeMode;
     }
 
-    // Sync button classes
     this.updateRecommendationButtons(activeMode);
-    
-    // Sync side panels and active panel header
-    this.updateRecommendationPanels(activeMode);
-    
-    // Populate active panel grid
-    const grid = document.querySelector('.recommendation-product-grid');
-    if (grid) {
-      grid.innerHTML = '';
-      const products = getActiveRecommendationProducts(activeMode);
-      if (!products.length) {
-        const empty = document.createElement('div');
-        empty.className = 'recommendation-empty';
-        empty.textContent = 'Semua produk di kategori ini sudah dicek.';
-        grid.appendChild(empty);
-      } else {
-        products.forEach((product) => {
-          grid.appendChild(this.createRecommendationMiniCard(product));
-        });
-      }
-    }
+    updateRecommendationTitle(activeMode);
+    updateRecommendationLogo(activeMode);
 
+    this.updateRecommendationPanels(activeMode);
+
+    renderRecommendationContent(activeMode);
     renderCheckedProductsBox(activeMode);
     setupAdaptiveScrollBehavior();
   }
@@ -2937,31 +3188,8 @@ class ScraperApp {
 
   updateRecommendationContent(nextMode) {
     const mode = normalizeRecommendationMode(nextMode) || 'all';
-    const grid = document.querySelector('.recommendation-product-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
-    
-    const products = getActiveRecommendationProducts(mode);
-    
-    if (!products.length) {
-      const empty = document.createElement('div');
-      empty.className = 'recommendation-empty';
-      empty.textContent = 'Semua produk di kategori ini sudah dicek.';
-      grid.appendChild(empty);
-    } else {
-      products.forEach((product) => {
-        grid.appendChild(this.createRecommendationMiniCard(product));
-      });
-    }
-    
+    renderRecommendationContent(mode);
     renderCheckedProductsBox(mode);
-
-    const modeMeta = RECOMMENDATION_SORT_MODES.find((m) => m.key === mode);
-    if (modeMeta) {
-      this.applySortMode(modeMeta.sortMode, false);
-      this.renderProducts();
-      this.updateResultCount();
-    }
 
     setupAdaptiveScrollBehavior();
   }
@@ -3606,10 +3834,11 @@ class ScraperApp {
     window.__MARKETSPY_CARD_CLICK_BOUND__ = true;
 
     document.addEventListener("click", (event) => {
-      const card = event.target.closest(".product-card, .recommendation-product-card");
+      const target = getEventElement(event);
+      const card = target?.closest(".product-card, .recommendation-product-card");
       if (!card) return;
 
-      const clickedAction = event.target.closest("button, a, [data-no-modal]");
+      const clickedAction = target?.closest("button, a, [data-no-modal]");
       if (clickedAction) return;
 
       // Recommendation cards open modal
