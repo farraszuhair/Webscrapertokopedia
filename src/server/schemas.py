@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from src.config import TARGET_COUNT_DEFAULT, TARGET_FIRST_MODE
 
 
@@ -61,6 +61,58 @@ class FeedbackRequest(BaseModel):
     model_used: Optional[str] = None
     ai_reason: Optional[str] = None
     sort_mode: str = "terbaik"
+
+    @field_validator("selected_reasons", "reasons", mode="before")
+    @classmethod
+    def _coerce_reason_list(cls, value: Any) -> List[str]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item) for item in value if item not in (None, "")]
+        return [str(value)]
+
+    def normalized_product(self) -> Dict[str, Any]:
+        product = dict(self.product or {})
+        if self.product_id and not product.get("id"):
+            product["id"] = self.product_id
+        if self.product_title and not product.get("title"):
+            product["title"] = self.product_title
+        return product
+
+    def normalized_product_id(self) -> str:
+        product = self.normalized_product()
+        return str(self.product_id or product.get("id") or product.get("url") or "unknown")
+
+    def normalized_product_title(self) -> str:
+        product = self.normalized_product()
+        return str(self.product_title or product.get("title") or "")
+
+    def normalized_reasons(self) -> List[str]:
+        return list(self.reasons or self.selected_reasons or [])
+
+    def normalized_note(self) -> str:
+        return str(self.note or self.custom_reason or "")
+
+    def normalized_feedback_type(self) -> str:
+        value = str(self.feedback_type or "").strip().lower()
+        if value in {"positive", "negative"}:
+            return value
+        action = str(self.user_action or "").strip().lower()
+        return "positive" if action == "benar" else "negative"
+
+    def normalized_user_action(self) -> str:
+        action = str(self.user_action or "").strip().lower()
+        if action in {"benar", "salah"}:
+            return action
+        return "benar" if self.normalized_feedback_type() == "positive" else "salah"
+
+    def normalized_corrected_label(self) -> str:
+        label = str(self.corrected_label or "").strip()
+        if label:
+            return label
+        return "relevan" if self.normalized_feedback_type() == "positive" else "tidak_relevan"
 
 
 class ProgressResponse(BaseModel):

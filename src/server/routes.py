@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import traceback
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -34,7 +36,7 @@ from src.scraper.normalizer import normalize_image_url, normalize_products_with_
 from src.server.lifecycle import register_task, unregister_task
 from src.server.progress import complete_progress, fail_progress, get_progress, init_progress, update_progress
 from src.server.schemas import FeedbackRequest, ProgressResponse, SearchRequest
-from src.config import OVERFETCH_MULTIPLIER, STRICT_BUDGET_MODE
+from src.config import OVERFETCH_MULTIPLIER, RESULT_STORE_MAX_ITEMS, RESULT_STORE_TTL_SECONDS, STRICT_BUDGET_MODE
 from src.utils.currency import format_rupiah, parse_rupiah
 from src.utils.debug import safe_save_debug, save_json_debug
 from src.utils.eta import ETACalculator
@@ -43,6 +45,54 @@ from src.utils.logger import log
 
 router = APIRouter()
 _results_store: dict[str, dict[str, Any]] = {}
+
+
+def _utc_timestamp(epoch_seconds: float) -> str:
+    return datetime.fromtimestamp(epoch_seconds, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def cleanup_results_store() -> None:
+    """Bound the in-memory result cache by TTL and item count."""
+    now = time.time()
+    ttl = max(0, int(RESULT_STORE_TTL_SECONDS))
+    expired_ids = [
+        search_id
+        for search_id, payload in _results_store.items()
+        if now - float(payload.get("created_at_epoch", 0) or 0) >= ttl
+    ]
+
+    for search_id in expired_ids:
+        _results_store.pop(search_id, None)
+
+    max_items = max(1, int(RESULT_STORE_MAX_ITEMS))
+    overflow = len(_results_store) - max_items
+    if overflow <= 0:
+        return
+
+    oldest_ids = sorted(
+        _results_store,
+        key=lambda search_id: float(_results_store[search_id].get("created_at_epoch", 0) or 0),
+    )[:overflow]
+    for search_id in oldest_ids:
+        _results_store.pop(search_id, None)
+
+
+def save_result(search_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    cleanup_results_store()
+    created_at_epoch = time.time()
+    stored_payload = dict(payload)
+    stored_payload.setdefault("search_id", search_id)
+    stored_payload["created_at"] = _utc_timestamp(created_at_epoch)
+    stored_payload["created_at_epoch"] = created_at_epoch
+    stored_payload["expires_at"] = _utc_timestamp(created_at_epoch + max(0, int(RESULT_STORE_TTL_SECONDS)))
+    _results_store[search_id] = stored_payload
+    cleanup_results_store()
+    return stored_payload
+
+
+def get_result(search_id: str) -> dict[str, Any] | None:
+    cleanup_results_store()
+    return _results_store.get(search_id)
 
 
 def cleanup_task(search_id: str, task: asyncio.Task) -> None:
@@ -94,7 +144,7 @@ async def ai_status():
 
 @router.get("/api/result/{search_id}")
 async def fetch_result(search_id: str):
-    result = _results_store.get(search_id)
+    result = get_result(search_id)
     if not result:
         raise HTTPException(status_code=404, detail="Result not found or not ready")
     return result
@@ -141,18 +191,19 @@ async def image_proxy(url: str = Query(..., min_length=8)):
 async def handle_feedback(req: FeedbackRequest):
     """Save user feedback from Benar/Salah result-card actions."""
     try:
-        product = req.product or {"id": req.product_id, "title": req.product_title}
-        reasons = req.reasons or req.selected_reasons or []
-        feedback_type = req.feedback_type or ("positive" if req.user_action == "benar" else "negative")
-        user_action = req.user_action or ("benar" if feedback_type == "positive" else "salah")
-        corrected_label = req.corrected_label or ("relevan" if feedback_type == "positive" else "tidak_relevan")
+        product = req.normalized_product()
+        reasons = req.normalized_reasons()
+        feedback_type = req.normalized_feedback_type()
+        user_action = req.normalized_user_action()
+        corrected_label = req.normalized_corrected_label()
+        note = req.normalized_note()
         result = save_feedback(
             query=req.query,
-            product_id=req.product_id or str(product.get("id") or product.get("url") or "unknown"),
-            product_title=req.product_title or str(product.get("title") or ""),
+            product_id=req.normalized_product_id(),
+            product_title=req.normalized_product_title(),
             user_action=user_action,
             selected_reasons=reasons,
-            custom_reason=req.note or req.custom_reason,
+            custom_reason=note,
             corrected_label=corrected_label,
             ai_label=req.ai_label,
             ai_confidence=req.ai_confidence,
@@ -1203,7 +1254,7 @@ async def _finish_compare(
         "limited_reason": _limited_reason(req.target_count, len(final_data)),
     }
 
-    _results_store[search_id] = {
+    save_result(search_id, {
         "success": True,
         "search_id": search_id,
         "query": req.query,
@@ -1222,7 +1273,7 @@ async def _finish_compare(
         "engine_runs": comparison,     # ← also exposed as engine_runs for consistency
         "comparison": comparison,      # ← kept for frontend renderComparison()
         "budget_info": None,
-    }
+    })
     complete_progress(search_id)
 
 
@@ -1313,7 +1364,7 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
             })
         engine_runs.append(payload)
 
-    _results_store[search_id] = {
+    save_result(search_id, {
         "success": True,
         "search_id": search_id,
         "query": req.query,
@@ -1339,7 +1390,7 @@ async def run_scrape_job(search_id: str, req: SearchRequest, raw_target: int) ->
         "recommendations": filtered["recommendations"],
         "data": filtered["final"],
         "budget_info": _budget_info(budget_result),
-    }
+    })
 
     complete_progress(search_id)
     log(

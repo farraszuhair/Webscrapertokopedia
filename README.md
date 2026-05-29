@@ -1,8 +1,8 @@
-# MarketSpy AI
+# PasarIntai AI
 
-Local Tokopedia marketplace scraper with Puppeteer, Selenium fallback, budget filtering, feedback learning, and a local Ollama AI Orchestrator.
+Local Tokopedia product scraper with Puppeteer, Selenium/rollback fallback, budget filtering, feedback learning, and a local Ollama AI orchestrator.
 
-## Quick Start
+## How to Run
 
 ```bash
 python -m pip install -r requirements.txt
@@ -12,100 +12,72 @@ python app.py
 
 Open http://127.0.0.1:3000.
 
-If port `3000` is busy, start on another port:
+If port `3000` is busy:
 
 ```bash
 PORT=3001 python app.py
 ```
 
-## Supported Ollama Models
+On Windows PowerShell:
 
-Only these models are supported:
-
-- `gemma3:4b` - primary classifier by default
-- `llama3.2:3b` - fallback classifier when the primary classifier is missing or fails
-- `phi4-mini` - JSON repair only
-- `nomic-embed-text` - semantic scoring only
-
-Model selection is controlled by `AI_MODEL`, which defaults to `gemma3:4b`. `AI_CLASSIFIER_MODEL` is still accepted as a backward-compatible alias. CPU mode controls CPU-safe runtime settings only; it does not switch the classifier to `llama3.2:3b`. The app detects installed models with `GET /api/tags`, caches that registry for 60 seconds, and `:latest` tags such as `phi4-mini:latest` and `nomic-embed-text:latest` satisfy their supported base names. Unsupported legacy large classifier models were removed and are ignored.
-
-Default CPU-friendly settings:
-
-- `AI_CPU_MODE=true`
-- `AI_MODEL=gemma3:4b`
-- `AI_CLASSIFIER_MODEL=gemma3:4b`
-- `AI_AUDIT_MAX_PRODUCTS=3`
-- `AI_BATCH_CLASSIFY=true`
-- `AI_BATCH_SIZE=3`
-- `AI_CHAT_TIMEOUT_SECONDS=75`
-- `AI_CHAT_NUM_CTX=4096`
-- `AI_CHAT_NUM_PREDICT=180`
-- `AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK=1`
-- `AI_MODEL_CACHE_TTL_SECONDS=300`
-
-## AI Orchestrator Behavior
-
-The active search pipeline is:
-
-```text
-scrape raw -> normalize -> dedupe -> budget filter -> rules -> AI borderline check -> fallback expansion -> rank
+```powershell
+$env:PORT=3001
+python app.py
 ```
 
-Rules handle obvious accepts and rejects first. Semantic embeddings can improve scoring, but they do not count as classifier acceptance. Ollama `POST /api/chat` is called once per search for a compact audit batch of up to 3 products when AI is enabled and a supported classifier is installed. If no AI model is available, deterministic rules and fallback expansion still work.
+## Required Setup
 
-If `ai_checked` is `0`, result metadata includes one exact `ai_skip_reason`:
+- Python 3.11+ recommended.
+- Node.js and `npm install` are required for the Puppeteer worker.
+- Chrome or Chromium must be available for Puppeteer/Selenium scraping.
+- Ollama is optional but required for local AI classification.
 
-- `AI disabled`
-- `No supported classifier installed`
-- `No borderline candidates`
-- `All products handled by rules`
-- `Candidate pool empty`
+Install supported Ollama models:
 
-If AI is enabled, a classifier is installed, and `borderline_candidates > 0`, backend logs should include `POST /api/chat` and `ai_calls_attempted > 0`. On slow CPU-only machines, classifier timeouts are counted as `ai_fallback`; those products remain eligible for safe fallback expansion instead of being rejected.
-
-## Result Count Behavior
-
-Filtering runs only on the candidate pool:
-
-- With budget enabled, the candidate pool is budget-valid products.
-- With budget disabled, the candidate pool is deduped products.
-- If accepted products are below the requested count, fallback expansion fills from safe low-confidence candidates.
-- Obvious junk is still rejected.
-
-When fallback expansion is used, the response warning is:
-
-```text
-{fallback_added} produk fallback ditambahkan agar hasil mendekati target.
+```bash
+ollama pull gemma3:4b
+ollama pull llama3.2:3b
+ollama pull phi4-mini
+ollama pull nomic-embed-text
+ollama serve
 ```
 
-If the app still cannot reach the target, the warning explains how many safe products were available from the valid candidate pool.
+## AI Configuration
 
-## Images
+Supported models:
 
-Scrapers extract images from `currentSrc`, `src`, `data-src`, `data-original`, `srcset`, `picture img`, and `source[srcset]`. Invalid values such as empty strings, data URLs, base64, SVGs, undefined/null markers, and raw missing-image labels are rejected.
+- `gemma3:4b` - default classifier.
+- `llama3.2:3b` - fallback classifier.
+- `phi4-mini` - JSON repair.
+- `nomic-embed-text` - semantic scoring.
 
-The frontend creates image DOM nodes safely. It renders the marketplace image when a valid URL exists, and shows an Indonesian placeholder only when the image is missing or fails to load.
+Useful environment variables:
 
-If more than 70% of extracted products are missing images, debug JSON is written. Puppeteer and Selenium also save image-missing HTML and screenshots when the browser page is still available.
+```bash
+AI_MODEL=gemma3:4b
+AI_AUDIT_MAX_PRODUCTS=3
+AI_BATCH_CLASSIFY=true
+AI_BATCH_SIZE=3
+AI_CHAT_TIMEOUT_SECONDS=75
+AI_CHAT_NUM_CTX=4096
+AI_CHAT_NUM_PREDICT=180
+OLLAMA_MAX_CONCURRENT_REQUESTS=1
+```
 
-## UI Controls
+`AI_AUDIT_MAX_PRODUCTS` is intentionally conservative by default. On a local laptop, limiting the classifier audit batch protects CPU/RAM while rules, semantic scoring, and fallback expansion keep results useful. Raise it only if your machine can handle longer Ollama jobs.
 
-- `Semua Barang` shows products in the original displayed order.
-- `Terbaik` sorts recommendations by rating, AI confidence, then sold count.
-- `Termurah` sorts recommendations by price ascending, then rating.
-- `Most Trusted` sorts recommendations by sold count, rating, then AI confidence.
+## Storage
 
-Quick sort buttons sort the current products in the browser. They do not rescrape and do not call AI.
+Feedback and learning data are local files/SQLite under `data/ai_memory` and `data/feedback`. Do not delete those folders if you want to keep user corrections.
 
-Engine Comparison appears only when engine mode is `Compare both` (`compare_both`). It is hidden for Auto, Puppeteer only, and Selenium only.
+Search results are kept in local process memory with a TTL and max-item cap:
 
-## UI Review Flow
+```bash
+RESULT_STORE_TTL_SECONDS=3600
+RESULT_STORE_MAX_ITEMS=50
+```
 
-The recommendation panel has four categories: `Semua Barang`, `Terbaik`, `Termurah`, and `Most Trusted`.
-
-When a recommendation card is opened and marked `Benar` or `Salah`, feedback is posted to `/api/feedback`, the product exits the active recommendation grid, and the same product appears in the adaptive `Sudah Dicek` tray below the grid. The tray keeps reviewed products visible across category switches; `Semua Barang` shows all checked products.
-
-The scraping progress panel uses staged Indonesian progress text, elapsed time, ETA, and a lightweight SVG running-line animation while scraping is active. Result and recommendation cards use delayed hover stagger animation and scroll-adaptive entrance animation with an IntersectionObserver fallback when Anime.js `onScroll` is unavailable.
+This means `/api/result/{search_id}` works after a search completes, but old results expire and all in-memory results disappear when the server restarts.
 
 ## API
 
@@ -115,6 +87,7 @@ POST /api/search
 GET /api/progress/{search_id}
 GET /api/result/{search_id}
 POST /api/feedback
+GET /api/feedback/summary
 ```
 
 Example search:
@@ -131,45 +104,77 @@ Example search:
 }
 ```
 
+Feedback accepts both old and new field names:
+
+- `reasons` or `selected_reasons`
+- `note` or `custom_reason`
+
+## Known Limitations
+
+- Tokopedia pages can block, throttle, or change markup.
+- Puppeteer/Selenium runs are network and browser dependent.
+- Ollama on CPU can be slow; classifier calls are deliberately capped.
+- Results are stored in memory with TTL, not in a durable search database.
+- Feedback learning is local to this machine.
+
 ## Troubleshooting
 
-### AI Accepted is 0
+### Ollama Timeout
 
-1. Call `/api/ai/status`.
-2. Confirm `classifier` is `gemma3:4b` when it is installed, even when `AI_CPU_MODE=true`.
-3. Check `result_metadata.ai_skip_reason`.
-4. If `borderline_candidates > 0`, confirm logs show `POST /api/chat`.
-5. If `semantic_checked` is greater than `0` but `classifier_checked` is `0`, only embeddings ran; check `ai_skip_reason`.
+If `result_metadata.ai_timeouts` increases or logs show `/api/chat` timing out:
 
-### Local AI is timing out
+1. Confirm Ollama is running: `ollama serve`.
+2. Check status: `GET /api/ai/status`.
+3. Keep `AI_AUDIT_MAX_PRODUCTS=3` on CPU-only machines.
+4. Use `gemma3:4b` or `llama3.2:3b`, not a larger unsupported model.
+5. Avoid running other heavy Ollama jobs during scraping.
+6. If needed, increase `AI_CHAT_TIMEOUT_SECONDS`, but expect slower searches.
 
-The classifier timeout is 75 seconds by default with `num_ctx=4096` and `num_predict=180`. After 1 classifier failure in one search, the circuit breaker stops further `/api/chat` calls for that search and fills from fallback candidates. Check `ai_timeouts`, `ai_failures`, `ai_circuit_open`, `prompt_tokens_estimated`, `ctx`, and `fallback_added` in `result_metadata`.
+### Port 3000 Busy
 
-If timeouts are frequent on CPU-only machines, keep `AI_AUDIT_MAX_PRODUCTS=3`, confirm `gemma3:4b` is pulled, and avoid running other heavy Ollama jobs during scraping.
-
-### Port 3000 is busy
-
-Set a different port before starting:
+Start on another port:
 
 ```bash
 PORT=3001 python app.py
 ```
 
-Then open http://127.0.0.1:3001.
+Or stop the process that is listening on port 3000 and rerun `python app.py`.
 
-### Displayed is much lower than requested
+### Search Returns Too Few Products
 
-Check `requested`, `budget_valid`, `candidate_pool`, `rule_accepted`, `ai_checked`, `fallback_added`, `displayed`, and `limited_reason` in `result_metadata`.
+Check `result_metadata` fields:
 
-### Product images are missing
+- `requested_count`
+- `budget_valid_count`
+- `candidate_pool`
+- `rule_accepted`
+- `classifier_checked`
+- `fallback_added`
+- `displayed_count`
+- `limited_reason`
 
-Check `images_extracted_count` and `images_missing_count` in logs/debug files. Placeholders mean no valid marketplace image URL was extracted or the browser rejected the image load.
+Raise budget tolerance, disable strict budget mode, or lower the requested count if the valid product pool is small.
 
-If many images are missing, rerun the search, check `debug/pipeline/latest_search_debug.json`, and confirm the marketplace page is not serving lazy-loaded or blocked image URLs.
+### UI Does Not Update
 
-### UI does not update
+The active frontend is served from:
 
-The active frontend is served from `web/index.html`, `web/app.js`, `web/style.css`, and `web/vendor/anime.min.js`. If the UI does not show the latest recommendation tray, hard refresh the browser and confirm `UI_CHECKED_TRAY_ENTERFROM_20260528` appears in the page source. If it does not, the wrong file was patched or the browser is showing cached content.
+- `web/index.html`
+- `web/app.js`
+- `web/style.css`
+- `web/vendor/anime.min.js`
+
+Hard refresh the browser. FastAPI sends no-cache headers for HTML/CSS/JS.
+
+## Developer Utilities
+
+The repo context packer lives at:
+
+```bash
+python tools/pack_repo_for_claude.py
+```
+
+It writes `_claude_upload/`, which is ignored by git and excluded from its own package output.
 
 ## Tests
 

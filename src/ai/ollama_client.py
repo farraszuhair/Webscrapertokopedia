@@ -3,13 +3,15 @@ Laptop-friendly Ollama /api/chat client.
 
 This module is intentionally synchronous at the HTTP layer because requests is
 stable on Windows. Async callers use chat_json_async(), which wraps the call in
-asyncio.to_thread() so FastAPI progress polling can remain responsive.
+asyncio.to_thread() so FastAPI progress polling can remain responsive. A small
+semaphore keeps local Ollama from receiving overlapping CPU-heavy requests.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import math
+from threading import BoundedSemaphore
 from typing import Any
 
 import requests
@@ -19,6 +21,7 @@ from src.config import (
     AI_CHAT_NUM_CTX,
     AI_CHAT_NUM_PREDICT,
     AI_CHAT_TIMEOUT_SECONDS,
+    OLLAMA_MAX_CONCURRENT_REQUESTS,
     OLLAMA_BASE_URL,
     OLLAMA_TIMEOUT_SECONDS,
 )
@@ -27,6 +30,7 @@ from src.utils.logger import log
 
 CHAT_CALLS_ATTEMPTED = 0
 CHAT_CALLS_SUCCEEDED = 0
+OLLAMA_REQUEST_SEMAPHORE = BoundedSemaphore(OLLAMA_MAX_CONCURRENT_REQUESTS)
 
 FALLBACK_RESPONSE = {
     "accepted": True,
@@ -159,11 +163,14 @@ def chat_raw(
         )
         log("AI_ORCH", f"POST /api/chat selected_model={model} ai_calls_attempted={CHAT_CALLS_ATTEMPTED}", "INFO")
         try:
-            response = requests.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json=payload,
-                timeout=effective_timeout,
-            )
+            # requests stays in a worker thread; the semaphore prevents several
+            # local searches from piling up expensive Ollama CPU/RAM work.
+            with OLLAMA_REQUEST_SEMAPHORE:
+                response = requests.post(
+                    f"{OLLAMA_BASE_URL}/api/chat",
+                    json=payload,
+                    timeout=effective_timeout,
+                )
             if _is_format_json_failure(response) and use_format:
                 last_error = response.text
                 log("AI_ORCH", "format_json_failed_retrying_without_format=true", "WARN")
@@ -263,11 +270,12 @@ def get_embedding(text: str, model: str = "nomic-embed-text") -> list[float] | N
     try:
         from src.ai.model_registry import get_installed_model_name
         resolved_model = get_installed_model_name(model)
-        response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/embeddings",
-            json={"model": resolved_model, "prompt": text},
-            timeout=OLLAMA_TIMEOUT_SECONDS,
-        )
+        with OLLAMA_REQUEST_SEMAPHORE:
+            response = requests.post(
+                f"{OLLAMA_BASE_URL}/api/embeddings",
+                json={"model": resolved_model, "prompt": text},
+                timeout=OLLAMA_TIMEOUT_SECONDS,
+            )
         response.raise_for_status()
         embedding = response.json().get("embedding")
         if isinstance(embedding, list):

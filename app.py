@@ -72,7 +72,7 @@ def check_node_deps() -> None:
 def main() -> None:
     print()
     print("+--------------------------------------+")
-    print("| Tokopedia Scraper - Puppeteer/Selenium |")
+    print("| PasarIntai AI - Tokopedia Scraper   |")
     print("+--------------------------------------+")
     print()
 

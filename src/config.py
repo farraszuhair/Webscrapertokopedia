@@ -1,5 +1,5 @@
 """
-Runtime configuration for MarketSpy AI.
+Runtime configuration for PasarIntai AI.
 
 Environment variables can override these defaults, but the checked-in defaults
 are intentionally laptop-friendly: one small active model, CPU-safe chat
@@ -78,11 +78,17 @@ OLLAMA_TIMEOUT_SECONDS = _env_int("OLLAMA_TIMEOUT_SECONDS", _env_int("AI_TIMEOUT
 AI_CHAT_TIMEOUT_SECONDS = int(os.getenv("AI_CHAT_TIMEOUT_SECONDS", "75"))
 AI_CHAT_NUM_CTX = int(os.getenv("AI_CHAT_NUM_CTX", "4096"))
 AI_CHAT_NUM_PREDICT = int(os.getenv("AI_CHAT_NUM_PREDICT", "180"))
+# Intentionally conservative for local laptops: this limits CPU/RAM pressure
+# from Ollama classifier calls while rules and fallback expansion keep results useful.
 AI_AUDIT_MAX_PRODUCTS = int(os.getenv("AI_AUDIT_MAX_PRODUCTS", os.getenv("AI_CLASSIFIER_MAX_PRODUCTS", "3")))
 AI_CLASSIFIER_MAX_PRODUCTS = AI_AUDIT_MAX_PRODUCTS
 AI_BATCH_CLASSIFY = parse_bool(os.getenv("AI_BATCH_CLASSIFY", "true"))
 AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK = max(1, _env_int("AI_MAX_FAILURES_BEFORE_CIRCUIT_BREAK", 1))
 AI_MODEL_CACHE_TTL_SECONDS = max(1, _env_int("AI_MODEL_CACHE_TTL_SECONDS", 300))
+OLLAMA_MAX_CONCURRENT_REQUESTS = max(1, _env_int("OLLAMA_MAX_CONCURRENT_REQUESTS", 1))
+
+RESULT_STORE_TTL_SECONDS = max(1, _env_int("RESULT_STORE_TTL_SECONDS", 3600))
+RESULT_STORE_MAX_ITEMS = max(1, _env_int("RESULT_STORE_MAX_ITEMS", 50))
 
 TARGET_COUNT_DEFAULT = _env_int("TARGET_COUNT_DEFAULT", 50)
 OVERFETCH_MULTIPLIER = _env_int("OVERFETCH_MULTIPLIER", _env_int("SCRAPER_OVERFETCH_MULTIPLIER", 4))

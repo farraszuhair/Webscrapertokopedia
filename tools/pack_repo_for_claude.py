@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 
-ROOT = Path(".").resolve()
+ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "_claude_upload"
 OUT_DIR.mkdir(exist_ok=True)
 
@@ -53,6 +53,7 @@ EXCLUDE_FILES = {
     ".env",
     ".env.local",
     ".env.production",
+    "pack_repo_for_claude.py",
     "package-lock.json",
     "yarn.lock",
     "pnpm-lock.yaml",
@@ -184,7 +185,7 @@ def build_header(files: list[Path]) -> str:
 
     file_tree = build_file_tree(files)
 
-    return f"""# MARKETSPY AI - REPO CONTEXT FOR CLAUDE
+    return f"""# PASARINTAI AI - REPO CONTEXT FOR CLAUDE
 
 ## PROJECT PURPOSE
 
