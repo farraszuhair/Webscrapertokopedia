@@ -149,6 +149,53 @@ a {
   padding: 7px 10px;
 }
 
+.app-status-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  text-align: center;
+  box-shadow: none;
+  filter: none;
+  overflow: hidden;
+}
+
+.app-status-badge.is-running {
+  color: var(--accent);
+  border-color: rgba(96, 165, 250, 0.35);
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.app-status-badge.is-done {
+  color: var(--green);
+  border-color: rgba(52, 211, 153, 0.32);
+  background: rgba(52, 211, 153, 0.14);
+}
+
+.app-status-badge.is-error {
+  color: var(--red);
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.status-badge-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status-idle { background: rgba(148, 163, 184, 0.12); color: var(--muted); border-color: var(--line); }
 .status-running { background: rgba(59, 130, 246, 0.18); color: var(--accent); border-color: rgba(96, 165, 250, 0.35); }
 .status-done { background: rgba(52, 211, 153, 0.14); color: var(--green); border-color: rgba(52, 211, 153, 0.32); }
@@ -355,7 +402,9 @@ a {
 
 .ai-install-command {
   margin: 12px 0 0;
-  overflow-x: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #111827;
@@ -1823,29 +1872,6 @@ body.modal-open {
   opacity: 0.6;
 }
 
-.ai-progress-path {
-  fill: none;
-  stroke: rgba(96, 165, 250, 0.34);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 400;
-  stroke-dashoffset: 0;
-}
-
-.ai-progress-path-glow {
-  fill: none;
-  stroke: rgba(96, 165, 250, 0.18);
-  stroke-width: 4;
-  stroke-linecap: round;
-  filter: blur(2px);
-  opacity: 0;
-}
-
-.ai-progress-path-glow.is-animating {
-  stroke-dasharray: 400;
-  stroke-dashoffset: 0;
-}
-
 .ai-progress-orb {
   position: absolute;
   left: 20px;
@@ -2685,257 +2711,6 @@ body.modal-open {
   outline: 0;
 }
 
-/* Category Click morph / zoom Transition styling */
-.recommendation-active-title {
-  transition: opacity 0.32s ease, transform 0.32s ease;
-}
-
-.recommendation-active-title.is-transitioning {
-  opacity: 0;
-  transform: translateY(-14px) scale(0.92);
-}
-
-.recommendation-stage.is-morphing .recommendation-active-title {
-  pointer-events: none;
-}
-
-/* ============================================================
-   RECOMMENDATION PORTAL & ZOOM STYLING
-   ============================================================ */
-
-.recommendation-stage {
-  position: relative;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 32px;
-  padding: 28px;
-  box-shadow: var(--shadow);
-  overflow: visible;
-  margin-bottom: 24px;
-  perspective: 1200px;
-}
-
-.recommendation-bg-orbit {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(circle at 50% 50%, rgba(96, 165, 250, 0.05), transparent 60%);
-  opacity: 0.8;
-  z-index: 1;
-}
-
-.recommendation-header {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 28px;
-}
-
-.recommendation-kicker {
-  font-size: 11px;
-  font-weight: 900;
-  color: var(--primary-glow);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  display: block;
-}
-
-.recommendation-active-title {
-  margin: 4px 0 0;
-  font-size: clamp(24px, 3.5vw, 36px);
-  font-weight: 850;
-  color: var(--text-main);
-}
-
-.recommendation-controls {
-  display: flex;
-  gap: 8px;
-}
-
-.recommendation-mode-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(15, 23, 42, 0.72);
-  color: var(--text-soft);
-  cursor: pointer;
-  font-weight: 800;
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-.recommendation-mode-btn:hover {
-  border-color: rgba(96, 165, 250, 0.58);
-  color: #ffffff;
-  transform: translateY(-2px);
-}
-
-.recommendation-mode-btn.is-active {
-  background: linear-gradient(135deg, #2563eb, #3b82f6);
-  border-color: rgba(96, 165, 250, 0.78);
-  color: #ffffff;
-  box-shadow: 0 0 24px rgba(59, 130, 246, 0.38);
-}
-
-.recommendation-world {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: stretch;
-  gap: 20px;
-  perspective: 1200px;
-}
-
-.recommendation-active-panel {
-  flex: 2.2;
-  min-width: 0;
-  border-radius: 32px;
-  background: rgba(15, 23, 42, 0.72);
-  border: 1px solid rgba(96, 165, 250, 0.24);
-  padding: 24px;
-  box-shadow: 0 20px 70px rgba(2, 8, 23, 0.24);
-  transition: border-color 0.3s, box-shadow 0.3s;
-  transform-style: preserve-3d;
-}
-
-.recommendation-side-panel {
-  flex: 0.9;
-  min-width: 0;
-  border-radius: 24px;
-  background: rgba(15, 23, 42, 0.38);
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  padding: 20px;
-  opacity: 0.58;
-  cursor: pointer;
-  transition: opacity 0.3s, border-color 0.3s, transform 0.3s;
-  transform-style: preserve-3d;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.recommendation-side-panel:hover {
-  opacity: 0.88;
-  border-color: rgba(96, 165, 250, 0.35);
-  transform: translateY(-4px);
-}
-
-.recommendation-panel-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.recommendation-panel-head .mode-icon {
-  font-size: 24px;
-}
-
-.recommendation-panel-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 850;
-  color: var(--text-main);
-}
-
-.recommendation-panel-count {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--text-soft);
-}
-
-/* Side panel specific inner typography */
-.recommendation-side-panel .recommendation-panel-title {
-  font-size: 15px;
-}
-.recommendation-side-panel .recommendation-panel-head {
-  margin-bottom: 12px;
-}
-.recommendation-side-featured {
-  background: rgba(7, 11, 24, 0.45);
-  border-radius: 16px;
-  padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.08);
-}
-.recommendation-side-featured .featured-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text-soft);
-  margin-bottom: 6px;
-}
-.recommendation-side-featured .featured-price {
-  font-size: 14px;
-  font-weight: 900;
-  color: var(--success);
-}
-
-/* Active panel products grid and cards */
-.recommendation-product-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  perspective: 1200px;
-}
-
-.recommendation-product-image,
-.recommendation-product-card img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: inherit;
-  display: block;
-  background: #0f172a;
-}
-
-.recommendation-product-title {
-  font-size: 15px;
-  line-height: 1.25;
-  font-weight: 900;
-  color: #e5eefc;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.recommendation-product-price {
-  margin-top: 8px;
-  font-size: 18px;
-  font-weight: 950;
-  color: #10b981;
-  white-space: nowrap;
-}
-
-.recommendation-product-meta {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #94a3b8;
-}
-
-@media (max-width: 900px) {
-  .recommendation-product-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .recommendation-product-card {
-    grid-template-columns: 92px minmax(0, 1fr);
-  }
-
-  .recommendation-product-image,
-  .recommendation-product-card img {
-    width: 92px;
-    height: 84px;
-  }
-}
-
 /* ============================================================
    PRODUCT DETAIL / MODAL SIZE BUG FIX
    ============================================================ */
@@ -3053,23 +2828,6 @@ body.modal-open {
 }
 
 /* ============================================================
-   RECOMMENDATION FOCUS LOGO
-   ============================================================ */
-
-.recommendation-focus-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: rgba(37, 99, 235, 0.15);
-  border: 1px solid rgba(96, 165, 250, 0.24);
-  margin: 0 auto 20px;
-  font-size: 32px;
-}
-
-/* ============================================================
    REDUCED MOTION SUPPORT
    ============================================================ */
 
@@ -3105,22 +2863,6 @@ body.modal-open {
 .recommendation-active-panel {
   position: relative;
   z-index: 5;
-}
-
-.recommendation-stage::before,
-.recommendation-stage::after,
-.recommendation-bg-orbit,
-.recommendation-focus-logo {
-  pointer-events: none;
-}
-
-/* --- 2. REMOVE SIDE PANELS --- */
-.recommendation-world {
-  display: block;
-}
-
-.recommendation-side-panel {
-  display: none !important;
 }
 
 .recommendation-active-panel {
@@ -3246,24 +2988,6 @@ body.modal-open {
 /* ============================================================
    UI_CHECKED_TRAY_ENTERFROM_20260528
    ============================================================ */
-
-.scrape-runner-visual {
-  margin: 18px 0 4px;
-  color: #38bdf8;
-  opacity: 0.92;
-}
-
-.scrape-runner-svg {
-  display: block;
-  width: 100%;
-  height: 80px;
-  overflow: visible;
-  filter: drop-shadow(0 0 18px rgba(56, 189, 248, 0.28));
-}
-
-.scrape-runner-path {
-  will-change: stroke-dashoffset;
-}
 
 .recommendation-controls {
   flex-wrap: wrap;
@@ -3489,11 +3213,6 @@ body.modal-open {
   will-change: transform;
 }
 
-.recommendation-focus-logo {
-  will-change: transform, opacity;
-  transform: translateZ(0);
-}
-
 .recommendation-product-grid {
   contain: layout paint;
 }
@@ -3509,13 +3228,13 @@ body.modal-open {
     opacity 160ms ease;
 }
 
-.recommendation-stage.is-fast-switching .recommendation-product-card {
+.recommendation-stage.is-switching .recommendation-product-card {
   pointer-events: none;
   box-shadow: none !important;
 }
 
-.recommendation-stage.is-fast-switching .recommendation-controls,
-.recommendation-stage.is-fast-switching .recommendation-mode-btn {
+.recommendation-stage.is-switching .recommendation-controls,
+.recommendation-stage.is-switching .recommendation-mode-btn {
   pointer-events: auto;
 }
 
@@ -3537,69 +3256,6 @@ body.modal-open {
     width: 92px;
     height: 84px;
   }
-}
-
-/* ============================================================
-   UI_CATEGORY_ORB_MORPH_FAST_20260528 — ORB MORPH TRANSITION
-   ============================================================ */
-
-.recommendation-focus-stage {
-  display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
-  align-items: center;
-  gap: 20px;
-  min-height: 132px;
-  margin-bottom: 24px;
-}
-
-.recommendation-focus-orb-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 110px;
-  height: 110px;
-  pointer-events: none;
-}
-
-.recommendation-focus-orb {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.28) 0%, rgba(96, 165, 250, 0.12) 100%);
-  border: 1.5px solid rgba(96, 165, 250, 0.38);
-  font-size: 38px;
-  box-shadow: 
-    0 0 24px rgba(59, 130, 246, 0.18),
-    inset 0 0 12px rgba(255, 255, 255, 0.05);
-  will-change: transform, opacity;
-}
-
-.recommendation-focus-title-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  min-width: 0;
-}
-
-.recommendation-focus-title {
-  text-align: left;
-  font-size: clamp(28px, 4vw, 56px);
-  line-height: 1.04;
-  margin: 0;
-  color: var(--text-main);
-  font-weight: 850;
-}
-
-.recommendation-focus-subtitle {
-  text-align: left;
-  margin-top: 8px;
-  opacity: 0.82;
-  color: var(--text-soft);
-  font-size: 14px;
 }
 
 /* Category buttons premium state overrides */
@@ -3630,10 +3286,6 @@ body.modal-open {
   display: none !important;
 }
 
-.recommendation-stage.is-orb-morphing .recommendation-product-card {
-  pointer-events: none;
-}
-
 /* Global safety and scroll configurations */
 html,
 body {
@@ -3651,102 +3303,6 @@ canvas {
 html.modal-open,
 body.modal-open {
   overflow: hidden;
-}
-
-/* Premium app-status-wordmark styles */
-.app-status-wordmark {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: clamp(190px, 16vw, 280px);
-  height: 58px;
-  border-radius: 999px;
-  color: #22d3ee;
-  border: 1px solid rgba(96, 165, 250, 0.35);
-  background:
-    radial-gradient(circle at 20% 20%, rgba(34, 211, 238, 0.16), transparent 42%),
-    rgba(15, 23, 42, 0.78);
-  box-shadow:
-    0 0 0 1px rgba(96, 165, 250, 0.08) inset,
-    0 18px 48px rgba(14, 165, 233, 0.16);
-  overflow: visible;
-  isolation: isolate;
-}
-
-.status-wordmark-svg {
-  width: 92%;
-  height: 82%;
-  overflow: visible;
-  display: block;
-}
-
-.status-word-paths {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.status-word-paths.is-active {
-  opacity: 1;
-}
-
-.status-word-text {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  font-size: 44px;
-  font-weight: 900;
-  font-family: Inter, system-ui, sans-serif;
-  letter-spacing: 0.02em;
-  paint-order: stroke;
-  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.45));
-}
-
-.app-status-wordmark.is-idle {
-  color: #93c5fd;
-}
-
-.app-status-wordmark.is-running {
-  color: #22d3ee;
-}
-
-.app-status-wordmark.is-done {
-  color: #34d399;
-}
-
-.app-status-wordmark.is-error {
-  color: #fb7185;
-}
-
-@media (max-width: 700px) {
-  .app-status-wordmark {
-    width: 168px;
-    height: 50px;
-  }
-
-  .status-word-text {
-    font-size: 34px;
-  }
-}
-
-/* Category camera zoom recommendation section */
-.recommendation-stage {
-  overflow: visible;
-}
-
-.recommendation-stage.is-camera-zooming .recommendation-active-panel {
-  pointer-events: none;
-}
-
-.recommendation-stage.is-camera-zooming .recommendation-controls,
-.recommendation-stage.is-camera-zooming [data-recommendation-mode] {
-  pointer-events: auto;
-}
-
-.recommendation-zoom-layer {
-  display: none;
 }
 
 .recommendation-header {
@@ -3771,9 +3327,9 @@ body.modal-open {
 
 .recommendation-active-title {
   margin: 0;
-  font-size: clamp(42px, 5vw, 78px);
-  line-height: 0.98;
-  letter-spacing: -0.05em;
+  font-size: clamp(24px, 3vw, 36px);
+  line-height: 1.08;
+  letter-spacing: 0;
   color: #e5edff;
   text-align: left;
   filter: none !important;
@@ -3790,10 +3346,10 @@ body.modal-open {
 
 .recommendation-active-panel {
   position: relative;
-  margin-top: 36px;
-  min-height: clamp(460px, 62vh, 820px);
-  padding: clamp(24px, 3vw, 52px);
-  border-radius: 34px;
+  margin-top: 22px;
+  min-height: 0;
+  padding: clamp(18px, 2.5vw, 28px);
+  border-radius: 28px;
   border: 1px solid rgba(96, 165, 250, 0.26);
   background:
     radial-gradient(circle at 14% 20%, rgba(59, 130, 246, 0.12), transparent 34%),
@@ -3802,41 +3358,13 @@ body.modal-open {
   transform: translateZ(0);
 }
 
-.recommendation-zoom-layer {
-  position: absolute;
-  top: clamp(24px, 4vw, 58px);
-  left: clamp(24px, 4vw, 58px);
-  z-index: 2;
-  pointer-events: none;
-}
-
-.recommendation-focus-orb {
-  width: clamp(82px, 9vw, 132px);
-  height: clamp(82px, 9vw, 132px);
-  display: grid;
-  place-items: center;
-  border-radius: 999px;
-  border: 1px solid rgba(96, 165, 250, 0.42);
-  background:
-    radial-gradient(circle at 45% 35%, rgba(96, 165, 250, 0.28), transparent 62%),
-    rgba(15, 23, 42, 0.9);
-  box-shadow:
-    0 0 0 1px rgba(96, 165, 250, 0.08) inset,
-    0 22px 60px rgba(37, 99, 235, 0.24);
-  transform-origin: center;
-}
-
-.recommendation-focus-orb .active-mode-icon {
-  font-size: clamp(36px, 4vw, 62px);
-}
-
 .recommendation-product-grid {
   position: relative;
   z-index: 1;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr));
   gap: clamp(18px, 2vw, 28px);
-  padding-top: clamp(120px, 14vw, 180px);
+  padding-top: 0;
   overflow: visible;
 }
 
@@ -3847,7 +3375,7 @@ body.modal-open {
 
   .recommendation-controls {
     width: 100%;
-    overflow-x: auto;
+    overflow-x: visible;
     justify-content: flex-start;
     padding-bottom: 8px;
   }
@@ -3859,7 +3387,7 @@ body.modal-open {
 
   .recommendation-product-grid {
     grid-template-columns: 1fr;
-    padding-top: 120px;
+    padding-top: 0;
   }
 }
 
@@ -3875,7 +3403,7 @@ body.modal-open {
   border-radius: 26px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   background: rgba(2, 6, 23, 0.64);
-  overflow: visible;
+  overflow: hidden;
   transform: translateZ(0);
   transition:
     transform 150ms ease,
@@ -4102,7 +3630,7 @@ body.modal-open {
   color: #e5edff;
   font-size: clamp(30px, 4.8vw, 72px);
   line-height: 0.98;
-  letter-spacing: -0.055em;
+  letter-spacing: 0;
   overflow-wrap: anywhere;
   text-wrap: balance;
   max-width: 100%;
@@ -4121,7 +3649,7 @@ body.modal-open {
   font-size: clamp(34px, 4vw, 58px);
   line-height: 1;
   font-weight: 950;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .product-detail-meta {
@@ -4250,68 +3778,14 @@ body.modal-open {
   }
 }
 
-/* UI_FINAL_CAMERA_ZOOM_CATEGORY_DRAWABLE_FIX_20260529 */
-.category-zoom-clone {
-  position: fixed;
-  z-index: 10000;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  border-radius: 999px;
-  color: #e5edff;
-  font-weight: 950;
-  background:
-    radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--category-accent) 44%, transparent), transparent 60%),
-    rgba(15, 23, 42, 0.96);
-  border: 1px solid color-mix(in srgb, var(--category-accent) 68%, transparent);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
-    0 24px 80px color-mix(in srgb, var(--category-accent) 32%, transparent);
-  pointer-events: none;
-  transform-origin: center center;
-  will-change: transform, opacity;
-  overflow: hidden;
-}
-
-.category-zoom-clone-icon {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 999px;
-  background: rgba(96, 165, 250, 0.16);
-  font-size: 24px;
-  flex: 0 0 auto;
-}
-
-.category-zoom-clone-label {
-  white-space: nowrap;
-  font-size: clamp(16px, 1.4vw, 24px);
-}
-
-.category-zoom-glow {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  pointer-events: none;
-  border-radius: inherit;
-  opacity: 0;
-  background:
-    radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--category-accent) 26%, transparent), transparent 42%),
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.08), transparent 58%);
-  transform-origin: center;
-  will-change: transform, opacity;
-}
-
 .recommendation-controls button,
 [data-recommendation-mode] {
   position: relative;
-  min-height: 64px;
-  padding: 0 28px;
+  min-height: 44px;
+  padding: 0 16px;
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   color: rgba(226, 232, 240, 0.62);

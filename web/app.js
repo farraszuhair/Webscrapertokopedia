@@ -175,25 +175,18 @@ const AnimeBridge = (() => {
     return null;
   }
 
-  function getSvgUtil() {
-    if (window.svg) return window.svg;
-    if (animeGlobal && animeGlobal.svg) return animeGlobal.svg;
-    return null;
-  }
-
-  return { run, timeline, stagger, createLayout, stop, getSvgUtil };
+  return { run, timeline, stagger, createLayout, stop };
 })();
 
 function getRecommendationMotionProfile() {
-  const profile = getCategoryMotionProfile();
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
   return {
-    duration: profile.enter,
-    zoomScale: 1.01,
-    logoScale: profile.cloneScale,
-    enterY: 26,
-    enterScale: 0.965,
+    duration: reduceMotion ? 0 : 300,
+    enterY: 18,
+    enterScale: 0.985,
     rotateX: 0,
-    staggerDelay: profile.stagger,
+    staggerDelay: reduceMotion ? 0 : 18,
     grid: [1, 1]
   };
 }
@@ -218,152 +211,11 @@ function handleImageError(img) {
   }
 }
 
-let topStatusWordAnimation = null;
-let currentTopStatus = "idle";
 
-function normalizeTopStatus(status) {
-  const value = String(status || "").toLowerCase().trim();
 
-  if (["running", "scraping", "ai", "ranking", "berjalan", "loading"].includes(value)) {
-    return "running";
-  }
 
-  if (["done", "success", "complete", "completed", "selesai"].includes(value)) {
-    return "done";
-  }
-
-  if (["error", "failed", "gagal"].includes(value)) {
-    return "error";
-  }
-
-  return "idle";
-}
-
-function setTopStatusWord(status = "idle") {
-  const normalized = normalizeTopStatus(status);
-  const badge = document.querySelector("[data-app-status-wordmark]");
-  const svg = document.querySelector(".status-wordmark-svg");
-  const srLabel = document.querySelector(".status-label-text");
-
-  if (!badge || !svg) {
-    console.warn("[STATUS_WORDMARK] missing DOM");
-    return;
-  }
-
-  currentTopStatus = normalized;
-
-  const labelMap = {
-    idle: "Siap",
-    running: "Berjalan",
-    done: "Selesai",
-    error: "Error"
-  };
-
-  badge.classList.remove("is-idle", "is-running", "is-done", "is-error");
-  badge.classList.add(`is-${normalized}`);
-
-  svg.setAttribute("aria-label", labelMap[normalized]);
-  if (srLabel) srLabel.textContent = labelMap[normalized];
-
-  document.querySelectorAll(".status-word-paths").forEach(group => {
-    group.classList.toggle("is-active", group.dataset.statusWord === normalized);
-  });
-
-  requestAnimationFrame(() => startStatusWordAnimation(normalized));
-}
-
-function stopStatusWordAnimation() {
-  if (topStatusWordAnimation && typeof topStatusWordAnimation.pause === "function") {
-    topStatusWordAnimation.pause();
-  }
-
-  if (topStatusWordAnimation && typeof topStatusWordAnimation.cancel === "function") {
-    topStatusWordAnimation.cancel();
-  }
-
-  topStatusWordAnimation = null;
-
-  const texts = document.querySelectorAll(".status-word-text");
-
-  if (window.anime && typeof window.anime.remove === "function") {
-    window.anime.remove(texts);
-  }
-
-  texts.forEach(text => {
-    text.style.strokeDasharray = "";
-    text.style.strokeDashoffset = "";
-    text.style.opacity = "";
-    text.style.transform = "";
-  });
-}
-
-function startStatusWordAnimation(status = "idle") {
-  stopStatusWordAnimation();
-
-  const activeGroup = document.querySelector(`.status-word-paths[data-status-word="${status}"]`);
-  if (!activeGroup) return;
-
-  const text = activeGroup.querySelector(".status-word-text");
-  if (!text) return;
-
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  if (reduceMotion) {
-    text.style.opacity = "1";
-    return;
-  }
-
-  let length = 900;
-  try {
-    if (typeof text.getComputedTextLength === "function") {
-      length = Math.ceil(text.getComputedTextLength()) + 40;
-    }
-  } catch (_error) {}
-
-  text.style.strokeDasharray = String(length);
-  text.style.strokeDashoffset = String(length);
-  text.style.opacity = "1";
-
-  if (window.anime && typeof window.anime === "function") {
-    topStatusWordAnimation = window.anime({
-      targets: text,
-      strokeDashoffset: [length, 0],
-      opacity: [0.4, 1],
-      duration: status === "running" ? 1500 : 850,
-      easing: "easeInOutSine",
-      loop: status === "running",
-      direction: status === "running" ? "alternate" : "normal"
-    });
-    return;
-  }
-
-  topStatusWordAnimation = text.animate(
-    [
-      { strokeDashoffset: length, opacity: 0.4 },
-      { strokeDashoffset: 0, opacity: 1 }
-    ],
-    {
-      duration: status === "running" ? 1500 : 850,
-      iterations: status === "running" ? Infinity : 1,
-      direction: status === "running" ? "alternate" : "normal",
-      easing: "ease-in-out",
-      fill: "forwards"
-    }
-  );
-}
-
-function startTopStatusDrawable() {
-  setTopStatusWord("running");
-}
-
-function stopTopStatusDrawable(status = "idle") {
-  setTopStatusWord(status);
-}
 
 let activeRecommendationMode = "all";
-let recommendationTransitionRunning = false;
-let isCategoryTransitioning = false;
-let categoryTransitionId = 0;
 let recommendationCacheVersion = 0;
 let recommendationProductCache = new Map();
 
@@ -380,7 +232,6 @@ const activeHoverCards = new Set();
 let checkedLayout = null;
 let adaptiveScrollObserver = null;
 let adaptiveScrollAnimation = null;
-let runningDrawableAnimation = null;
 
 const reviewState = {
   checkedById: new Map(),
@@ -441,6 +292,13 @@ function getProductReviewId(product) {
   return String(product?.id || product?.url || product?.product_url || product?.title || "");
 }
 
+function normalizeFeedbackResult(value) {
+  const normalized = String(value || "").toLowerCase().trim();
+  if (["positive", "benar", "correct", "true"].includes(normalized)) return "positive";
+  if (["negative", "salah", "wrong", "false"].includes(normalized)) return "negative";
+  return "negative";
+}
+
 function isProductReviewed(product) {
   const id = getProductReviewId(product);
   return Boolean(id && (reviewState.checkedById.has(id) || reviewedProductIds.has(id)));
@@ -462,6 +320,7 @@ function resetReviewState() {
 function markProductAsReviewed(product, result, extra = {}) {
   const id = getProductReviewId(product);
   if (!id) return "";
+  const normalizedResult = normalizeFeedbackResult(result);
 
   if (!reviewState.checkedById.has(id)) {
     reviewState.checkedOrder.push(id);
@@ -471,7 +330,7 @@ function markProductAsReviewed(product, result, extra = {}) {
   reviewState.checkedById.set(id, {
     id,
     product,
-    result,
+    result: normalizedResult,
     reasons: extra.reasons || [],
     note: extra.note || "",
     reviewedAt: Date.now(),
@@ -529,6 +388,10 @@ function updateRecommendationTitle(mode) {
     const meta = RECOMMENDATION_MODES[normalizedMode];
     if (meta) titleEl.textContent = meta.label;
   }
+}
+
+function updateSingleRecommendationTitle(mode) {
+  updateRecommendationTitle(mode);
 }
 
 function updateRecommendationLogo(mode) {
@@ -649,48 +512,34 @@ function getCategoryMotionProfile() {
 
   if (reduceMotion) {
     return {
-      oldExit: 0,
-      cloneMove: 0,
-      zoom: 0,
+      exit: 0,
       title: 0,
       enter: 0,
-      stagger: 0,
-      cloneScale: 1
+      stagger: 0
     };
   }
 
   if (isMobile) {
     return {
-      oldExit: 120,
-      cloneMove: 260,
-      zoom: 360,
-      title: 220,
-      enter: 280,
-      stagger: 18,
-      cloneScale: 9
+      exit: 120,
+      title: 120,
+      enter: 260,
+      stagger: 16
     };
   }
 
   return {
-    oldExit: 140,
-    cloneMove: 320,
-    zoom: 460,
-    title: 260,
-    enter: 340,
-    stagger: 22,
-    cloneScale: 13
+    exit: 140,
+    title: 140,
+    enter: 300,
+    stagger: 18
   };
 }
-
-const getFastCategoryMotionProfile = getCategoryMotionProfile;
-const getOrbMorphProfile = getCategoryMotionProfile;
 
 function hardRenderRecommendationMode(mode) {
   const normalized = normalizeRecommendationMode(mode) || "all";
   activeRecommendationMode = normalized;
   reviewState.activeMode = normalized;
-  recommendationTransitionRunning = false;
-  isCategoryTransitioning = false;
 
   if (window.app) {
     window.app.state.recommendationMode = normalized;
@@ -705,126 +554,104 @@ function hardRenderRecommendationMode(mode) {
   const stage = document.querySelector(".recommendation-stage");
   if (stage) {
     stage.dataset.activeMode = normalized;
-    stage.classList.remove("is-camera-zooming", "is-category-zooming");
+    stage.classList.remove("is-switching");
   }
 
   const panel = document.querySelector(".recommendation-active-panel");
-  unlockElementHeight(panel);
+  if (panel) panel.style.height = "";
 }
 
 async function selectRecommendationMode(nextMode, triggerButton) {
   nextMode = normalizeRecommendationMode(nextMode);
   if (!nextMode) return;
-  if (nextMode === activeRecommendationMode && !isCategoryTransitioning) return;
-
-  triggerButton = triggerButton || document.querySelector(`[data-recommendation-mode="${nextMode}"]`);
-
-  const transitionId = ++categoryTransitionId;
-  isCategoryTransitioning = true;
-  recommendationTransitionRunning = true;
+  if (nextMode === activeRecommendationMode) return;
 
   const stage = document.querySelector(".recommendation-stage");
-  const panel = document.querySelector(".recommendation-active-panel");
   const grid = document.querySelector(".recommendation-product-grid");
   const title = document.querySelector(".recommendation-active-title");
 
-  if (!stage || !panel || !grid || !title || !triggerButton) {
+  if (!stage || !grid || !title) {
     hardRenderRecommendationMode(nextMode);
     return;
   }
 
+  activeRecommendationMode = nextMode;
+  reviewState.activeMode = nextMode;
+
+  if (window.app) {
+    window.app.state.recommendationMode = nextMode;
+    window.app.state.hasUserSelectedRecommendation = true;
+  }
+
   const profile = getCategoryMotionProfile();
+  const oldCards = [...grid.querySelectorAll("[data-product-card], .recommendation-product-card")];
+  stage.classList.add("is-switching");
 
-  try {
-    stage.classList.add("is-camera-zooming");
-    stage.dataset.activeMode = nextMode;
-
-    lockElementHeight(panel);
-    updateRecommendationButtons(nextMode);
-
-    const clone = createCategoryZoomClone(triggerButton, nextMode);
-    const glow = createCategoryZoomGlow(panel, nextMode);
-
-    const oldCards = [...grid.querySelectorAll("[data-product-card], .recommendation-product-card")];
-
+  if (oldCards.length > 0) {
     AnimeBridge.run(oldCards, {
       opacity: [1, 0],
       translateY: [0, -16],
       scale: [1, 0.965],
-      delay: AnimeBridge.stagger(10, { from: "center", reversed: true }),
-      duration: profile.oldExit,
+      delay: AnimeBridge.stagger(8, { from: "center", reversed: true }),
+      duration: profile.exit,
       easing: "easeInQuad"
     });
+  }
 
-    await sleep(profile.oldExit * 0.7);
-    if (transitionId !== categoryTransitionId) {
-      cleanupCategoryZoom(clone, glow, panel, stage);
-      return;
-    }
+  await sleep(profile.exit);
 
-    await animateCloneIntoPanel(clone, panel, profile);
-    if (transitionId !== categoryTransitionId) {
-      cleanupCategoryZoom(clone, glow, panel, stage);
-      return;
-    }
+  updateRecommendationButtons(nextMode);
+  stage.dataset.activeMode = nextMode;
 
-    await animateCloneZoomFill(clone, glow, nextMode, profile);
-    if (transitionId !== categoryTransitionId) {
-      cleanupCategoryZoom(clone, glow, panel, stage);
-      return;
-    }
+  const meta = RECOMMENDATION_MODES[nextMode];
+  if (title && meta) {
+    AnimeBridge.run(title, {
+      opacity: [1, 0],
+      translateY: [0, -8],
+      duration: Math.round(profile.title * 0.45),
+      easing: "easeInQuad",
+      complete: () => {
+        title.textContent = meta.label;
+        AnimeBridge.run(title, {
+          opacity: [0, 1],
+          translateY: [8, 0],
+          duration: Math.round(profile.title * 0.55),
+          easing: "easeOutCubic"
+        });
+      }
+    }) || (title.textContent = meta.label);
+  }
 
-    activeRecommendationMode = nextMode;
-    reviewState.activeMode = nextMode;
+  renderRecommendationContent(nextMode);
+  renderCheckedProductsBox(nextMode);
 
-    if (window.app) {
-      window.app.state.recommendationMode = nextMode;
-      window.app.state.hasUserSelectedRecommendation = true;
-    }
+  const newCards = [...grid.querySelectorAll("[data-product-card], .recommendation-product-card")];
 
-    updateSingleRecommendationTitle(nextMode);
-    renderRecommendationContent(nextMode);
-    renderCheckedProductsBox(nextMode);
-
-    await nextFrameTwice();
-    if (transitionId !== categoryTransitionId) {
-      cleanupCategoryZoom(clone, glow, panel, stage);
-      return;
-    }
-
-    animateTitleEnter(title, profile);
-
-    const newCards = [...grid.querySelectorAll("[data-product-card], .recommendation-product-card")];
-
+  if (newCards.length > 0) {
     AnimeBridge.run(newCards, {
       opacity: [0, 1],
-      translateY: [26, 0],
-      scale: [0.965, 1],
-      delay: AnimeBridge.stagger(profile.stagger, { start: 40, from: "center" }),
+      translateY: [18, 0],
+      scale: [0.985, 1],
+      delay: AnimeBridge.stagger(profile.stagger, { start: 20, from: "first" }),
       duration: profile.enter,
       easing: "easeOutCubic"
     });
-
-    await sleep(profile.enter + 80);
-
-    cleanupCategoryZoom(clone, glow, panel, stage);
-  } catch (error) {
-    console.error("[CATEGORY_CAMERA_ZOOM] failed:", error);
-    hardRenderRecommendationMode(nextMode);
-  } finally {
-    if (transitionId === categoryTransitionId) {
-      isCategoryTransitioning = false;
-      recommendationTransitionRunning = false;
-    }
   }
+
+  window.setTimeout(() => stage.classList.remove("is-switching"), profile.enter + profile.stagger * Math.min(newCards.length, 8) + 40);
 }
 
-function isTransitionStillActive(id) {
-  return id === categoryTransitionId;
-}
+
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function nextFrameTwice() {
+  return new Promise(resolve => {
+    const raf = window.requestAnimationFrame || (callback => window.setTimeout(callback, 16));
+    raf(() => raf(resolve));
+  });
 }
 
 function resetCardInlineMotion(cards) {
@@ -854,212 +681,7 @@ function getEventElement(event) {
   return event?.target instanceof Element ? event.target : event?.target?.parentElement || null;
 }
 
-function animateActiveButtonPulse(button, profile) {
-  if (!button || profile.panelDuration === 0) return;
 
-  AnimeBridge.run(button, {
-    scale: [1, 1.08],
-    translateY: [0, -3],
-    duration: 130,
-    easing: "easeOutCubic",
-    complete: () => {
-      AnimeBridge.run(button, {
-        scale: [1.08, 1],
-        translateY: [-3, 0],
-        duration: 130,
-        easing: "easeOutCubic"
-      });
-    }
-  });
-
-  const icon = button.querySelector(".mode-icon");
-  if (icon) {
-    AnimeBridge.run(icon, {
-      scale: [1, 1.35],
-      duration: 150,
-      easing: "easeOutBack",
-      complete: () => {
-        AnimeBridge.run(icon, {
-          scale: [1.35, 1],
-          duration: 170,
-          easing: "easeOutCubic"
-        });
-      }
-    });
-  }
-}
-
-function animateFocusLogoPulse(focusLogo, profile) {
-  if (!focusLogo || profile.panelDuration === 0) return;
-
-  AnimeBridge.run(focusLogo, {
-    scale: [1, profile.logoScale],
-    opacity: [0.82, 1],
-    duration: Math.round(profile.panelDuration * 0.48),
-    easing: "easeOutCubic",
-    complete: () => {
-      AnimeBridge.run(focusLogo, {
-        scale: [profile.logoScale, 1],
-        opacity: [1, 1],
-        duration: Math.round(profile.panelDuration * 0.52),
-        easing: "easeOutCubic"
-      });
-    }
-  });
-}
-
-function animatePanelPulse(panel, profile) {
-  if (!panel || profile.panelDuration === 0) return;
-
-  AnimeBridge.run(panel, {
-    scale: [1, 1.01],
-    translateY: [0, -4],
-    duration: Math.round(profile.panelDuration * 0.5),
-    easing: "easeOutCubic",
-    complete: () => {
-      AnimeBridge.run(panel, {
-        scale: [1.01, 1],
-        translateY: [-4, 0],
-        duration: Math.round(profile.panelDuration * 0.5),
-        easing: "easeOutCubic"
-      });
-    }
-  });
-}
-
-function createCategoryZoomClone(button, mode) {
-  const meta = RECOMMENDATION_MODES[mode];
-  if (!meta || !button) return null;
-
-  const rect = button.getBoundingClientRect();
-  const clone = document.createElement("div");
-  clone.className = "category-zoom-clone";
-  clone.innerHTML = `
-    <span class="category-zoom-clone-icon">${meta.icon}</span>
-    <span class="category-zoom-clone-label">${meta.label}</span>
-  `;
-
-  clone.style.setProperty("--category-accent", meta.accent);
-  clone.style.left = `${rect.left}px`;
-  clone.style.top = `${rect.top}px`;
-  clone.style.width = `${rect.width}px`;
-  clone.style.height = `${rect.height}px`;
-
-  document.body.appendChild(clone);
-  return clone;
-}
-
-function createCategoryZoomGlow(panel, mode) {
-  const meta = RECOMMENDATION_MODES[mode];
-  if (!meta || !panel) return null;
-
-  const glow = document.createElement("div");
-  glow.className = "category-zoom-glow";
-  glow.style.setProperty("--category-accent", meta.accent);
-  panel.appendChild(glow);
-  return glow;
-}
-
-async function animateCloneIntoPanel(clone, panel, profile) {
-  if (!clone || !panel || profile.cloneMove === 0) return;
-
-  const cloneRect = clone.getBoundingClientRect();
-  const panelRect = panel.getBoundingClientRect();
-
-  const targetX = panelRect.left + panelRect.width * 0.5 - (cloneRect.left + cloneRect.width * 0.5);
-  const targetY = panelRect.top + panelRect.height * 0.32 - (cloneRect.top + cloneRect.height * 0.5);
-
-  clone.style.transform = "translate(0px, 0px) scale(1)";
-
-  AnimeBridge.run(clone, {
-    translateX: [0, targetX],
-    translateY: [0, targetY],
-    scale: [1, 1.08],
-    duration: profile.cloneMove,
-    easing: "easeOutExpo"
-  });
-
-  await sleep(profile.cloneMove);
-}
-
-async function animateCloneZoomFill(clone, glow, mode, profile) {
-  if (!clone || profile.zoom === 0) return;
-
-  AnimeBridge.run(clone, {
-    scale: [1.08, profile.cloneScale],
-    opacity: [1, 0],
-    duration: profile.zoom,
-    easing: "easeInOutCubic"
-  });
-
-  if (glow) {
-    AnimeBridge.run(glow, {
-      opacity: [0, 1, 0],
-      scale: [0.4, 1.25, 1.75],
-      duration: profile.zoom,
-      easing: "easeOutExpo"
-    });
-  }
-
-  await sleep(Math.round(profile.zoom * 0.72));
-}
-
-function updateSingleRecommendationTitle(mode) {
-  const meta = RECOMMENDATION_MODES[mode];
-  const title = document.querySelector(".recommendation-active-title");
-
-  if (title && meta) {
-    title.textContent = meta.label;
-  }
-
-  document.querySelectorAll(".duplicate-category-title, .inner-category-title, .recommendation-panel-title").forEach(el => {
-    if (el !== title) el.remove();
-  });
-}
-
-function animateTitleEnter(title, profile) {
-  if (!title || profile.title === 0) return;
-
-  AnimeBridge.run(title, {
-    opacity: [0, 1],
-    translateX: [34, 0],
-    translateY: [10, 0],
-    duration: profile.title,
-    easing: "easeOutCubic"
-  });
-}
-
-function cleanupCategoryZoom(clone, glow, panel, stage) {
-  if (clone && clone.parentNode) clone.parentNode.removeChild(clone);
-  if (glow && glow.parentNode) glow.parentNode.removeChild(glow);
-
-  unlockElementHeight(panel);
-
-  if (stage) {
-    stage.classList.remove("is-camera-zooming", "is-category-zooming");
-  }
-}
-
-function lockElementHeight(element) {
-  if (!element) return;
-  const height = element.offsetHeight;
-  if (height > 0) element.style.minHeight = `${height}px`;
-}
-
-function unlockElementHeight(element) {
-  if (!element) return;
-  requestAnimationFrame(() => {
-    element.style.minHeight = "";
-  });
-}
-
-function lockGridMinHeight(grid) {
-  lockElementHeight(grid);
-}
-
-function unlockGridMinHeight(grid) {
-  unlockElementHeight(grid);
-}
 
 function buildRecommendationProducts(mode) {
   if (!window.app) return [];
@@ -1094,11 +716,7 @@ function cssEscapeValue(value) {
   return String(value).replace(/["\\]/g, "\\$&");
 }
 
-function nextFrameTwice() {
-  return new Promise(resolve => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  });
-}
+
 
 function setupCheckedProductsLayout() {
   const container = document.querySelector(".checked-products-grid");
@@ -1714,9 +1332,10 @@ function collectModalFeedbackNote() {
 
 async function sendFeedback(data) {
   const productId = String(data.product_id);
-  const type = data.feedback_type;
+  const type = normalizeFeedbackResult(data.feedback_type || data.user_action);
   const reasons = data.reasons || [];
   const note = data.note || "";
+  const userAction = type === "positive" ? "benar" : "salah";
 
   const product = (window.__MARKETSPY_PRODUCTS__ || []).find(p => getProductReviewId(p) === productId)
     || (activeModalProduct && getProductReviewId(activeModalProduct) === productId ? activeModalProduct : {})
@@ -1727,7 +1346,7 @@ async function sendFeedback(data) {
     search_id: searchId,
     product_id: productId,
     product_title: product.title || "",
-    user_action: type === "positive" ? "benar" : "salah",
+    user_action: userAction,
     feedback_type: type,
     selected_reasons: reasons,
     reasons: reasons,
@@ -2035,7 +1654,7 @@ function setupProductHoverStagger() {
 
 function animateCardHoverIn(card) {
   if (!card || !card.isConnected) return;
-  if (card.closest(".recommendation-stage.is-fast-switching")) return;
+  if (card.closest(".recommendation-stage.is-switching")) return;
 
   const container = card.closest(
     ".recommendation-product-grid, .checked-products-grid, .results-grid"
@@ -2068,7 +1687,7 @@ function animateCardHoverIn(card) {
 
 function animateCardHoverOut(card) {
   if (!card || !card.isConnected) return;
-  if (card.closest(".recommendation-stage.is-fast-switching")) return;
+  if (card.closest(".recommendation-stage.is-switching")) return;
 
   const container = card.closest(
     ".recommendation-product-grid, .checked-products-grid, .results-grid"
@@ -2214,82 +1833,52 @@ function getProgressStage(progress) {
   return "done";
 }
 
-function startScrapingDrawableAnimation() {
-  if (runningDrawableAnimation) return;
+function setAppStatus(stateOrLabel) {
+  const badge = document.querySelector("[data-app-status-badge]");
+  if (!badge) return;
 
-  const target = document.querySelector(".scrape-runner-path");
-  if (!target) return;
+  const normalized = String(stateOrLabel || "idle").toLowerCase().trim();
+  const stateMap = {
+    idle: { label: "Siap", className: "is-idle" },
+    siap: { label: "Siap", className: "is-idle" },
+    running: { label: "Berjalan", className: "is-running" },
+    berjalan: { label: "Berjalan", className: "is-running" },
+    done: { label: "Selesai", className: "is-done" },
+    selesai: { label: "Selesai", className: "is-done" },
+    error: { label: "Error", className: "is-error" },
+    gagal: { label: "Error", className: "is-error" },
+    diblokir: { label: "Error", className: "is-error" }
+  };
+  const next = stateMap[normalized] || stateMap.idle;
+  const textSpan = badge.querySelector(".status-badge-text");
 
-  const animeGlobal = window.anime;
-  const svgObj = window.svg || animeGlobal?.svg;
-
-  if (svgObj && typeof svgObj.createDrawable === "function") {
-    const [drawable] = svgObj.createDrawable(target);
-
-    runningDrawableAnimation = AnimeBridge.run(drawable, {
-      draw: ["0 0", "0 1", "1 1"],
-      duration: 1800,
-      loop: true,
-      easing: "easeInOutSine"
-    });
-
-    return;
+  if (textSpan) {
+    textSpan.textContent = next.label;
+  } else {
+    badge.textContent = next.label;
   }
 
-  const length = target.getTotalLength();
-  target.style.strokeDasharray = String(length);
-  target.style.strokeDashoffset = String(length);
-
-  runningDrawableAnimation = AnimeBridge.run(target, {
-    strokeDashoffset: [length, 0],
-    duration: 1600,
-    loop: true,
-    direction: "alternate",
-    easing: "easeInOutSine"
-  });
-}
-
-function stopScrapingDrawableAnimation() {
-  if (runningDrawableAnimation && typeof runningDrawableAnimation.pause === "function") {
-    runningDrawableAnimation.pause();
-  }
-
-  runningDrawableAnimation = null;
-}
-
-function syncScrapingDrawableAnimation(progress) {
-  const stage = getProgressStage(progress || {});
-  const hasStarted = Boolean(
-    progress?.started_at_epoch_ms ||
-    window.app?.state?.searchId ||
-    Number(progress?.progress_percent ?? progress?.percent ?? 0) > 0
-  );
-
-  if (progress?.done || stage === "done" || stage === "error" || stage === "idle" || !hasStarted) {
-    stopScrapingDrawableAnimation();
-    return;
-  }
-
-  startScrapingDrawableAnimation();
+  badge.classList.remove("is-idle", "is-running", "is-done", "is-error");
+  badge.classList.add(next.className);
 }
 
 function syncTopStatusFromProgress(progress) {
   if (!progress) return;
 
+  let status = "idle";
+
   if (progress.done) {
-    setTopStatusWord(progress.error ? "error" : "done");
-    return;
+    status = progress.error ? "error" : "done";
+  } else {
+    const stage = getProgressStage(progress);
+    if (["error", "failed", "blocked"].includes(stage)) {
+      status = "error";
+    } else if (stage !== "idle" && stage !== "done") {
+      status = "running";
+    }
   }
 
-  const stage = getProgressStage(progress);
-  if (["error", "failed", "blocked"].includes(stage)) {
-    setTopStatusWord("error");
-    return;
-  }
-
-  if (stage !== "idle" && stage !== "done") {
-    setTopStatusWord("running");
-  }
+  setAppStatus(status);
 }
 
 function updateProgressStage(progress) {
@@ -2498,7 +2087,7 @@ class ScraperApp {
       Diblokir: "error"
     };
 
-    setTopStatusWord(classMap[cls] || textMap[text] || "idle");
+    setAppStatus(classMap[cls] || textMap[text] || "idle");
   }
 
   isBlockedMessage(message) {
@@ -2754,8 +2343,8 @@ class ScraperApp {
     this.state.recommendationsOpen = false;
     this.state.sortMode = this.activeSortMode();
     this.show('progress-panel');
-    this.setStatus('Berjalan', 'status-running');
     this.resetProgress();
+    this.setStatus('Berjalan', 'status-running');
 
     try {
       const response = await fetch('/api/search', {
@@ -2782,10 +2371,10 @@ class ScraperApp {
       this.state.searchId = data.search_id;
       this.state.progressStartedAtMs = data.started_at_epoch_ms || null;
       if (this.state.progressStartedAtMs) this.startElapsedTimer();
-      startScrapingDrawableAnimation();
+      setAppStatus("running");
       this.startPolling();
     } catch (err) {
-      stopScrapingDrawableAnimation();
+      setAppStatus("error");
       this.showError('Gagal terhubung ke server: ' + err.message);
     }
   }
@@ -2850,7 +2439,7 @@ class ScraperApp {
   resetProgress() {
     this.stopPolling();
     this.stopElapsedTimer();
-    stopScrapingDrawableAnimation();
+    setAppStatus("idle");
     this.state.progressStartedAtMs = null;
     this.state.estimatedCompletionEpochMs = null;
     this.state.localElapsedSeconds = 0;
@@ -3034,7 +2623,6 @@ class ScraperApp {
     this.renderProgressLogs(progress.logs || []);
 
     updateProgressStage(progress);
-    syncScrapingDrawableAnimation(progress);
     syncTopStatusFromProgress(progress);
   }
 
@@ -4396,7 +3984,6 @@ class ScraperApp {
   showError(message) {
     this.stopPolling();
     this.stopElapsedTimer();
-    stopScrapingDrawableAnimation();
     this.setStatus(this.isBlockedMessage(message) ? 'Diblokir' : 'Gagal', 'status-error');
     this.show('error-panel');
     this.$('error-msg').textContent = message;
@@ -4410,7 +3997,6 @@ class ScraperApp {
   reset() {
     this.stopPolling();
     this.stopElapsedTimer();
-    stopScrapingDrawableAnimation();
     if (this.recommendationObserver) this.recommendationObserver.disconnect();
     this.setStatus('Menunggu', 'status-idle');
     this.show('search-panel');
@@ -4650,5 +4236,5 @@ document.addEventListener('DOMContentLoaded', () => {
   window.app = app;
   window.openRecommendationProductModal = openRecommendationProductModal;
   window.closeRecommendationProductModal = closeRecommendationProductModal;
-  setTopStatusWord("idle");
+  setAppStatus("idle");
 });

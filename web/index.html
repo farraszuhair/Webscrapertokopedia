@@ -7,11 +7,9 @@
   <meta name="description" content="PasarIntai AI scraper with Puppeteer, Selenium rollback, intent-aware filtering, and local Ollama validation.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=ui-camera-20260529">
-  <!-- UI_FINAL_CAMERA_ZOOM_CATEGORY_DRAWABLE_FIX_20260529 -->
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <span id="UI_FINAL_CAMERA_ZOOM_CATEGORY_DRAWABLE_FIX_20260529" style="display: none;">UI_FINAL_CAMERA_ZOOM_CATEGORY_DRAWABLE_FIX_20260529</span>
   <div class="app">
     <header class="header">
       <div class="header-inner">
@@ -22,22 +20,8 @@
             <p>Scraping produk yang rapi, bertahap, dan mudah diaudit</p>
           </div>
         </div>
-        <div class="app-status-wordmark is-idle" data-app-status-wordmark aria-live="polite">
-          <span class="sr-only status-label-text">Siap</span>
-          <svg class="status-wordmark-svg" viewBox="0 0 420 90" role="img" aria-label="Siap">
-            <g class="status-word-paths is-active" data-status-word="idle">
-              <text class="status-word-text" x="50%" y="58%" text-anchor="middle">Siap</text>
-            </g>
-            <g class="status-word-paths" data-status-word="running">
-              <text class="status-word-text" x="50%" y="58%" text-anchor="middle">Berjalan</text>
-            </g>
-            <g class="status-word-paths" data-status-word="done">
-              <text class="status-word-text" x="50%" y="58%" text-anchor="middle">Selesai</text>
-            </g>
-            <g class="status-word-paths" data-status-word="error">
-              <text class="status-word-text" x="50%" y="58%" text-anchor="middle">Error</text>
-            </g>
-          </svg>
+        <div class="app-status-badge is-idle" data-app-status-badge aria-live="polite">
+          <span class="status-badge-text">Siap</span>
         </div>
       </div>
     </header>
@@ -150,19 +134,6 @@
         <div class="progress-clean-panel" data-progress-stage="idle">
           <div class="progress-scramble-text" id="progressScrambleText">Menunggu proses...</div>
 
-          <div class="scrape-runner-visual" aria-hidden="true">
-            <svg class="scrape-runner-svg" viewBox="0 0 420 80">
-              <path
-                class="scrape-runner-path"
-                d="M10 55 C70 10, 130 10, 190 55 S310 100, 410 25"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="4"
-                stroke-linecap="round"
-              />
-            </svg>
-          </div>
-
           <div class="progress-time-row">
             <div class="progress-time-pill">
               <span>Durasi</span>
@@ -232,8 +203,6 @@
 
         <div id="recommendations-panel" class="recommendations-panel hidden">
           <section class="recommendation-stage" id="recommendation-stage" data-active-mode="all">
-            <span data-ui-marker="UI_FINAL_CAMERA_ZOOM_CATEGORY_DRAWABLE_FIX_20260529" hidden>UI_FINAL_CAMERA_ZOOM_CATEGORY_DRAWABLE_FIX_20260529</span>
-            <div class="recommendation-bg-orbit"></div>
 
             <div class="recommendation-header">
               <div class="recommendation-title-area">
@@ -262,12 +231,6 @@
             </div>
 
             <div class="recommendation-active-panel">
-              <div class="recommendation-zoom-layer" aria-hidden="true">
-                <div class="recommendation-focus-orb">
-                  <span class="active-mode-icon">🧺</span>
-                </div>
-              </div>
-
               <div class="recommendation-product-grid" id="recommendation-product-grid" data-layout-grid="active-products"></div>
 
               <section class="checked-products-box" data-layout-grid="checked-products">
@@ -389,7 +352,7 @@
     </article>
   </div>
 
-  <script src="vendor/anime.min.js?v=ui-camera-20260529"></script>
-  <script src="app.js?v=ui-camera-20260529" defer></script>
+  <script src="vendor/anime.min.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
