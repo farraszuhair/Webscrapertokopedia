@@ -332,7 +332,7 @@
         <div class="product-detail-image-placeholder">TIDAK ADA GAMBAR</div>
       </div>
 
-      <div class="product-detail-content">
+      <div id="productDetailContent" class="product-detail-content">
         <p class="product-detail-kicker">DETAIL REKOMENDASI</p>
         <h2 id="product-detail-title" class="product-detail-title"></h2>
         <p class="product-detail-subtitle"></p>
@@ -346,6 +346,17 @@
             <button type="button" class="feedback-btn feedback-yes" data-feedback-answer="benar">Benar</button>
             <button type="button" class="feedback-btn feedback-no" data-feedback-answer="salah">Salah</button>
             <a class="feedback-btn feedback-open" target="_blank" rel="noopener noreferrer">Buka Produk</a>
+          </div>
+
+          <div class="feedback-reason-panel detail-feedback-reason-panel" data-detail-feedback-reason-panel hidden>
+            <h3>Kenapa produk ini salah?</h3>
+            <p>Pilih satu atau lebih alasan agar AI bisa belajar.</p>
+            <div class="feedback-reason-grid" data-detail-feedback-reason-grid></div>
+            <textarea class="feedback-note" data-detail-feedback-note placeholder="Tambahkan catatan jika perlu..."></textarea>
+            <div class="feedback-save-row">
+              <button type="button" class="btn-ghost" data-detail-feedback-cancel>Batal</button>
+              <button type="button" class="btn-primary" data-detail-feedback-save>Simpan Feedback</button>
+            </div>
           </div>
         </section>
       </div>

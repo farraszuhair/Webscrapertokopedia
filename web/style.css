@@ -3680,6 +3680,22 @@ body.modal-open {
   gap: 12px;
 }
 
+.detail-feedback-reason-panel .feedback-reason-grid {
+  margin: 14px 0 12px;
+  max-height: none;
+  overflow: visible;
+}
+
+.detail-feedback-reason-panel .feedback-note {
+  width: 100%;
+  margin: 0;
+}
+
+.detail-feedback-reason-panel .feedback-save-row {
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
 .feedback-btn {
   min-height: 52px;
   padding: 0 24px;

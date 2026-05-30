@@ -4019,6 +4019,21 @@ class ScraperApp {
 let activeDetailProduct = null;
 let activeReviewQueue = [];
 let activeReviewIndex = 0;
+let isReviewTransitioning = false;
+
+const DETAIL_FEEDBACK_REASONS = [
+  "Produk tidak relevan",
+  "Cuma aksesoris",
+  "Spesifikasi tidak sesuai query",
+  "Harga tidak sesuai",
+  "Nama produk salah",
+  "Gambar tidak sesuai",
+  "Toko tidak terpercaya",
+  "Duplikat",
+  "Bukan sesuai intent pencarian",
+  "Data tidak lengkap",
+  "Lainnya"
+];
 
 function getProductId(product) {
   return String(product?.id || product?.url || product?.product_url || product?.title || "");
@@ -4030,7 +4045,7 @@ function openProductDetailModal(product, queue = []) {
 
   activeDetailProduct = product;
   activeReviewQueue = Array.isArray(queue) && queue.length ? queue : [product];
-  activeReviewIndex = Math.max(0, activeReviewQueue.findIndex(item => getProductId(item) === getProductId(product)));
+  activeReviewIndex = activeReviewQueue.findIndex(item => getProductId(item) === getProductId(product));
 
   renderProductDetail(product);
 
@@ -4108,6 +4123,9 @@ function renderProductDetail(product) {
     openLink.href = url;
     openLink.toggleAttribute("aria-disabled", !url || url === "#");
   }
+
+  ensureDetailReasonPanel();
+  resetDetailFeedbackPanel();
 }
 
 function animateProductDetailModalOpen() {
@@ -4143,29 +4161,207 @@ function animateProductDetailModalClose(done) {
   }, 230);
 }
 
-function goToNextReviewProduct() {
-  const queue = getActiveRecommendationProducts(activeRecommendationMode);
+function getProductDetailContent() {
+  return document.querySelector("#productDetailContent");
+}
 
-  if (!queue.length) {
-    closeProductDetailModal();
-    return;
-  }
+function setReviewButtonsDisabled(disabled) {
+  const modal = document.querySelector("[data-product-modal]");
+  if (!modal) return;
 
-  activeReviewQueue = queue;
-  activeReviewIndex = 0;
-  activeDetailProduct = queue[0];
+  modal
+    .querySelectorAll("[data-feedback-answer], [data-detail-feedback-save], [data-detail-feedback-cancel], .feedback-open")
+    .forEach(control => {
+      if (control.tagName === "A") {
+        control.setAttribute("aria-disabled", disabled ? "true" : "false");
+        control.tabIndex = disabled ? -1 : 0;
+        control.style.pointerEvents = disabled ? "none" : "";
+      } else {
+        control.disabled = disabled;
+      }
+    });
+}
 
-  renderProductDetail(queue[0]);
+function ensureDetailReasonPanel() {
+  const grid = document.querySelector("[data-detail-feedback-reason-grid]");
+  if (!grid || grid.children.length) return;
 
-  const content = document.querySelector(".product-detail-content");
-  if (content) content.scrollTop = 0;
+  DETAIL_FEEDBACK_REASONS.forEach(reason => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "feedback-reason-chip";
+    chip.dataset.detailFeedbackReason = reason;
+    chip.dataset.reason = reason;
+    chip.textContent = reason;
+    chip.addEventListener("click", event => {
+      event.preventDefault();
+      if (isReviewTransitioning) return;
+      chip.classList.toggle("is-selected");
+    });
+    grid.appendChild(chip);
+  });
+}
 
-  AnimeBridge.run(".product-detail-modal", {
-    opacity: [0.72, 1],
-    translateX: [18, 0],
-    duration: 260,
+function resetDetailFeedbackPanel() {
+  const panel = document.querySelector("[data-detail-feedback-reason-panel]");
+  if (panel) panel.hidden = true;
+
+  document
+    .querySelectorAll("[data-detail-feedback-reason-grid] .feedback-reason-chip")
+    .forEach(chip => chip.classList.remove("is-selected"));
+
+  const note = document.querySelector("[data-detail-feedback-note]");
+  if (note) note.value = "";
+}
+
+function revealDetailReasonPanel() {
+  const panel = document.querySelector("[data-detail-feedback-reason-panel]");
+  if (!panel || !panel.hidden) return;
+
+  panel.hidden = false;
+
+  AnimeBridge.run(panel, {
+    opacity: [0, 1],
+    translateY: [12, 0],
+    duration: 220,
     easing: "easeOutCubic"
   });
+}
+
+function collectDetailFeedbackReasons() {
+  const chips = document.querySelectorAll("[data-detail-feedback-reason-grid] .feedback-reason-chip.is-selected");
+  return Array.from(chips).map(chip => chip.dataset.reason || chip.textContent.trim()).filter(Boolean);
+}
+
+function collectDetailFeedbackNote() {
+  return document.querySelector("[data-detail-feedback-note]")?.value.trim() || "";
+}
+
+function animateProductOut() {
+  const el = getProductDetailContent();
+  if (!el || !window.anime) return Promise.resolve();
+
+  const animation = window.anime({
+    targets: el,
+    opacity: [1, 0],
+    translateX: [0, -32],
+    scale: [1, 0.985],
+    duration: 260,
+    easing: "easeInOutQuad"
+  });
+
+  return animation?.finished || sleep(260);
+}
+
+function animateProductIn() {
+  const el = getProductDetailContent();
+  if (!el || !window.anime) return Promise.resolve();
+
+  el.style.opacity = "0";
+  el.style.transform = "translateX(32px) scale(0.985)";
+
+  const animation = window.anime({
+    targets: el,
+    opacity: [0, 1],
+    translateX: [32, 0],
+    scale: [0.985, 1],
+    duration: 320,
+    easing: "easeOutCubic"
+  });
+
+  return animation?.finished || sleep(320);
+}
+
+async function submitProductFeedback(feedbackPayload = {}) {
+  if (!activeDetailProduct) throw new Error("Tidak ada produk aktif untuk direview.");
+
+  const product = activeDetailProduct;
+  const verdict = String(feedbackPayload.verdict || "").toLowerCase();
+  const type = verdict === "correct" || verdict === "benar" || verdict === "positive"
+    ? "positive"
+    : "negative";
+  const reasons = Array.isArray(feedbackPayload.reasons) ? feedbackPayload.reasons : [];
+  const note = feedbackPayload.note || "";
+
+  await sendFeedback({
+    product_id: getProductId(product),
+    feedback_type: type,
+    reasons,
+    note
+  });
+
+  return { product, type, reasons, note };
+}
+
+function moveToNextReviewProduct() {
+  const queue = activeReviewQueue.length
+    ? activeReviewQueue
+    : getActiveRecommendationProducts(activeRecommendationMode);
+
+  for (let index = activeReviewIndex + 1; index < queue.length; index += 1) {
+    const candidate = queue[index];
+    if (!isProductReviewed(candidate)) {
+      activeReviewQueue = queue;
+      activeReviewIndex = index;
+      activeDetailProduct = candidate;
+      return true;
+    }
+  }
+
+  const refreshedQueue = getActiveRecommendationProducts(activeRecommendationMode);
+  const nextProduct = refreshedQueue.find(product => !isProductReviewed(product));
+  if (!nextProduct) {
+    activeReviewQueue = refreshedQueue;
+    activeReviewIndex = -1;
+    activeDetailProduct = null;
+    return false;
+  }
+
+  activeReviewQueue = refreshedQueue;
+  activeReviewIndex = refreshedQueue.findIndex(product => getProductId(product) === getProductId(nextProduct));
+  activeDetailProduct = nextProduct;
+  return true;
+}
+
+function getCurrentReviewProduct() {
+  return activeDetailProduct;
+}
+
+function renderProductDetailModal(product) {
+  renderProductDetail(product);
+}
+
+async function goToNextReviewProduct(feedbackPayload) {
+  if (isReviewTransitioning) return;
+  isReviewTransitioning = true;
+
+  try {
+    setReviewButtonsDisabled(true);
+
+    const submitted = await submitProductFeedback(feedbackPayload);
+    await animateProductOut();
+    await moveProductToCheckedTray(submitted.product, submitted.type, {
+      reasons: submitted.reasons,
+      note: submitted.note
+    });
+
+    const hasNext = moveToNextReviewProduct();
+
+    if (!hasNext) {
+      closeProductDetailModal();
+      showSmallToast("Semua produk sudah direview.");
+      return;
+    }
+
+    renderProductDetailModal(getCurrentReviewProduct());
+    await animateProductIn();
+  } catch (err) {
+    console.error("[REVIEW_TRANSITION_FAILED]", err);
+    showSmallToast("Feedback gagal disimpan. Coba lagi.");
+  } finally {
+    setReviewButtonsDisabled(false);
+    isReviewTransitioning = false;
+  }
 }
 
 // Setup product detail modal event listeners
@@ -4187,18 +4383,53 @@ if (!window.__pasarIntaiProductModalEventsBound) {
       return;
     }
 
+    const disabledLink = event.target.closest(".feedback-open[aria-disabled='true']");
+    if (disabledLink) {
+      event.preventDefault();
+      return;
+    }
+
     const feedbackButton = event.target.closest("[data-feedback-answer]");
     if (feedbackButton) {
+      event.preventDefault();
+      if (isReviewTransitioning) return;
+
       const answer = feedbackButton.dataset.feedbackAnswer;
-      sendFeedback({
-        product_id: getProductId(activeDetailProduct),
-        feedback_type: answer,
-        reasons: [],
-        note: ""
-      }).then(async () => {
-        await moveProductToCheckedTray(activeDetailProduct, answer, {});
-        goToNextReviewProduct();
+
+      if (answer === "salah") {
+        revealDetailReasonPanel();
+        return;
+      }
+
+      goToNextReviewProduct({
+        verdict: "correct"
       });
+      return;
+    }
+
+    const saveWrongButton = event.target.closest("[data-detail-feedback-save]");
+    if (saveWrongButton) {
+      event.preventDefault();
+      if (isReviewTransitioning) return;
+
+      const reasons = collectDetailFeedbackReasons();
+      const note = collectDetailFeedbackNote();
+
+      goToNextReviewProduct({
+        verdict: "wrong",
+        reasons: reasons.length ? reasons : ["Ditandai salah oleh user"],
+        note
+      });
+      return;
+    }
+
+    const cancelWrongButton = event.target.closest("[data-detail-feedback-cancel]");
+    if (cancelWrongButton) {
+      event.preventDefault();
+      if (isReviewTransitioning) return;
+
+      const panel = document.querySelector("[data-detail-feedback-reason-panel]");
+      if (panel) panel.hidden = true;
       return;
     }
 
