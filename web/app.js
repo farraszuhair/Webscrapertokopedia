@@ -1035,6 +1035,7 @@ function resolveProductImage(product) {
     let url = String(value).trim();
 
     if (!url) continue;
+    if (/^data:image\//i.test(url)) return url;
     if (url.startsWith("//")) url = `https:${url}`;
     if (/^https?:\/\//i.test(url)) return url;
   }
@@ -3310,9 +3311,10 @@ class ScraperApp {
       if (!value) continue;
       let url = String(value).trim();
       if (!url) continue;
+      if (['undefined', 'null', 'noimage'].includes(url.toLowerCase().replace(/\s+/g, ''))) continue;
+      if (/^data:image\//i.test(url)) return url;
       if (url.startsWith('//')) url = `https:${url}`;
       if (!/^https?:\/\//i.test(url)) continue;
-      if (['undefined', 'null', 'noimage'].includes(url.toLowerCase().replace(/\s+/g, ''))) continue;
       return url;
     }
 
@@ -4048,6 +4050,7 @@ function openProductDetailModal(product, queue = []) {
   activeReviewIndex = activeReviewQueue.findIndex(item => getProductId(item) === getProductId(product));
 
   renderProductDetail(product);
+  resetProductDetailPanelsState();
 
   modal.hidden = false;
   document.documentElement.classList.add("modal-open");
@@ -4059,14 +4062,21 @@ function openProductDetailModal(product, queue = []) {
   if (closeButton) closeButton.focus({ preventScroll: true });
 }
 
+function unlockProductDetailModalScroll() {
+  document.documentElement.classList.remove("modal-open");
+  document.body.classList.remove("modal-open");
+}
+
 function closeProductDetailModal() {
   const modal = document.querySelector("[data-product-modal]");
-  if (!modal) return;
+  if (!modal) {
+    unlockProductDetailModalScroll();
+    return;
+  }
 
   animateProductDetailModalClose(() => {
     modal.hidden = true;
-    document.documentElement.classList.remove("modal-open");
-    document.body.classList.remove("modal-open");
+    unlockProductDetailModalScroll();
   });
 }
 
@@ -4098,7 +4108,7 @@ function renderProductDetail(product) {
     `;
   }
 
-  const imageUrl = product.image_url || product.image || product.img || "";
+  const imageUrl = resolveProductImage(product);
 
   if (img && placeholder) {
     if (imageUrl) {
@@ -4163,6 +4173,21 @@ function animateProductDetailModalClose(done) {
 
 function getProductDetailContent() {
   return document.querySelector("#productDetailContent");
+}
+
+function getProductDetailTransitionTargets() {
+  return [
+    document.querySelector("#productDetailImagePanel"),
+    document.querySelector("#productDetailInfoPanel")
+  ].filter(Boolean);
+}
+
+function resetProductDetailPanelsState() {
+  getProductDetailTransitionTargets().forEach(panel => {
+    panel.style.opacity = "";
+    panel.style.transform = "";
+    panel.style.filter = "";
+  });
 }
 
 function setReviewButtonsDisabled(disabled) {
@@ -4237,39 +4262,80 @@ function collectDetailFeedbackNote() {
   return document.querySelector("[data-detail-feedback-note]")?.value.trim() || "";
 }
 
-function animateProductOut() {
-  const el = getProductDetailContent();
-  if (!el || !window.anime) return Promise.resolve();
+async function animateProductDetailOut() {
+  const imagePanel = document.querySelector("#productDetailImagePanel");
+  const infoPanel = document.querySelector("#productDetailInfoPanel");
+  const targets = [imagePanel, infoPanel].filter(Boolean);
 
-  const animation = window.anime({
-    targets: el,
+  if (!targets.length || !window.anime) return;
+
+  await anime({
+    targets,
     opacity: [1, 0],
-    translateX: [0, -32],
-    scale: [1, 0.985],
-    duration: 260,
+    translateX: (el, i) => i === 0 ? [0, -24] : [0, -30],
+    scale: [1, 0.99],
+    duration: 240,
+    delay: anime.stagger(25),
     easing: "easeInOutQuad"
-  });
-
-  return animation?.finished || sleep(260);
+  }).finished;
 }
 
-function animateProductIn() {
-  const el = getProductDetailContent();
-  if (!el || !window.anime) return Promise.resolve();
+async function animateProductDetailIn() {
+  const imagePanel = document.querySelector("#productDetailImagePanel");
+  const infoPanel = document.querySelector("#productDetailInfoPanel");
+  const targets = [imagePanel, infoPanel].filter(Boolean);
 
-  el.style.opacity = "0";
-  el.style.transform = "translateX(32px) scale(0.985)";
+  if (!targets.length || !window.anime) return;
 
-  const animation = window.anime({
-    targets: el,
+  if (typeof anime.set === "function") {
+    anime.set(targets, {
+      opacity: 0,
+      translateX: 28,
+      scale: 0.99
+    });
+  } else {
+    targets.forEach(panel => {
+      panel.style.opacity = "0";
+      panel.style.transform = "translateX(28px) scale(0.99)";
+    });
+  }
+
+  await anime({
+    targets,
     opacity: [0, 1],
-    translateX: [32, 0],
-    scale: [0.985, 1],
-    duration: 320,
+    translateX: [28, 0],
+    scale: [0.99, 1],
+    duration: 300,
+    delay: anime.stagger(35),
     easing: "easeOutCubic"
-  });
+  }).finished;
+}
 
-  return animation?.finished || sleep(320);
+function waitForProductImageReady() {
+  const img = document.querySelector("#productDetailImagePanel img");
+
+  if (!img || img.classList.contains("is-hidden")) {
+    return Promise.resolve();
+  }
+
+  if (img.complete) {
+    return Promise.resolve();
+  }
+
+  return new Promise(resolve => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      img.onload = null;
+      img.onerror = null;
+      resolve();
+    };
+
+    img.onload = done;
+    img.onerror = done;
+    window.setTimeout(done, 350);
+  });
 }
 
 async function submitProductFeedback(feedbackPayload = {}) {
@@ -4339,24 +4405,27 @@ async function goToNextReviewProduct(feedbackPayload) {
     setReviewButtonsDisabled(true);
 
     const submitted = await submitProductFeedback(feedbackPayload);
-    await animateProductOut();
-    await moveProductToCheckedTray(submitted.product, submitted.type, {
+    await animateProductDetailOut();
+
+    const checkedTrayPromise = moveProductToCheckedTray(submitted.product, submitted.type, {
       reasons: submitted.reasons,
       note: submitted.note
-    });
+    }).catch(error => console.error("[CHECKED_TRAY_TRANSITION_FAILED]", error));
 
     const hasNext = moveToNextReviewProduct();
 
     if (!hasNext) {
+      await checkedTrayPromise;
       closeProductDetailModal();
       showSmallToast("Semua produk sudah direview.");
       return;
     }
 
     renderProductDetailModal(getCurrentReviewProduct());
-    await animateProductIn();
+    await waitForProductImageReady();
+    await animateProductDetailIn();
   } catch (err) {
-    console.error("[REVIEW_TRANSITION_FAILED]", err);
+    console.error("[REVIEW_NEXT_TRANSITION_FAILED]", err);
     showSmallToast("Feedback gagal disimpan. Coba lagi.");
   } finally {
     setReviewButtonsDisabled(false);
