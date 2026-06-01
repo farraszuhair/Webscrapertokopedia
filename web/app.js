@@ -1859,11 +1859,26 @@ function setupIntersectionScrollFallback(targets, container) {
       ? null
       : container;
 
+  let initialCheckDone = false;
+
   adaptiveScrollObserver = new IntersectionObserver((entries, observer) => {
     entries.forEach(entry => {
-      if (!entry.isIntersecting) return;
-
       const el = entry.target;
+
+      // First callback: check if already visible during initial observe
+      if (!initialCheckDone && entry.isIntersecting) {
+        initialCheckDone = true;
+        if (el.dataset.scrollAnimated !== "true") {
+          el.dataset.scrollAnimated = "true";
+          // Langsung reset ke state final tanpa initial transform delay
+          el.style.opacity = "1";
+          el.style.transform = "none";
+          observer.unobserve(el);
+          return;
+        }
+      }
+
+      if (!entry.isIntersecting) return;
 
       if (el.dataset.scrollAnimated === "true") {
         observer.unobserve(el);
@@ -1890,8 +1905,11 @@ function setupIntersectionScrollFallback(targets, container) {
 
   targets.forEach(el => {
     if (el.dataset.scrollAnimated === "true") return;
-    el.style.opacity = "0.72";
-    el.style.transform = "translateY(48px) scale(0.965)";
+    // PERBAIKI: Jangan set initial transform jika element belum pernah diperiksa visibilitynya
+    // Observer callback pertama akan handle visibility check dan decide apakah perlu initial transform
+    // Untuk sekarang, set ke state final (no transform) untuk menghindari gap
+    el.style.opacity = "1";
+    el.style.transform = "none";
     adaptiveScrollObserver.observe(el);
   });
 }
@@ -3078,7 +3096,8 @@ class ScraperApp {
     this.state.recommendationsOpen = true;
     this.state.recommendationMode = 'all';
     this.state.hasUserSelectedRecommendation = false;
-    this.state.autoExpandedOnce = false;
+    // Tandai sudah auto-expanded agar observer tidak trigger expand lagi
+    this.state.autoExpandedOnce = true;
     activeRecommendationMode = 'all';
     activeModalMode = null;
     activeModalProducts = [];
@@ -3097,6 +3116,23 @@ class ScraperApp {
     this.renderRecommendations();
     this.updateResultCount();
     this.renderProducts();
+
+    // Langsung expand stage tanpa animasi height agar tidak ada gap
+    const stage = this.$('recommendation-stage');
+    if (stage) {
+      stage.classList.add('is-auto-expanded');
+      // Hapus inline height kalau ada sisa dari animasi sebelumnya
+      stage.style.height = '';
+      stage.style.overflow = '';
+    }
+
+    console.log('[LAYOUT] scraping finished');
+    console.log('[LAYOUT] render recommendations initial');
+    console.log('[LAYOUT] active category', activeRecommendationMode);
+    const stageHeight = stage?.offsetHeight || 0;
+    const panelHeight = this.$('recommendations-panel')?.offsetHeight || 0;
+    console.log('[LAYOUT] recommendation container height', { stageHeight, panelHeight });
+
     this.observeRecommendationStage();
     this.animateResultsEntrance();
   }
@@ -3488,18 +3524,8 @@ class ScraperApp {
 
   animateRecommendationStage() {
     if (!this.canAnimate()) return;
-    const activePanel = document.querySelector('.recommendation-active-panel');
-    const cards = document.querySelectorAll('.recommendation-product-card');
-    
-    AnimeBridge.run([activePanel].filter(Boolean), {
-      opacity: [0, 1],
-      translateY: [24, 0],
-      scale: [0.96, 1],
-      delay: AnimeBridge.stagger(70),
-      duration: 650,
-      easing: 'easeOutExpo',
-    });
-    
+    // Animasi hanya pada cards, bukan pada container panel
+    // translateY pada active-panel menyebabkan gap visual sementara
     const profile = getRecommendationMotionProfile();
     this.animateRecommendationProductsEnter(profile);
   }
@@ -3527,22 +3553,17 @@ class ScraperApp {
     const stage = this.$('recommendation-stage');
     if (!stage) return;
     if (fromUser) this.state.hasUserSelectedRecommendation = true;
-    stage.classList.add('is-auto-expanded');
-    if (!this.canAnimate()) return;
 
-    const startHeight = stage.offsetHeight;
-    stage.style.height = `${startHeight}px`;
-    const endHeight = stage.scrollHeight;
-    AnimeBridge.run(stage, {
-      height: [startHeight, endHeight],
-      scale: [0.98, 1],
-      duration: 650,
-      easing: 'easeOutExpo',
-      complete: () => {
-        stage.style.height = '';
-      },
-    });
-    this.animateRecommendationStage();
+    // Langsung tambah class tanpa animasi height — height animasi adalah penyebab gap
+    stage.classList.add('is-auto-expanded');
+    // Pastikan tidak ada inline height yang tersisa
+    stage.style.height = '';
+    stage.style.overflow = '';
+
+    // Animasi cards saja, bukan height container
+    if (this.canAnimate()) {
+      this.animateRecommendationStage();
+    }
   }
 
   animateResultsEntrance() {

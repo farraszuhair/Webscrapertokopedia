@@ -4922,3 +4922,39 @@ body.modal-open {
   height: 0 !important;
   overflow: hidden !important;
 }
+
+/* ============================================================
+   GAP FIX v4 — HAPUS OVERFLOW HIDDEN + HEIGHT CONSTRAINT
+   ============================================================ */
+
+/* Penyebab gap utama:
+   1. overflow:hidden + height animation = konten terpotong = gap visual
+   2. translateY pada active-panel = panel bergerak dari bawah = gap sementara
+   3. IntersectionObserver expand = baru expand saat scroll = gap awal
+   Fix: hapus overflow:hidden, pastikan height auto, tidak ada translateY pada container */
+
+.recommendation-stage {
+  overflow: visible !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+.recommendation-stage.is-auto-expanded {
+  overflow: visible !important;
+  height: auto !important;
+}
+
+/* Pastikan active-panel tidak punya transform offset yang menyebabkan gap */
+.recommendation-active-panel {
+  transform: none !important;
+  opacity: 1 !important;
+  /* overflow: hidden tetap untuk clipping card */
+  overflow: hidden !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+/* Pastikan tidak ada inline style height yang tersisa dari animasi */
+#recommendation-stage[style*="height"] {
+  height: auto !important;
+}
