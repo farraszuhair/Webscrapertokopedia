@@ -4835,3 +4835,90 @@ body.modal-open {
   filter: none !important;
   -webkit-filter: none !important;
 }
+
+/* ============================================================
+   GAP FIX + LOGO FIX — v3
+   ============================================================ */
+
+/* 1. Logo pngegg.png — pastikan tampil tajam dan proporsional */
+.logo-icon img {
+  width: 32px !important;
+  height: 32px !important;
+  object-fit: contain !important;
+  image-rendering: auto !important;
+  display: block !important;
+  filter: none !important;
+}
+
+/* 2. Hapus min-height dari recommendation-stage
+      — ini penyebab gap terbesar: stage selalu 230px walau belum ada konten */
+.recommendation-stage {
+  min-height: 0 !important;
+}
+
+/* 3. Hapus margin-bottom dari result-summary
+      — elemen ini display:none tapi margin masih aktif di beberapa browser */
+#result-summary,
+.result-summary {
+  display: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* 4. Kurangi margin-bottom results-header agar tidak terlalu jauh */
+.results-header {
+  margin-bottom: 12px !important;
+}
+
+/* 5. Kurangi margin recommendations-panel */
+.recommendations-panel {
+  margin-bottom: 0 !important;
+  margin-top: 0 !important;
+}
+
+/* 6. Kurangi padding results-panel agar lebih compact */
+.results-panel {
+  padding: 20px !important;
+}
+
+/* 7. Pastikan comparison-panel.hidden dan r-warning.hidden tidak makan space */
+.comparison-panel.hidden,
+#comparison-panel.hidden {
+  display: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 0 !important;
+}
+
+.result-warning.hidden,
+#r-warning.hidden {
+  display: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 0 !important;
+}
+
+.r-budget-bar.hidden,
+#r-budget-bar.hidden {
+  display: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 0 !important;
+}
+
+/* 8. Kurangi gap antara results-header dan recommendations-panel */
+.results-panel > * + * {
+  /* reset default stacking gap */
+}
+
+/* 9. Pastikan hidden stat div tidak makan space */
+[aria-hidden="true"][style*="display:none"],
+[aria-hidden="true"][style*="display: none"] {
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}

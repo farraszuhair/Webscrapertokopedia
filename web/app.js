@@ -519,15 +519,17 @@ function renderRecommendationProductCard(product) {
     ? `<span class="rec-card-badge is-overbudget">Overbudget</span>`
     : '';
 
+  // Gambar atau placeholder
   const imageHtml = imageUrl
     ? `<img class="recommendation-product-image" src="${escapeHtml(imageUrl)}" data-original-src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" decoding="async" />`
     : "";
   const placeholderHtml = imageUrl
     ? `<div class="product-image-placeholder is-hidden" aria-hidden="true"></div>`
-    : `<div class="product-image-placeholder" aria-hidden="true"></div>`;
+    : `<div class="product-image-placeholder" aria-hidden="true"><span>Gambar tidak tersedia</span></div>`;
 
+  // TIDAK ADA tombol Benar/Salah/Buka di card — card seluruhnya clickable buka modal
   return `
-    <article class="recommendation-product-card" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}">
+    <article class="recommendation-product-card" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="${escapeHtml(title)}">
       <div class="recommendation-product-image-wrap${imageUrl ? "" : " is-image-missing"}">
         ${imageHtml}
         ${placeholderHtml}
@@ -541,11 +543,6 @@ function renderRecommendationProductCard(product) {
           ${soldStr ? `<span class="rec-sold">${escapeHtml(soldStr)}</span>` : ''}
         </div>
         ${aiStr ? `<div class="rec-ai-confidence">${escapeHtml(aiStr)}</div>` : ''}
-        <div class="rec-card-actions">
-          <button type="button" class="rec-action-btn is-correct" data-rec-feedback-correct data-product-id="${escapeHtml(id)}">Benar</button>
-          <button type="button" class="rec-action-btn is-wrong" data-rec-feedback-wrong data-product-id="${escapeHtml(id)}">Salah</button>
-          <a class="rec-action-btn is-open" href="${escapeHtml(item.url || '#')}" target="_blank" rel="noopener noreferrer">Buka</a>
-        </div>
       </div>
     </article>
   `;
@@ -574,33 +571,52 @@ function renderRecommendationContent(mode) {
   if (!grid) return;
 
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
-  const products = getActiveRecommendationProducts(normalizedMode);
-  
-  // Tampilkan/sembunyikan category limit bar
+
+  // Tampilkan/sembunyikan category limit bar — hanya untuk non-all
   const limitBar = document.getElementById('category-limit-bar');
   if (limitBar) {
     limitBar.classList.toggle('hidden', normalizedMode === 'all');
   }
 
-  // Ambil category_limit — dari inline input (setelah scraping) atau hidden input (default)
+  // Ambil category_limit dari inline input atau hidden input
   const inlineInput = document.getElementById('category_limit_inline');
   const hiddenInput = document.getElementById('category_limit');
   const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
-  const categoryLimit = Math.min(parseInt(rawLimit, 10) || 12, 50);
+  const categoryLimit = Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 100));
 
-  // Mode "all" tampilkan semua produk sesuai target utama (tidak dibatasi category_limit)
+  // Ambil produk yang belum direview untuk mode ini
+  const products = getActiveRecommendationProducts(normalizedMode);
   const isAllMode = normalizedMode === 'all';
-  const displayProducts = isAllMode ? products : products.slice(0, categoryLimit);
-  const hasShortage = !isAllMode && products.length < categoryLimit && products.length > 0;
-  const isEmpty = products.length === 0;
+
+  let displayProducts;
+  let shortageMsg = '';
+
+  if (isAllMode) {
+    // Semua Barang: tampilkan semua, tidak dibatasi category_limit
+    displayProducts = products;
+  } else {
+    // Kategori lain: tampilkan maksimal categoryLimit, tapi tidak dipaksa penuh
+    const actualCount = products.length;
+    displayProducts = products.slice(0, categoryLimit);
+
+    if (actualCount === 0) {
+      // Tidak ada produk sama sekali
+      shortageMsg = '';
+    } else if (actualCount < categoryLimit) {
+      // Data valid kurang dari yang diminta
+      const modeName = { terbaik: 'Terbaik', termurah: 'Termurah', trusted: 'Most Trusted' }[normalizedMode] || normalizedMode;
+      shortageMsg = `Menampilkan ${actualCount} dari ${categoryLimit} yang diminta — hanya ${actualCount} produk yang cocok di kategori ${modeName}.`;
+    }
+    // Kalau actualCount >= categoryLimit: tidak perlu pesan, tampilkan categoryLimit item
+  }
 
   let html = '';
-  if (isEmpty) {
+  if (displayProducts.length === 0) {
     html = '<div class="recommendation-empty">Belum ada produk yang cocok untuk kategori ini.</div>';
   } else {
     html = displayProducts.map(product => renderRecommendationProductCard(product)).join('');
-    if (hasShortage) {
-      html += `<div class="recommendation-shortage-notice">Kamu meminta ${categoryLimit} produk, tapi kategori ini hanya punya ${products.length} produk yang valid.</div>`;
+    if (shortageMsg) {
+      html += `<div class="recommendation-shortage-notice">${escapeHtml(shortageMsg)}</div>`;
     }
   }
 
@@ -1958,42 +1974,36 @@ if (!window.__pasarIntaiCategoryEventsBound) {
   });
 }
 
-// Delegated listener untuk tombol Benar/Salah di recommendation card
+// Delegated listener untuk klik card kategori (buka modal) dan tombol di checked tray
 if (!window.__MARKETSPY_REC_FEEDBACK_BOUND__) {
   window.__MARKETSPY_REC_FEEDBACK_BOUND__ = true;
 
   document.addEventListener("click", async event => {
-    // Tombol Benar di recommendation card
-    const correctBtn = event.target.closest("[data-rec-feedback-correct]");
-    if (correctBtn) {
-      event.preventDefault();
-      event.stopPropagation();
-      const productId = correctBtn.dataset.productId;
-      const card = correctBtn.closest(".recommendation-product-card");
-      if (productId && card) {
-        await handleGridFeedback(productId, 'positive', card);
-      }
+    // Klik card kategori → buka modal detail
+    const productCard = event.target.closest("[data-product-card]");
+    if (productCard) {
+      // Jangan buka modal kalau klik di link/button di dalam card (misal checked tray open btn)
+      const clickedInteractive = event.target.closest("a, button");
+      if (clickedInteractive) return;
+
+      const productId = productCard.dataset.productId;
+      if (!productId) return;
+
+      const product = findProductById(productId);
+      if (!product) return;
+
+      // Buka modal detail dengan queue dari mode aktif
+      const queue = getActiveRecommendationProducts(activeRecommendationMode);
+      openProductDetailModal(product, queue);
       return;
     }
 
-    // Tombol Salah di recommendation card
-    const wrongBtn = event.target.closest("[data-rec-feedback-wrong]");
-    if (wrongBtn) {
-      event.preventDefault();
-      event.stopPropagation();
-      const productId = wrongBtn.dataset.productId;
-      const card = wrongBtn.closest(".recommendation-product-card");
-      if (productId && card) {
-        await handleGridFeedback(productId, 'negative', card, { reasons: ['Ditandai salah oleh user'] });
-      }
-      return;
-    }
-
-    // Klik card Hasil Review — buka detail modal
+    // Klik card Hasil Review → buka modal detail
     const checkedCard = event.target.closest(".checked-product-card");
     if (checkedCard) {
       const openBtn = event.target.closest(".checked-action-btn.is-open");
       if (openBtn) return; // biarkan link buka produk jalan normal
+
       const productId = checkedCard.dataset.productId;
       if (productId) {
         const record = reviewState.checkedById.get(productId);
@@ -2006,6 +2016,15 @@ if (!window.__MARKETSPY_REC_FEEDBACK_BOUND__) {
       }
       return;
     }
+  });
+
+  // Keyboard accessibility untuk card (Enter/Space)
+  document.addEventListener("keydown", event => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const productCard = event.target.closest("[data-product-card]");
+    if (!productCard) return;
+    event.preventDefault();
+    productCard.click();
   });
 }
 
@@ -2020,7 +2039,7 @@ if (!window.__MARKETSPY_CATEGORY_LIMIT_BOUND__) {
     renderRecommendationContent(activeRecommendationMode);
   });
 
-  // Juga trigger saat user tekan Enter di input
+  // Trigger saat user tekan Enter di input
   document.addEventListener("keydown", event => {
     if (event.key === "Enter" && event.target.id === "category_limit_inline") {
       event.preventDefault();
@@ -3305,6 +3324,7 @@ class ScraperApp {
         ? this.state.recommendationSourceProducts
         : this.state.products)
     ];
+
     const number = (value) => {
       const parsed = Number(String(value ?? 0).replace(',', '.'));
       return Number.isFinite(parsed) ? parsed : 0;
@@ -3316,23 +3336,55 @@ class ScraperApp {
     const rating = (p) => number(p.rating);
     const confidence = (p) => number(p.confidenceScore ?? p.confidence ?? p.relevance_score ?? p.ai_confidence);
     const sold = (p) => number(p.soldCount ?? p.sold_count);
+    const reviewCount = (p) => number(p.review_count ?? p.reviewCount ?? 0);
+
+    // Skor trust gabungan untuk Most Trusted
+    const trustScore = (p) => {
+      const shopStr = String(p.storeName || p.shop_name || p.shop || '').toLowerCase();
+      const shopBoost = /(official|mall|power merchant|pro)/.test(shopStr) ? 0.3 : 0;
+      const ratingNorm = rating(p) / 5;
+      const soldNorm = Math.min(sold(p), 10000) / 10000;
+      const reviewNorm = Math.min(reviewCount(p), 5000) / 5000;
+      const confNorm = confidence(p) > 1 ? confidence(p) / 100 : confidence(p);
+      return shopBoost + ratingNorm * 0.3 + soldNorm * 0.25 + reviewNorm * 0.2 + confNorm * 0.25;
+    };
+
+    // Skor terbaik gabungan
+    const bestScore = (p) => {
+      const ratingNorm = rating(p) / 5;
+      const reviewNorm = Math.min(reviewCount(p), 5000) / 5000;
+      const soldNorm = Math.min(sold(p), 10000) / 10000;
+      const confNorm = confidence(p) > 1 ? confidence(p) / 100 : confidence(p);
+      return ratingNorm * 0.35 + reviewNorm * 0.25 + soldNorm * 0.2 + confNorm * 0.2;
+    };
+
+    // Filter produk yang punya harga valid untuk Termurah
+    const withValidPrice = list.filter(p => price(p) < Number.MAX_SAFE_INTEGER);
+
+    // Filter produk yang punya rating untuk Terbaik (minimal ada rating)
+    const withRating = list.filter(p => rating(p) > 0);
+
+    // Filter produk yang punya sold/review untuk Most Trusted
+    const withTrustSignal = list.filter(p => sold(p) > 0 || reviewCount(p) > 0 || rating(p) > 0);
 
     return {
+      // Semua Barang: semua produk, urutan asli (sudah di-sort backend)
       all: [...list],
-      terbaik: [...list].sort((a, b) =>
-        rating(b) - rating(a)
-        || confidence(b) - confidence(a)
-        || sold(b) - sold(a)
-      ),
-      termurah: [...list].sort((a, b) =>
-        price(a) - price(b)
-        || rating(b) - rating(a)
-      ),
-      trusted: [...list].sort((a, b) =>
-        sold(b) - sold(a)
-        || rating(b) - rating(a)
-        || confidence(b) - confidence(a)
-      ),
+
+      // Terbaik: produk dengan rating, diurutkan skor terbaik
+      terbaik: (withRating.length > 0 ? withRating : list)
+        .slice()
+        .sort((a, b) => bestScore(b) - bestScore(a)),
+
+      // Termurah: produk dengan harga valid, diurutkan harga terendah
+      termurah: (withValidPrice.length > 0 ? withValidPrice : list)
+        .slice()
+        .sort((a, b) => price(a) - price(b) || rating(b) - rating(a)),
+
+      // Most Trusted: produk dengan sinyal kepercayaan, diurutkan trust score
+      trusted: (withTrustSignal.length > 0 ? withTrustSignal : list)
+        .slice()
+        .sort((a, b) => trustScore(b) - trustScore(a)),
     };
   }
 
@@ -4786,12 +4838,17 @@ async function goToNextReviewProduct(feedbackPayload) {
     setReviewButtonsDisabled(true);
 
     const submitted = await submitProductFeedback(feedbackPayload);
-    await animateProductDetailOut();
 
+    // Tandai produk sebagai reviewed dan update tray
     const checkedTrayPromise = moveProductToCheckedTray(submitted.product, submitted.type, {
       reasons: submitted.reasons,
       note: submitted.note
     }).catch(error => console.error("[CHECKED_TRAY_TRANSITION_FAILED]", error));
+
+    // Re-render recommendation grid agar card yang sudah direview hilang
+    renderRecommendationContent(activeRecommendationMode);
+
+    await animateProductDetailOut();
 
     const hasNext = moveToNextReviewProduct();
 
@@ -4805,6 +4862,7 @@ async function goToNextReviewProduct(feedbackPayload) {
     renderProductDetailModal(getCurrentReviewProduct());
     await waitForProductImageReady();
     await animateProductDetailIn();
+    await checkedTrayPromise;
   } catch (err) {
     console.error("[REVIEW_NEXT_TRANSITION_FAILED]", err);
     showSmallToast("Feedback gagal disimpan. Coba lagi.");
@@ -4883,13 +4941,8 @@ if (!window.__pasarIntaiProductModalEventsBound) {
       return;
     }
 
-    const productCard = event.target.closest("[data-product-card]");
-    if (productCard) {
-      const productId = productCard.dataset.productId;
-      const product = findProductById(productId);
-      const queue = getActiveRecommendationProducts(activeRecommendationMode);
-      if (product) openProductDetailModal(product, queue);
-    }
+    // Klik card produk ditangani oleh __MARKETSPY_REC_FEEDBACK_BOUND__ listener
+    // Tidak perlu handler di sini untuk menghindari double-open
   });
 
   document.addEventListener("keydown", event => {
