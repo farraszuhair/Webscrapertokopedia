@@ -25,14 +25,23 @@ function formatRating(rating, reviewCount) {
   const r = Number(rating) || 0;
   const count = Number(reviewCount) || 0;
   if (r <= 0) return '';
-  const countStr = count >= 1000 ? `${(count / 1000).toFixed(1)}rb` : count.toString();
-  return `⭐ ${r} (${countStr || '0'})`;
+  // Format: Rating 5 (3,4rb) atau Rating 5 (800+)
+  let countStr = '';
+  if (count >= 1000) {
+    countStr = `${(count / 1000).toFixed(1).replace('.', ',')}rb`;
+  } else if (count > 0) {
+    countStr = `${count}+`;
+  }
+  return countStr ? `Rating ${r} (${countStr})` : `Rating ${r}`;
 }
 
 function formatSoldCount(sold) {
   if (!sold) return '';
-  const num = Number(sold);
-  if (!num) return String(sold);
+  // Jika sudah berupa string yang mengandung "terjual", jangan tambah lagi
+  const soldStr = String(sold);
+  if (/terjual/i.test(soldStr)) return soldStr;
+  const num = Number(soldStr.replace(/[^\d]/g, ''));
+  if (!num) return soldStr ? `${soldStr} terjual` : '';
   if (num >= 1000000) return `${(num / 1000000).toFixed(1)}jt+ terjual`;
   if (num >= 1000) return `${(num / 1000).toFixed(1)}rb+ terjual`;
   return `${num}+ terjual`;
@@ -474,17 +483,38 @@ function renderRecommendationProductCard(product) {
   const id = getProductReviewId(item);
   const imageUrl = resolveProductImage(item);
   const title = item.title || "Produk Tokopedia";
-  const ratingStr = item.rating ? `Rating ${item.rating}` : "";
-  const soldValue = item.sold || item.sold_text || item.soldCount || item.sold_count || "";
-  const soldStr = soldValue ? `${soldValue} terjual` : "";
-  const meta = [ratingStr, soldStr].filter(Boolean).join(" | ");
+
+  // Format rating: "Rating 5 (3,4rb)" atau "Rating 5 (800+)"
+  const ratingNum = Number(item.rating) || 0;
+  const reviewCount = Number(item.review_count || item.reviewCount || 0);
+  const ratingStr = ratingNum > 0 ? formatRating(ratingNum, reviewCount) : '';
+
+  // Format sold — hindari duplikat "terjual terjual"
+  const soldRaw = item.sold || item.sold_text || item.soldCount || item.sold_count || '';
+  const soldStr = soldRaw ? formatSoldCount(soldRaw) : '';
+
+  // Format harga
+  const priceStr = formatProductPrice(item);
+
+  // Format keyakinan AI
+  const aiValue = item.confidenceScore ?? item.ai_confidence ?? item.relevance_score;
+  const aiNumeric = Number(aiValue);
+  const aiStr = (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0)
+    ? `Keyakinan AI: ${aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100)}%`
+    : '';
+
+  // Overbudget badge
+  const isOverbudget = Boolean(item.outside_budget || item.target_first_fallback);
+  const overbudgetBadge = isOverbudget
+    ? `<span class="rec-card-badge is-overbudget">Overbudget</span>`
+    : '';
 
   const imageHtml = imageUrl
     ? `<img class="recommendation-product-image" src="${escapeHtml(imageUrl)}" data-original-src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" decoding="async" />`
     : "";
   const placeholderHtml = imageUrl
     ? `<div class="product-image-placeholder is-hidden" aria-hidden="true"></div>`
-    : `<div class="product-image-placeholder"></div>`;
+    : `<div class="product-image-placeholder" aria-hidden="true"></div>`;
 
   return `
     <article class="recommendation-product-card" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}">
@@ -493,9 +523,14 @@ function renderRecommendationProductCard(product) {
         ${placeholderHtml}
       </div>
       <div class="recommendation-product-card-details">
+        ${overbudgetBadge}
         <h4 class="recommendation-product-title">${escapeHtml(title)}</h4>
-        <div class="recommendation-product-price">${escapeHtml(formatProductPrice(item))}</div>
-        <div class="recommendation-product-meta">${escapeHtml(meta)}</div>
+        <div class="recommendation-product-price">${escapeHtml(priceStr)}</div>
+        <div class="recommendation-product-rating-row">
+          ${ratingStr ? `<span class="rec-rating">${escapeHtml(ratingStr)}</span>` : ''}
+          ${soldStr ? `<span class="rec-sold">${escapeHtml(soldStr)}</span>` : ''}
+        </div>
+        ${aiStr ? `<div class="rec-ai-confidence">${escapeHtml(aiStr)}</div>` : ''}
       </div>
     </article>
   `;
@@ -526,16 +561,30 @@ function renderRecommendationContent(mode) {
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
   const products = getActiveRecommendationProducts(normalizedMode);
   
-  // Get category_limit from form (default 12 if not specified)
+  // Ambil category_limit dari form (default 12 jika tidak diisi)
   const categoryLimitEl = document.getElementById('category_limit');
   const categoryLimit = categoryLimitEl && categoryLimitEl.value 
     ? Math.min(parseInt(categoryLimitEl.value, 10) || 12, 50) 
     : 12;
 
-  grid.innerHTML = products.length
-    ? products.slice(0, categoryLimit).map(product => renderRecommendationProductCard(product)).join("")
-    : '<div class="recommendation-empty">Semua produk di kategori ini sudah dicek.</div>';
+  // Mode "all" tampilkan semua produk sesuai target utama (tidak dibatasi category_limit)
+  const isAllMode = normalizedMode === 'all';
+  const displayProducts = isAllMode ? products : products.slice(0, categoryLimit);
+  const hasShortage = !isAllMode && products.length < categoryLimit && products.length > 0;
+  const isEmpty = products.length === 0;
 
+  let html = '';
+  if (isEmpty) {
+    html = '<div class="recommendation-empty">Semua produk di kategori ini sudah dicek.</div>';
+  } else {
+    html = displayProducts.map(product => renderRecommendationProductCard(product)).join('');
+    // Tampilkan pesan kalau data kurang dari yang diminta user
+    if (hasShortage) {
+      html += `<div class="recommendation-shortage-notice">Kategori ini hanya memiliki ${products.length} produk yang cocok dari ${categoryLimit} yang diminta.</div>`;
+    }
+  }
+
+  grid.innerHTML = html;
   setupProductImageErrorHandlers(grid);
 }
 
@@ -920,9 +969,41 @@ function createCheckedProductCard(record) {
   card.className = `checked-product-card is-${record.result === "positive" ? "positive" : "negative"}`;
   card.dataset.productId = record.id;
 
+  // Badge di kiri atas
   const badge = document.createElement("span");
   badge.className = `checked-product-badge is-${record.result === "positive" ? "positive" : "negative"}`;
   badge.textContent = record.result === "positive" ? "Benar" : "Salah";
+
+  // Layout: gambar + info
+  const layout = document.createElement("div");
+  layout.className = "checked-product-layout";
+
+  // Gambar produk
+  const imageUrl = resolveProductImage(product);
+  const imgWrap = document.createElement("div");
+  imgWrap.className = "checked-product-image-wrap";
+  if (imageUrl) {
+    const img = document.createElement("img");
+    img.className = "checked-product-image";
+    img.src = imageUrl;
+    img.alt = product.title || "Gambar produk";
+    img.loading = "lazy";
+    img.onerror = () => {
+      if (!img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+        img.dataset.proxyTried = "1";
+        img.src = window.app.proxyImageUrl(imageUrl);
+        return;
+      }
+      imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Tidak ada gambar</div>';
+    };
+    imgWrap.appendChild(img);
+  } else {
+    imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Tidak ada gambar</div>';
+  }
+
+  // Info produk
+  const info = document.createElement("div");
+  info.className = "checked-product-info";
 
   const title = document.createElement("h4");
   title.className = "checked-product-title";
@@ -932,15 +1013,66 @@ function createCheckedProductCard(record) {
   price.className = "checked-product-price";
   price.textContent = formatProductPrice(product);
 
-  const meta = document.createElement("p");
-  meta.className = "checked-product-meta";
+  // Rating + sold
+  const ratingNum = Number(product.rating) || 0;
+  const reviewCount = Number(product.review_count || product.reviewCount || 0);
+  const ratingStr = ratingNum > 0 ? formatRating(ratingNum, reviewCount) : '';
+  const soldRaw = product.sold || product.sold_text || product.soldCount || product.sold_count || '';
+  const soldStr = soldRaw ? formatSoldCount(soldRaw) : '';
+
+  const metaRow = document.createElement("div");
+  metaRow.className = "checked-product-meta-row";
+  if (ratingStr) {
+    const ratingEl = document.createElement("span");
+    ratingEl.className = "checked-meta-rating";
+    ratingEl.textContent = ratingStr;
+    metaRow.appendChild(ratingEl);
+  }
+  if (soldStr) {
+    const soldEl = document.createElement("span");
+    soldEl.className = "checked-meta-sold";
+    soldEl.textContent = soldStr;
+    metaRow.appendChild(soldEl);
+  }
+
+  // Keyakinan AI
+  const aiValue = product.confidenceScore ?? product.ai_confidence ?? product.relevance_score;
+  const aiNumeric = Number(aiValue);
+  const aiStr = (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0)
+    ? `Keyakinan AI: ${aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100)}%`
+    : '';
+
+  const sourceMeta = document.createElement("p");
+  sourceMeta.className = "checked-product-meta";
   const modeLabel = RECOMMENDATION_MODES[record.sourceMode]?.label || "Semua Barang";
-  meta.textContent = `${modeLabel} | ${new Date(record.reviewedAt).toLocaleTimeString("id-ID", {
+  sourceMeta.textContent = `${modeLabel} · ${new Date(record.reviewedAt).toLocaleTimeString("id-ID", {
     hour: "2-digit",
     minute: "2-digit"
   })}`;
 
-  card.append(badge, title, price, meta);
+  info.append(title, price, metaRow);
+  if (aiStr) {
+    const aiEl = document.createElement("p");
+    aiEl.className = "checked-product-ai";
+    aiEl.textContent = aiStr;
+    info.appendChild(aiEl);
+  }
+  info.appendChild(sourceMeta);
+
+  // Tombol aksi
+  const actions = document.createElement("div");
+  actions.className = "checked-product-actions";
+
+  const openBtn = document.createElement("a");
+  openBtn.className = "checked-action-btn is-open";
+  openBtn.href = product.url || product.product_url || "#";
+  openBtn.target = "_blank";
+  openBtn.rel = "noopener noreferrer";
+  openBtn.textContent = "Buka Produk";
+  actions.appendChild(openBtn);
+
+  layout.append(imgWrap, info);
+  card.append(badge, layout, actions);
   return card;
 }
 
@@ -2351,6 +2483,33 @@ class ScraperApp {
     const json = this.$('ai-status-json');
     const install = this.$('ai-install-command');
     const useAi = this.$('use_ai');
+
+    // Update badge di form (ai-scraper-badge)
+    const scraperBadge = this.$('ai-scraper-badge');
+    const scraperMessage = this.$('ai-scraper-message');
+    if (scraperBadge) {
+      scraperBadge.textContent = status?.ok ? 'AI Aktif' : 'Rules saja';
+      scraperBadge.className = `ai-scraper-badge ${status?.ok ? 'is-ready' : 'is-fallback'}`;
+    }
+    if (scraperMessage) {
+      scraperMessage.textContent = status?.ok
+        ? (status.message || 'AI Orchestrator siap digunakan')
+        : 'Model AI belum terinstall. Jalankan: ollama pull gemma3:4b';
+    }
+
+    // Update badge AI Scraper di header
+    const headerBadge = this.$('ai-scraper-header-badge');
+    if (headerBadge) {
+      const headerText = headerBadge.querySelector('.ai-scraper-header-text');
+      if (status?.ok) {
+        headerBadge.className = 'ai-scraper-header-badge is-active';
+        if (headerText) headerText.textContent = 'AI Scraper Aktif';
+      } else {
+        headerBadge.className = 'ai-scraper-header-badge is-inactive';
+        if (headerText) headerText.textContent = 'AI Scraper Tidak Aktif';
+      }
+    }
+
     if (!badge || !message || !classifier || !semantic || !json || !install) return;
 
     const capabilities = status?.capabilities || {};
@@ -3106,9 +3265,12 @@ class ScraperApp {
     
     const span = document.createElement('div');
     span.className = 'recommendation-product-meta';
-    const ratingStr = item.rating ? `⭐ ${item.rating}` : '';
-    const soldStr = item.sold || item.sold_text || item.soldCount || item.sold_count ? `${item.sold || item.sold_text || item.soldCount || item.sold_count} terjual` : '';
-    span.textContent = [ratingStr, soldStr].filter(Boolean).join(' | ');
+    const ratingNum = Number(item.rating) || 0;
+    const reviewCount = Number(item.review_count || item.reviewCount || 0);
+    const ratingStr = ratingNum > 0 ? formatRating(ratingNum, reviewCount) : '';
+    const soldRaw = item.sold || item.sold_text || item.soldCount || item.sold_count || '';
+    const soldStr = soldRaw ? formatSoldCount(soldRaw) : '';
+    span.textContent = [ratingStr, soldStr].filter(Boolean).join(' · ');
 
     details.append(h4, strong, span);
     card.append(imgWrap, details);
@@ -3485,14 +3647,26 @@ class ScraperApp {
 
     const meta = document.createElement('div');
     meta.className = 'product-meta';
-    if (product.rating) this.appendText(meta, 'product-rating', `Rating ${product.rating}`, 'span');
-    if (soldText) this.appendText(meta, 'product-sold', String(soldText), 'span');
+    if (product.rating) {
+      const reviewCount = Number(product.review_count || product.reviewCount || 0);
+      this.appendText(meta, 'product-rating', formatRating(Number(product.rating), reviewCount), 'span');
+    }
+    if (soldText) {
+      const soldFormatted = formatSoldCount(soldText);
+      this.appendText(meta, 'product-sold', soldFormatted, 'span');
+    }
     if (shopName) this.appendText(meta, 'product-shop', shopName, 'span');
     if (shopLocation) this.appendText(meta, 'product-location', shopLocation, 'span');
     body.appendChild(meta);
 
     const badges = document.createElement('div');
     badges.className = 'product-badges';
+    // Overbudget badge otomatis
+    if (product.outside_budget || product.target_first_fallback) {
+      const overBadge = this.createBadge('Overbudget');
+      overBadge.className = 'product-badge is-overbudget';
+      badges.appendChild(overBadge);
+    }
     if (aiValue != null && Number.isFinite(aiNumeric)) {
       badges.appendChild(this.createBadge(`AI ${aiNumeric.toFixed(2)} ${aiConfidenceLabel}`));
     }
