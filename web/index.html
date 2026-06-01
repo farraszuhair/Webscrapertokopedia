@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PasarIntai AI</title>
-  <meta name="description" content="PasarIntai AI scraper with Puppeteer, Selenium rollback, intent-aware filtering, and local Ollama validation.">
+  <title>MarketSpy AI</title>
+  <meta name="description" content="MarketSpy AI - Mencari barang terbaik sesuai budget dengan teknologi scraping dan AI lokal.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -14,10 +14,19 @@
     <header class="header">
       <div class="header-inner">
         <div class="logo">
-          <span class="logo-icon">PI</span>
+          <span class="logo-icon" title="MarketSpy AI">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24">
+              <path d="M8 12a1 1 0 1 0 2 0 1 1 0 0 0-2 0"></path>
+              <path d="M14 12a1 1 0 1 0 2 0 1 1 0 0 0-2 0"></path>
+              <circle cx="10" cy="6" r="1" opacity="0.5"></circle>
+              <circle cx="14" cy="6" r="1" opacity="0.5"></circle>
+              <path d="M3 12a9 9 0 0 1 18 0"></path>
+              <path d="M9 6h6"></path>
+            </svg>
+          </span>
           <div>
-            <h1>PasarIntai AI</h1>
-            <p>Scraping produk yang rapi, bertahap, dan mudah diaudit</p>
+            <h1>MarketSpy AI</h1>
+            <p>Mencari barang terbaik sesuai budget.</p>
           </div>
         </div>
         <div class="app-status-badge is-idle" data-app-status-badge aria-live="polite">
@@ -38,44 +47,27 @@
         <div class="form-row">
           <div class="form-group">
             <label for="target_count">Jumlah target <span class="required">*</span></label>
-            <input type="number" id="target_count" value="50" min="0" max="100">
+            <input type="number" id="target_count" placeholder="Contoh: 20" min="1" max="100">
           </div>
 
           <div class="form-group">
             <label for="tolerance">Toleransi budget (%)</label>
-            <input type="number" id="tolerance" value="20" min="0" max="100">
+            <input type="number" id="tolerance" placeholder="Contoh: 20" min="0" max="100">
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="engine_mode">Mode Engine</label>
-          <select id="engine_mode">
-            <option value="auto">Auto</option>
-            <option value="puppeteer">Puppeteer saja</option>
-            <option value="selenium">Selenium saja</option>
-            <option value="compare_both">Bandingkan keduanya</option>
-          </select>
-        </div>
-
-        <div id="ai-status-card" class="ai-status-card">
-          <div class="ai-status-head">
-            <strong>AI Orchestrator</strong>
-            <span id="ai-status-badge" class="ai-status-badge is-checking">Mengecek...</span>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="budget">Budget (Rp) - Opsional</label>
+            <div class="budget-input-wrap">
+              <span class="budget-prefix">Rp</span>
+              <input type="text" id="budget" placeholder="10.000.000" autocomplete="off" inputmode="numeric">
+            </div>
           </div>
-          <p id="ai-status-message" class="ai-status-message">Memeriksa model Ollama lokal...</p>
-          <div class="ai-status-grid">
-            <span>Klasifikasi</span><b id="ai-status-classifier">-</b>
-            <span>Semantik</span><b id="ai-status-semantic">-</b>
-            <span>Perbaikan JSON</span><b id="ai-status-json">-</b>
-          </div>
-          <pre id="ai-install-command" class="ai-install-command hidden"></pre>
-        </div>
 
-        <div class="form-group">
-          <label for="budget">Budget (Rp) - kosongkan jika tidak ada budget</label>
-          <div class="budget-input-wrap">
-            <span class="budget-prefix">Rp</span>
-            <input type="text" id="budget" placeholder="10.000.000" autocomplete="off" inputmode="numeric">
+          <div class="form-group">
+            <label for="category_limit">Jumlah data per kategori</label>
+            <input type="number" id="category_limit" placeholder="Contoh: 10" min="1" max="50">
           </div>
         </div>
 
@@ -94,6 +86,14 @@
           </div>
         </div>
 
+        <div id="ai-scraper-status" class="ai-scraper-status">
+          <div class="ai-scraper-status-head">
+            <strong>Status AI Scraper</strong>
+            <span id="ai-scraper-badge" class="ai-scraper-badge is-checking">Mengecek...</span>
+          </div>
+          <p id="ai-scraper-message" class="ai-scraper-message">Memeriksa status AI Scraper...</p>
+        </div>
+
         <div class="form-group checkbox-group">
           <label class="checkbox-label">
             <input type="checkbox" id="use_ai" checked>
@@ -102,29 +102,8 @@
           </label>
         </div>
 
-        <div class="form-group checkbox-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="target_first_mode">
-            <span>Prioritaskan jumlah target walau sedikit keluar budget</span>
-          </label>
-          <div class="target-priority-info-box">
-            <button type="button" class="info-toggle" data-toggle-target-priority-info>
-              Apa maksud opsi ini?
-            </button>
-
-            <div class="info-content" hidden>
-              <p>
-                Jika aktif, sistem akan memprioritaskan jumlah target produk.
-                Produk yang sedikit keluar dari budget tetap bisa muncul, tetapi diberi badge khusus agar mudah dibedakan.
-              </p>
-            </div>
-          </div>
-        </div>
-
         <div class="form-actions">
           <button id="search-btn" class="btn btn-primary btn-large" onclick="app.startSearch()">Mulai Scraping</button>
-          <button id="reset-ai-btn" class="btn btn-ghost" type="button">Reset AI</button>
-          <button id="reset-learning-btn" class="btn btn-ghost" type="button">Reset Pembelajaran</button>
         </div>
       </section>
 

@@ -1,11 +1,75 @@
 /**
- * Tokopedia Scraper frontend controller.
+ * Tokopedia Scraper frontend controller - MarketSpy AI UI
  *
- * Active UI contract:
- * - product cards show only Benar / Salah
- * - Salah opens a modal before POST /api/feedback
- * - recommendations render as one collapsed clickable box
+ * State management and helper functions untuk rendering produk dan feedback.
  */
+
+/* ─── HELPER FUNCTIONS ─── */
+
+function formatPrice(value) {
+  if (!value) return 'Harga tidak tersedia';
+  const num = Number(value);
+  if (!num) return 'Harga tidak tersedia';
+  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num);
+}
+
+function formatDiscount(oldPrice, newPrice) {
+  const old = Number(oldPrice);
+  const newVal = Number(newPrice);
+  if (old <= 0 || newVal <= 0 || newVal >= old) return '';
+  const percent = Math.round((1 - newVal / old) * 100);
+  return `Hemat ${percent}%`;
+}
+
+function formatRating(rating, reviewCount) {
+  const r = Number(rating) || 0;
+  const count = Number(reviewCount) || 0;
+  if (r <= 0) return '';
+  const countStr = count >= 1000 ? `${(count / 1000).toFixed(1)}rb` : count.toString();
+  return `⭐ ${r} (${countStr || '0'})`;
+}
+
+function formatSoldCount(sold) {
+  if (!sold) return '';
+  const num = Number(sold);
+  if (!num) return String(sold);
+  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}jt+ terjual`;
+  if (num >= 1000) return `${(num / 1000).toFixed(1)}rb+ terjual`;
+  return `${num}+ terjual`;
+}
+
+function formatAiConfidence(confidence) {
+  const conf = Number(confidence);
+  if (!conf || conf < 0) return 'N/A';
+  if (conf > 1) return `${conf}%`;
+  return `${Math.round(conf * 100)}%`;
+}
+
+function getProductImage(product) {
+  const candidates = [
+    product?.image_url, product?.image, product?.thumbnail, product?.thumb,
+    product?.img, product?.photo, Array.isArray(product?.images) ? product.images[0] : null,
+    product?.media?.image, product?.media?.thumbnail, product?.media?.url
+  ];
+  for (const val of candidates) {
+    if (!val) continue;
+    let url = String(val).trim();
+    if (!url) continue;
+    if (/^data:image\//i.test(url)) return url;
+    if (url.startsWith("//")) url = `https:${url}`;
+    if (/^https?:\/\//i.test(url)) return url;
+  }
+  return '';
+}
+
+function getCategoryProducts(category, limit) {
+  if (!window.app || !window.app.buildRecommendationBuckets) return [];
+  const buckets = window.app.buildRecommendationBuckets();
+  const products = buckets[category] || [];
+  return limit ? products.slice(0, limit) : products;
+}
+
+/* ─── ANIMATION & TRANSFORM ─── */
 
 function buildTransformFromParams(params, index) {
   const parts = [];
@@ -461,9 +525,15 @@ function renderRecommendationContent(mode) {
 
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
   const products = getActiveRecommendationProducts(normalizedMode);
+  
+  // Get category_limit from form (default 12 if not specified)
+  const categoryLimitEl = document.getElementById('category_limit');
+  const categoryLimit = categoryLimitEl && categoryLimitEl.value 
+    ? Math.min(parseInt(categoryLimitEl.value, 10) || 12, 50) 
+    : 12;
 
   grid.innerHTML = products.length
-    ? products.slice(0, 12).map(product => renderRecommendationProductCard(product)).join("")
+    ? products.slice(0, categoryLimit).map(product => renderRecommendationProductCard(product)).join("")
     : '<div class="recommendation-empty">Semua produk di kategori ini sudah dicek.</div>';
 
   setupProductImageErrorHandlers(grid);
