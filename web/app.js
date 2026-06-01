@@ -484,10 +484,16 @@ function renderRecommendationProductCard(product) {
   const imageUrl = resolveProductImage(item);
   const title = item.title || "Produk Tokopedia";
 
-  // Format rating: "Rating 5 (3,4rb)" atau "Rating 5 (800+)"
+  // Format rating: "⭐ 5 (3,4rb)" atau "⭐ 5 (800+)"
   const ratingNum = Number(item.rating) || 0;
   const reviewCount = Number(item.review_count || item.reviewCount || 0);
-  const ratingStr = ratingNum > 0 ? formatRating(ratingNum, reviewCount) : '';
+  let ratingStr = '';
+  if (ratingNum > 0) {
+    let countStr = '';
+    if (reviewCount >= 1000) countStr = `${(reviewCount / 1000).toFixed(1).replace('.', ',')}rb`;
+    else if (reviewCount > 0) countStr = `${reviewCount}+`;
+    ratingStr = countStr ? `⭐ ${ratingNum} (${countStr})` : `⭐ ${ratingNum}`;
+  }
 
   // Format sold — hindari duplikat "terjual terjual"
   const soldRaw = item.sold || item.sold_text || item.soldCount || item.sold_count || '';
@@ -496,12 +502,16 @@ function renderRecommendationProductCard(product) {
   // Format harga
   const priceStr = formatProductPrice(item);
 
-  // Format keyakinan AI
+  // Format keyakinan AI dalam persen
   const aiValue = item.confidenceScore ?? item.ai_confidence ?? item.relevance_score;
   const aiNumeric = Number(aiValue);
-  const aiStr = (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0)
-    ? `Keyakinan AI: ${aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100)}%`
-    : '';
+  let aiStr = '';
+  if (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0) {
+    const pct = aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100);
+    const decisionSource = item.ai_source || item.decision_source || '';
+    const isRulesOnly = /rule/i.test(decisionSource) && !/llm|ai|classifier/i.test(decisionSource);
+    aiStr = isRulesOnly ? `Rules: diterima` : `Keyakinan AI: ${pct}%`;
+  }
 
   // Overbudget badge
   const isOverbudget = Boolean(item.outside_budget || item.target_first_fallback);
@@ -531,6 +541,11 @@ function renderRecommendationProductCard(product) {
           ${soldStr ? `<span class="rec-sold">${escapeHtml(soldStr)}</span>` : ''}
         </div>
         ${aiStr ? `<div class="rec-ai-confidence">${escapeHtml(aiStr)}</div>` : ''}
+        <div class="rec-card-actions">
+          <button type="button" class="rec-action-btn is-correct" data-rec-feedback-correct data-product-id="${escapeHtml(id)}">Benar</button>
+          <button type="button" class="rec-action-btn is-wrong" data-rec-feedback-wrong data-product-id="${escapeHtml(id)}">Salah</button>
+          <a class="rec-action-btn is-open" href="${escapeHtml(item.url || '#')}" target="_blank" rel="noopener noreferrer">Buka</a>
+        </div>
       </div>
     </article>
   `;
@@ -561,11 +576,17 @@ function renderRecommendationContent(mode) {
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
   const products = getActiveRecommendationProducts(normalizedMode);
   
-  // Ambil category_limit dari form (default 12 jika tidak diisi)
-  const categoryLimitEl = document.getElementById('category_limit');
-  const categoryLimit = categoryLimitEl && categoryLimitEl.value 
-    ? Math.min(parseInt(categoryLimitEl.value, 10) || 12, 50) 
-    : 12;
+  // Tampilkan/sembunyikan category limit bar
+  const limitBar = document.getElementById('category-limit-bar');
+  if (limitBar) {
+    limitBar.classList.toggle('hidden', normalizedMode === 'all');
+  }
+
+  // Ambil category_limit — dari inline input (setelah scraping) atau hidden input (default)
+  const inlineInput = document.getElementById('category_limit_inline');
+  const hiddenInput = document.getElementById('category_limit');
+  const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
+  const categoryLimit = Math.min(parseInt(rawLimit, 10) || 12, 50);
 
   // Mode "all" tampilkan semua produk sesuai target utama (tidak dibatasi category_limit)
   const isAllMode = normalizedMode === 'all';
@@ -575,12 +596,11 @@ function renderRecommendationContent(mode) {
 
   let html = '';
   if (isEmpty) {
-    html = '<div class="recommendation-empty">Semua produk di kategori ini sudah dicek.</div>';
+    html = '<div class="recommendation-empty">Belum ada produk yang cocok untuk kategori ini.</div>';
   } else {
     html = displayProducts.map(product => renderRecommendationProductCard(product)).join('');
-    // Tampilkan pesan kalau data kurang dari yang diminta user
     if (hasShortage) {
-      html += `<div class="recommendation-shortage-notice">Kategori ini hanya memiliki ${products.length} produk yang cocok dari ${categoryLimit} yang diminta.</div>`;
+      html += `<div class="recommendation-shortage-notice">Kamu meminta ${categoryLimit} produk, tapi kategori ini hanya punya ${products.length} produk yang valid.</div>`;
     }
   }
 
@@ -1084,7 +1104,10 @@ function renderCheckedProductsBox(mode) {
   const count = document.querySelector(".checked-products-count");
   if (!box || !grid) return;
 
-  const records = getCheckedProductsForMode(mode);
+  // Hanya tampilkan produk yang diklik "Benar" (positive)
+  const allRecords = getCheckedProductsForMode(mode);
+  const records = allRecords.filter(r => r.result === 'positive');
+
   if (count) count.textContent = `${records.length} produk`;
 
   grid.innerHTML = "";
@@ -1092,7 +1115,7 @@ function renderCheckedProductsBox(mode) {
   if (!records.length) {
     const empty = document.createElement("div");
     empty.className = "checked-products-empty";
-    empty.textContent = "Belum ada produk yang dicek.";
+    empty.textContent = "Belum ada produk yang ditandai Benar.";
     grid.appendChild(empty);
   } else {
     records.forEach(record => grid.appendChild(createCheckedProductCard(record)));
@@ -1649,9 +1672,19 @@ async function handleGridFeedback(productId, type, card, extra = {}) {
       note: extra.note || ""
     });
 
+    // Tandai sebagai reviewed
     reviewedProductIds.add(String(productId));
 
-    animateGridCardExitAndFocusNext(card);
+    // Cari product object dari state
+    const product = (window.__MARKETSPY_PRODUCTS__ || []).find(p => getProductReviewId(p) === String(productId));
+    if (product) {
+      markProductAsReviewed(product, type, extra);
+    }
+
+    // Re-render recommendation content dan checked box
+    renderRecommendationContent(activeRecommendationMode);
+    renderCheckedProductsBox(activeRecommendationMode);
+
   } catch (error) {
     console.error("[FEEDBACK] grid feedback failed:", error);
     showSmallToast("Feedback gagal dikirim. Coba lagi.");
@@ -1925,6 +1958,77 @@ if (!window.__pasarIntaiCategoryEventsBound) {
   });
 }
 
+// Delegated listener untuk tombol Benar/Salah di recommendation card
+if (!window.__MARKETSPY_REC_FEEDBACK_BOUND__) {
+  window.__MARKETSPY_REC_FEEDBACK_BOUND__ = true;
+
+  document.addEventListener("click", async event => {
+    // Tombol Benar di recommendation card
+    const correctBtn = event.target.closest("[data-rec-feedback-correct]");
+    if (correctBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const productId = correctBtn.dataset.productId;
+      const card = correctBtn.closest(".recommendation-product-card");
+      if (productId && card) {
+        await handleGridFeedback(productId, 'positive', card);
+      }
+      return;
+    }
+
+    // Tombol Salah di recommendation card
+    const wrongBtn = event.target.closest("[data-rec-feedback-wrong]");
+    if (wrongBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const productId = wrongBtn.dataset.productId;
+      const card = wrongBtn.closest(".recommendation-product-card");
+      if (productId && card) {
+        await handleGridFeedback(productId, 'negative', card, { reasons: ['Ditandai salah oleh user'] });
+      }
+      return;
+    }
+
+    // Klik card Hasil Review — buka detail modal
+    const checkedCard = event.target.closest(".checked-product-card");
+    if (checkedCard) {
+      const openBtn = event.target.closest(".checked-action-btn.is-open");
+      if (openBtn) return; // biarkan link buka produk jalan normal
+      const productId = checkedCard.dataset.productId;
+      if (productId) {
+        const record = reviewState.checkedById.get(productId);
+        if (record?.product) {
+          const queue = Array.from(reviewState.checkedById.values())
+            .filter(r => r.result === 'positive')
+            .map(r => r.product);
+          openProductDetailModal(record.product, queue);
+        }
+      }
+      return;
+    }
+  });
+}
+
+// Event listener untuk tombol Terapkan di category limit bar
+if (!window.__MARKETSPY_CATEGORY_LIMIT_BOUND__) {
+  window.__MARKETSPY_CATEGORY_LIMIT_BOUND__ = true;
+
+  document.addEventListener("click", event => {
+    const applyBtn = event.target.closest("#category-limit-apply");
+    if (!applyBtn) return;
+    event.preventDefault();
+    renderRecommendationContent(activeRecommendationMode);
+  });
+
+  // Juga trigger saat user tekan Enter di input
+  document.addEventListener("keydown", event => {
+    if (event.key === "Enter" && event.target.id === "category_limit_inline") {
+      event.preventDefault();
+      renderRecommendationContent(activeRecommendationMode);
+    }
+  });
+}
+
 // Delegated modal feedback click listener
 if (!window.__MARKETSPY_MODAL_FEEDBACK_BOUND__) {
   window.__MARKETSPY_MODAL_FEEDBACK_BOUND__ = true;
@@ -1997,7 +2101,7 @@ const PROGRESS_STAGE_TEXT = {
   ai: "AI sedang audit kandidat...",
   ranking: "Menyusun rekomendasi terbaik...",
   done: "Selesai — hasil siap ditampilkan",
-  error: "Pipeline error — cek log"
+  error: "Terjadi kesalahan — cek koneksi"
 };
 
 let lastProgressStage = null;
@@ -2113,13 +2217,15 @@ function scrambleProgressTo(targetText, stage) {
 
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+  // Langsung set teks tanpa scramble — hindari karakter garbage
   if (reduceMotion) {
     el.textContent = targetText;
     return;
   }
 
-  const chars = "01AI<>SCRAPE{}[]#$%";
-  const duration = stage === "done" || stage === "error" ? 650 : 850;
+  // Scramble hanya pakai karakter yang aman dan mudah dibaca
+  const chars = "0123456789abcdef.";
+  const duration = stage === "done" || stage === "error" ? 500 : 700;
   const start = performance.now();
 
   function frame(now) {
@@ -2127,11 +2233,14 @@ function scrambleProgressTo(targetText, stage) {
     const reveal = Math.floor(targetText.length * progress);
 
     let output = "";
-
     for (let i = 0; i < targetText.length; i++) {
-      output += i < reveal
-        ? targetText[i]
-        : chars[Math.floor(Math.random() * chars.length)];
+      if (i < reveal) {
+        output += targetText[i];
+      } else if (targetText[i] === " ") {
+        output += " ";
+      } else {
+        output += chars[Math.floor(Math.random() * chars.length)];
+      }
     }
 
     el.textContent = output;
@@ -2476,28 +2585,7 @@ class ScraperApp {
   }
 
   renderAiStatus(status) {
-    const badge = this.$('ai-status-badge');
-    const message = this.$('ai-status-message');
-    const classifier = this.$('ai-status-classifier');
-    const semantic = this.$('ai-status-semantic');
-    const json = this.$('ai-status-json');
-    const install = this.$('ai-install-command');
-    const useAi = this.$('use_ai');
-
-    // Update badge di form (ai-scraper-badge)
-    const scraperBadge = this.$('ai-scraper-badge');
-    const scraperMessage = this.$('ai-scraper-message');
-    if (scraperBadge) {
-      scraperBadge.textContent = status?.ok ? 'AI Aktif' : 'Rules saja';
-      scraperBadge.className = `ai-scraper-badge ${status?.ok ? 'is-ready' : 'is-fallback'}`;
-    }
-    if (scraperMessage) {
-      scraperMessage.textContent = status?.ok
-        ? (status.message || 'AI Orchestrator siap digunakan')
-        : 'Model AI belum terinstall. Jalankan: ollama pull gemma3:4b';
-    }
-
-    // Update badge AI Scraper di header
+    // Update badge AI Scraper di header (selalu ada)
     const headerBadge = this.$('ai-scraper-header-badge');
     if (headerBadge) {
       const headerText = headerBadge.querySelector('.ai-scraper-header-text');
@@ -2508,6 +2596,33 @@ class ScraperApp {
         headerBadge.className = 'ai-scraper-header-badge is-inactive';
         if (headerText) headerText.textContent = 'AI Scraper Tidak Aktif';
       }
+    }
+
+    // Update use_ai hidden input
+    const useAi = this.$('use_ai');
+    if (useAi) {
+      // Selalu aktif — AI otomatis pakai rules kalau Ollama tidak tersedia
+      useAi.value = 'true';
+    }
+
+    // Elemen-elemen berikut mungkin tidak ada di HTML baru — guard dengan optional chaining
+    const badge = this.$('ai-status-badge');
+    const message = this.$('ai-status-message');
+    const classifier = this.$('ai-status-classifier');
+    const semantic = this.$('ai-status-semantic');
+    const json = this.$('ai-status-json');
+    const install = this.$('ai-install-command');
+    const scraperBadge = this.$('ai-scraper-badge');
+    const scraperMessage = this.$('ai-scraper-message');
+
+    if (scraperBadge) {
+      scraperBadge.textContent = status?.ok ? 'AI Aktif' : 'Rules saja';
+      scraperBadge.className = `ai-scraper-badge ${status?.ok ? 'is-ready' : 'is-fallback'}`;
+    }
+    if (scraperMessage) {
+      scraperMessage.textContent = status?.ok
+        ? (status.message || 'AI Orchestrator siap digunakan')
+        : 'Model AI belum terinstall. Jalankan: ollama pull gemma3:4b';
     }
 
     if (!badge || !message || !classifier || !semantic || !json || !install) return;
@@ -2535,17 +2650,9 @@ class ScraperApp {
         ? ['Model opsional yang belum terinstall:', ...missingCommands].join('\n')
         : '';
       install.classList.toggle('hidden', !missingCommands.length);
-      if (useAi) {
-        useAi.disabled = false;
-        useAi.checked = true;
-      }
     } else {
       install.textContent = commands.join('\n');
       install.classList.remove('hidden');
-      if (useAi) {
-        useAi.checked = false;
-        useAi.disabled = true;
-      }
     }
   }
 
@@ -2554,11 +2661,16 @@ class ScraperApp {
     const targetRaw = this.$('target_count')?.value ?? '';
     const parsedTarget = Number.parseInt(targetRaw, 10);
     const target = Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : 50;
-    const tolerance = Number.parseFloat(this.$('tolerance')?.value || '20');
-    const ai = this.$('use_ai')?.checked ?? true;
-    const engineMode = this.$('engine_mode')?.value || 'auto';
-    const targetFirstMode = this.$('target_first_mode')?.checked ?? false;
+    const toleranceRaw = this.$('tolerance')?.value;
+    const tolerance = toleranceRaw ? Number.parseFloat(toleranceRaw) : 20;
+    // AI selalu aktif — otomatis pakai rules kalau Ollama tidak tersedia
+    const ai = true;
+    const engineMode = 'auto';
+    const targetFirstMode = true; // selalu aktif agar target terpenuhi
     const budget = this.getBudgetText();
+
+    console.log('[FORM] submit triggered');
+    console.log('[FORM] payload', { query, target, budget, tolerance, ai, engineMode });
 
     if (!query) {
       this.setStatus('Error', 'status-error');
@@ -2577,6 +2689,7 @@ class ScraperApp {
     this.setStatus('Berjalan', 'status-running');
 
     try {
+      console.log('[SCRAPE] request started');
       const response = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2594,6 +2707,7 @@ class ScraperApp {
         }),
       });
       const data = await response.json();
+      console.log('[SCRAPE] response', data);
       if (!data.success) {
         this.showError(data.error || 'Gagal memulai scraping');
         return;
@@ -2604,6 +2718,7 @@ class ScraperApp {
       setAppStatus("running");
       this.startPolling();
     } catch (err) {
+      console.error('[SCRAPE] error', err);
       setAppStatus("error");
       this.showError('Gagal terhubung ke server: ' + err.message);
     }
@@ -3121,6 +3236,12 @@ class ScraperApp {
     const requested = Number(meta.requested_count ?? data.requested_count ?? data.target_count ?? 0);
     const productCount = Array.isArray(data.data || data.products) ? (data.data || data.products).length : this.state.products.length;
     const displayed = productCount;
+
+    // Update header count
+    this.setText('r-count', displayed || this.state.products.length || 0);
+    this.setText('r-target', requested || '-');
+
+    // Update hidden stat IDs (masih dipakai internal)
     const raw = Number(meta.raw_scraped_count ?? meta.raw_scraped ?? data.raw_count ?? 0);
     const deduped = Number(meta.deduped_count ?? data.deduped_count ?? 0);
     const budget = Number(meta.budget_valid_count ?? data.budget_valid_count ?? data.budget_count ?? 0);
@@ -3130,8 +3251,6 @@ class ScraperApp {
     const aiCallsAttempted = Number(meta.ai_calls_attempted ?? 0);
     const aiCallsSucceeded = Number(meta.ai_calls_succeeded ?? 0);
 
-    this.setText('r-count', displayed || this.state.products.length || 0);
-    this.setText('r-target', requested || '-');
     this.setText('rs-requested', requested || 0);
     this.setText('rs-raw', raw || 0);
     this.setText('rs-deduped', deduped || 0);
@@ -3141,9 +3260,10 @@ class ScraperApp {
     this.setText('rs-ai', aiAccepted || 0);
     this.setText('rs-ai-calls', `${aiCallsSucceeded || 0}/${aiCallsAttempted || 0}`);
     this.setText('rs-displayed', displayed || this.state.products.length || 0);
+
     const status = this.$('result-status-badge');
     if (status) {
-      status.textContent = displayed >= requested ? 'Target terpenuhi' : 'Sebagian';
+      status.textContent = displayed >= requested ? 'Selesai' : 'Sebagian';
       status.className = `status-badge ${displayed >= requested ? 'status-done' : 'status-running'}`;
     }
   }
@@ -3416,27 +3536,11 @@ class ScraperApp {
   }
 
   renderProducts() {
+    // Produk ditampilkan di dalam recommendation-product-grid (mode "all")
+    // #products-grid tidak dipakai lagi — semua ada di dalam recommendation-stage
+    // Pastikan grid lama kosong agar tidak ada card liar di luar container
     const grid = this.$('products-grid');
-    grid.innerHTML = '';
-    const visibleProducts = this.state.products.filter((product) => {
-      const id = getProductReviewId(product);
-      return !reviewedProductIds.has(id);
-    });
-
-    if (!visibleProducts.length) {
-      grid.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">?</div>
-          <strong>Tidak ada produk valid untuk pilihan ini.</strong>
-          <span>Coba naikkan toleransi budget, kurangi filter, atau aktifkan target-first mode.</span>
-        </div>
-      `;
-      return;
-    }
-    for (const product of visibleProducts) {
-      grid.appendChild(this.createCard(product));
-    }
-    setupOutsideProductScrollAnimations();
+    if (grid) grid.innerHTML = '';
   }
 
   activeSortMode() {
@@ -3824,23 +3928,40 @@ class ScraperApp {
 
     const ratingEl = dialog.querySelector(".product-modal-rating");
     if (ratingEl) {
-      ratingEl.textContent = product.rating ? `⭐ ${product.rating}` : '';
-      ratingEl.style.display = product.rating ? 'inline' : 'none';
+      const ratingNum = Number(product.rating) || 0;
+      const reviewCount = Number(product.review_count || product.reviewCount || 0);
+      let ratingStr = '';
+      if (ratingNum > 0) {
+        let countStr = '';
+        if (reviewCount >= 1000) countStr = `${(reviewCount / 1000).toFixed(1).replace('.', ',')}rb`;
+        else if (reviewCount > 0) countStr = `${reviewCount}+`;
+        ratingStr = countStr ? `⭐ ${ratingNum} (${countStr})` : `⭐ ${ratingNum}`;
+      }
+      ratingEl.textContent = ratingStr;
+      ratingEl.style.display = ratingStr ? 'inline' : 'none';
     }
 
     const soldEl = dialog.querySelector(".product-modal-sold");
     if (soldEl) {
-      const soldText = product.sold || product.sold_text || product.soldCount || product.sold_count || '';
-      soldEl.textContent = soldText ? `🛍️ ${soldText}` : '';
-      soldEl.style.display = soldText ? 'inline' : 'none';
+      const soldRaw = product.sold || product.sold_text || product.soldCount || product.sold_count || '';
+      const soldStr = soldRaw ? formatSoldCount(soldRaw) : '';
+      soldEl.textContent = soldStr ? `🛍️ ${soldStr}` : '';
+      soldEl.style.display = soldStr ? 'inline' : 'none';
     }
 
     const confEl = dialog.querySelector(".product-modal-confidence");
     if (confEl) {
       const aiValue = product.confidenceScore ?? product.ai_confidence ?? product.relevance_score;
       const aiNumeric = Number(aiValue);
-      confEl.textContent = (aiValue != null && Number.isFinite(aiNumeric)) ? `🧠 Keyakinan AI: ${aiNumeric.toFixed(2)}` : '';
-      confEl.style.display = (aiValue != null && Number.isFinite(aiNumeric)) ? 'inline' : 'none';
+      let confStr = '';
+      if (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0) {
+        const pct = aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100);
+        const decisionSource = product.ai_source || product.decision_source || '';
+        const isRulesOnly = /rule/i.test(decisionSource) && !/llm|ai|classifier/i.test(decisionSource);
+        confStr = isRulesOnly ? `Rules: diterima` : `🧠 Keyakinan AI: ${pct}%`;
+      }
+      confEl.textContent = confStr;
+      confEl.style.display = confStr ? 'inline' : 'none';
     }
 
     const openBtn = dialog.querySelector(".open-product-btn");
@@ -4341,15 +4462,31 @@ function renderProductDetail(product) {
   if (price) price.textContent = formatRupiah(product.price_value || product.priceNumber || product.price || 0);
 
   if (meta) {
-    const rating = product.rating || product.star || "-";
-    const sold = product.sold || product.sold_count || product.soldCount || "-";
-    const confidence = product.ai_confidence || product.confidenceScore || product.confidence || product.combined_score || null;
+    const ratingNum = Number(product.rating || product.star) || 0;
+    const reviewCount = Number(product.review_count || product.reviewCount || 0);
+    let ratingStr = '';
+    if (ratingNum > 0) {
+      let countStr = '';
+      if (reviewCount >= 1000) countStr = `${(reviewCount / 1000).toFixed(1).replace('.', ',')}rb`;
+      else if (reviewCount > 0) countStr = `${reviewCount}+`;
+      ratingStr = countStr ? `⭐ ${ratingNum} (${countStr})` : `⭐ ${ratingNum}`;
+    }
 
-    meta.innerHTML = `
-      <span>⭐ ${escapeHtml(String(rating))}</span>
-      <span>🛍️ ${escapeHtml(String(sold))} terjual</span>
-      ${confidence ? `<span>🧠 Keyakinan AI: ${escapeHtml(String(confidence))}</span>` : ""}
-    `;
+    const soldRaw = product.sold || product.sold_count || product.soldCount || "-";
+    const soldStr = soldRaw && soldRaw !== "-" ? formatSoldCount(soldRaw) : (soldRaw === "-" ? "" : "");
+
+    const aiValue = product.ai_confidence || product.confidenceScore || product.confidence || product.combined_score || null;
+    const aiNumeric = Number(aiValue);
+    let aiStr = '';
+    if (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0) {
+      const pct = aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100);
+      const decisionSource = product.ai_source || product.decision_source || '';
+      const isRulesOnly = /rule/i.test(decisionSource) && !/llm|ai|classifier/i.test(decisionSource);
+      aiStr = isRulesOnly ? `Rules: diterima` : `🧠 Keyakinan AI: ${pct}%`;
+    }
+
+    const parts = [ratingStr, soldStr ? `🛍️ ${soldStr}` : '', aiStr].filter(Boolean);
+    meta.innerHTML = parts.map(p => `<span>${escapeHtml(p)}</span>`).join('');
   }
 
   const imageUrl = resolveProductImage(product);

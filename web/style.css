@@ -4447,3 +4447,391 @@ body.modal-open {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   MARKETSPY UI FIX v2 — CARD VERTIKAL + CATEGORY LIMIT BAR
+   ============================================================ */
+
+/* Override card layout ke vertikal (gambar atas, info bawah) */
+.recommendation-product-card,
+[data-product-card] {
+  display: flex !important;
+  flex-direction: column !important;
+  grid-template-columns: unset !important;
+  gap: 0 !important;
+  min-height: 320px;
+  padding: 0 !important;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(10, 16, 30, 0.82);
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  will-change: transform;
+}
+
+.recommendation-product-card:hover,
+[data-product-card]:hover {
+  transform: translateY(-4px);
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.38);
+}
+
+/* Gambar di atas */
+.recommendation-product-image-wrap {
+  width: 100% !important;
+  height: 180px !important;
+  aspect-ratio: unset !important;
+  border-radius: 0 !important;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.9);
+  flex: 0 0 auto;
+}
+
+.recommendation-product-image-wrap img,
+.recommendation-product-image {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block;
+  filter: none !important;
+}
+
+/* Placeholder gambar */
+.recommendation-product-image-wrap .product-image-placeholder,
+.recommendation-product-image-wrap .image-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(15, 23, 42, 0.9);
+  padding: 16px;
+  gap: 6px;
+}
+
+.recommendation-product-image-wrap .product-image-placeholder::before {
+  content: none;
+}
+
+/* Info di bawah */
+.recommendation-product-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 12px !important;
+  flex: 1;
+  min-width: 0;
+}
+
+.recommendation-product-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+  color: #e5eefc;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.recommendation-product-price {
+  color: #10b981;
+  font-size: 15px;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recommendation-product-rating-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.rec-rating {
+  color: #fbbf24;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rec-sold {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.rec-ai-confidence {
+  color: #60a5fa;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Tombol aksi di card */
+.rec-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.rec-action-btn {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+
+.rec-action-btn.is-correct {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.32);
+}
+
+.rec-action-btn.is-correct:hover {
+  background: rgba(16, 185, 129, 0.28);
+}
+
+.rec-action-btn.is-wrong {
+  background: rgba(248, 113, 113, 0.14);
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.32);
+}
+
+.rec-action-btn.is-wrong:hover {
+  background: rgba(248, 113, 113, 0.24);
+}
+
+.rec-action-btn.is-open {
+  background: rgba(59, 130, 246, 0.12);
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.26);
+}
+
+.rec-action-btn.is-open:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
+/* Grid produk — 3 kolom di desktop, 2 di tablet, 1 di mobile */
+.recommendation-product-grid {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+  overflow: hidden;
+  contain: layout paint style;
+}
+
+@media (max-width: 1100px) {
+  .recommendation-product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .recommendation-product-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ============================================================
+   CATEGORY LIMIT BAR
+   ============================================================ */
+
+.category-limit-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  margin: 12px 0 0;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(96, 165, 250, 0.22);
+}
+
+.category-limit-bar.hidden {
+  display: none !important;
+}
+
+.category-limit-label {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.category-limit-input {
+  width: 72px;
+  min-height: 34px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #e5eefc;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+}
+
+.category-limit-input:focus {
+  border-color: rgba(96, 165, 250, 0.6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.16);
+}
+
+.category-limit-suffix {
+  color: #94a3b8;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.btn-sm {
+  min-height: 34px;
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+/* ============================================================
+   RESULTS HEADER CLEAN
+   ============================================================ */
+
+/* Sembunyikan result-summary lama kalau masih ada */
+#result-summary {
+  display: none !important;
+}
+
+/* Budget bar lebih clean */
+.r-budget-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  background: rgba(59, 130, 246, 0.08);
+  color: #93c5fd;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+/* Warning box */
+.result-warning {
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: #fde68a;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+/* ============================================================
+   LOGO IMAGE FIX
+   ============================================================ */
+
+.logo-icon img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  image-rendering: auto;
+  display: block;
+  filter: none;
+}
+
+/* ============================================================
+   SEARCH PANEL CLEAN
+   ============================================================ */
+
+.search-panel {
+  max-width: 640px;
+}
+
+/* ============================================================
+   CHECKED PRODUCT CARD — HOVER PREVIEW
+   ============================================================ */
+
+.checked-product-card {
+  position: relative;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.checked-product-card:hover {
+  border-color: rgba(96, 165, 250, 0.42);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.32);
+}
+
+/* ============================================================
+   OVERBUDGET BADGE
+   ============================================================ */
+
+.rec-card-badge.is-overbudget {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.36);
+  color: #fbbf24;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+  margin-bottom: 4px;
+  align-self: flex-start;
+}
+
+/* ============================================================
+   DETAIL MODAL — TIGHTEN GAP
+   ============================================================ */
+
+.product-feedback-panel {
+  margin-top: 16px !important;
+  padding: 16px !important;
+}
+
+.product-feedback-panel h3 {
+  margin: 0 0 12px !important;
+  font-size: clamp(16px, 1.4vw, 20px) !important;
+}
+
+.product-detail-meta {
+  margin-bottom: 12px !important;
+}
+
+.product-detail-price {
+  margin: 0 0 10px !important;
+}
+
+/* ============================================================
+   DISABLE BLUR FILTER GLOBALLY ON PRODUCT IMAGES
+   ============================================================ */
+
+.recommendation-product-image,
+.product-image,
+.checked-product-image,
+.product-detail-image,
+.product-modal-image {
+  filter: none !important;
+  -webkit-filter: none !important;
+}
