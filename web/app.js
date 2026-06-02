@@ -21,99 +21,154 @@ function formatDiscount(oldPrice, newPrice) {
   return `Hemat ${percent}%`;
 }
 
-function formatRating(rating, reviewCount) {
-  const r = Number(rating) || 0;
-  const count = Number(reviewCount) || 0;
-  if (r <= 0) return '';
-  // Format: Rating 5 (3,4rb) atau Rating 5 (800+)
-  let countStr = '';
-  if (count >= 1000) {
-    countStr = `${(count / 1000).toFixed(1).replace('.', ',')}rb`;
-  } else if (count > 0) {
-    countStr = `${count}+`;
+function parseCountValue(value) {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+
+  const text = String(value).toLowerCase().trim();
+  const match = text.match(/(\d+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta|m)?/i);
+  if (!match) return 0;
+
+  const base = Number.parseFloat(match[1].replace(',', '.'));
+  if (!Number.isFinite(base)) return 0;
+
+  const unit = match[2] || '';
+  if (['rb', 'ribu', 'k'].includes(unit)) return Math.round(base * 1000);
+  if (['jt', 'juta', 'm'].includes(unit)) return Math.round(base * 1000000);
+  return Math.round(base);
+}
+
+function formatOneDecimal(value) {
+  return Number(value)
+    .toFixed(1)
+    .replace(/\.0$/, '')
+    .replace('.', ',');
+}
+
+function formatRatingValue(rating) {
+  const numeric = Number(String(rating ?? '').replace(',', '.')) || 0;
+  if (!numeric) return '';
+  return Number.isInteger(numeric) ? String(numeric) : formatOneDecimal(numeric);
+}
+
+function formatCompactReviewCount(value) {
+  const count = parseCountValue(value);
+  if (!count) return '';
+  if (count >= 1000000) return `${formatOneDecimal(count / 1000000)}jt`;
+  if (count >= 1000) return `${formatOneDecimal(count / 1000)}rb`;
+  if (count >= 100) return `${count}+`;
+  return String(count);
+}
+
+function formatCompactSoldCount(value) {
+  const count = parseCountValue(value);
+  const raw = String(value || '').trim();
+
+  if (!count && raw) {
+    const cleaned = raw.replace(/\s+/g, ' ').replace(/terjual\s+terjual/ig, 'terjual');
+    return /terjual/i.test(cleaned) ? cleaned : `${cleaned} terjual`;
   }
-  return countStr ? `Rating ${r} (${countStr})` : `Rating ${r}`;
+
+  if (!count) return '';
+  if (count >= 1000000) return `${formatOneDecimal(count / 1000000)}jt terjual`;
+  if (count >= 1000) return `${formatOneDecimal(count / 1000)}rb terjual`;
+  if (count >= 100) return `${count}+ terjual`;
+  return `${count} terjual`;
+}
+
+function hasRealAiSource(product) {
+  const source = String(
+    product?.decision_source ||
+    product?.ai_source ||
+    product?.model_used ||
+    product?.selected_classifier ||
+    ''
+  ).toLowerCase();
+  if (/(llm|ollama|classifier|semantic|model|ai)/i.test(source)) return true;
+  if (/rule|fallback/i.test(source)) return false;
+  return Boolean(window.app?.state?.aiStatus?.ok);
+}
+
+function isRulesFallback(product) {
+  const source = String(product?.decision_source || product?.ai_source || '').toLowerCase();
+  if (/rule|fallback/i.test(source) && !/(llm|ollama|classifier|semantic|ai)/i.test(source)) return true;
+  if (window.app?.state?.aiStatus && window.app.state.aiStatus.ok === false) return true;
+  return false;
+}
+
+function formatRating(rating, reviewCount) {
+  const ratingText = formatRatingValue(rating);
+  if (!ratingText) return '';
+  const countStr = formatCompactReviewCount(reviewCount);
+  return countStr ? `⭐ ${ratingText} (${countStr})` : `⭐ ${ratingText}`;
 }
 
 function formatSoldCount(sold) {
-  if (!sold) return '';
-  // Jika sudah berupa string yang mengandung "terjual", jangan tambah lagi
-  const soldStr = String(sold);
-  if (/terjual/i.test(soldStr)) return soldStr;
-  const num = Number(soldStr.replace(/[^\d]/g, ''));
-  if (!num) return soldStr ? `${soldStr} terjual` : '';
-  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}jt+ terjual`;
-  if (num >= 1000) return `${(num / 1000).toFixed(1)}rb+ terjual`;
-  return `${num}+ terjual`;
+  return formatCompactSoldCount(sold);
 }
 
 function formatAiConfidence(product) {
-  // Priority: ai_confidence, confidence, combined_score, semantic_score, relevance_score
+  if (isRulesFallback(product)) return 'Rules: diterima';
+
   const raw = product?.ai_confidence ?? 
               product?.confidence ?? 
               product?.combined_score ?? 
               product?.semantic_score ??
               product?.relevance_score ?? 
+              product?.confidenceScore ??
               null;
 
-  if (raw == null) return 'Keyakinan AI: N/A';
+  if (raw == null || raw === '') return '';
 
   const numeric = Number(raw);
-  if (!Number.isFinite(numeric)) return 'Keyakinan AI: N/A';
-
-  // If decimal (0-1 range), convert to percentage
-  if (numeric <= 1) {
-    const pct = Math.round(numeric * 100);
-    return `Keyakinan AI: ${pct}%`;
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return hasRealAiSource(product) ? '' : 'Rules: diterima';
   }
 
-  // If already percentage
-  if (numeric > 1) {
-    return `Keyakinan AI: ${Math.round(numeric)}%`;
-  }
+  if (!hasRealAiSource(product)) return 'Rules: diterima';
 
-  return 'Keyakinan AI: N/A';
+  const pct = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
+  return `Keyakinan AI: ${pct}%`;
 }
 
 function formatRatingMeta(product) {
   const rating = Number(product?.rating) || 0;
-  const reviewCount = product?.review_count || product?.rating_count || product?.reviewCount || 0;
-  const sold = product?.sold_count || product?.sold || product?.sold_text || '';
+  const reviewCount = product?.review_count || product?.rating_count || product?.reviewCount || product?.ratingCount || 0;
+  const sold = product?.sold_count || product?.soldCount || product?.sold || product?.sold_text || '';
+  const ratingText = formatRatingValue(rating);
 
-  const parts = [];
+  if (ratingText) {
+    const reviewText = formatCompactReviewCount(reviewCount);
+    if (reviewText) return `⭐ ${ratingText} (${reviewText})`;
 
-  if (rating > 0) {
-    const countNum = Number(reviewCount);
-    if (countNum > 0) {
-      let countStr;
-      if (countNum >= 1000000) countStr = `${(countNum / 1000000).toFixed(1).replace('.', ',')}jt+ rating`;
-      else if (countNum >= 1000) countStr = `${(countNum / 1000).toFixed(1).replace('.', ',')}rb rating`;
-      else countStr = `${countNum}+ rating`;
-      parts.push(`⭐ ${rating} (${countStr})`);
-    } else {
-      parts.push(`⭐ ${rating}`);
-    }
+    const soldText = formatCompactSoldCount(sold);
+    return soldText ? `⭐ ${ratingText} (${soldText})` : `⭐ ${ratingText}`;
   }
 
-  if (sold) {
-    const soldStr = String(sold);
-    if (!/terjual/i.test(soldStr)) {
-      const soldNum = Number(soldStr.replace(/[^\d]/g, ''));
-      if (soldNum > 0) {
-        let soldDisplay;
-        if (soldNum >= 1000000) soldDisplay = `${(soldNum / 1000000).toFixed(1)}jt+ terjual`;
-        else if (soldNum >= 1000) soldDisplay = `${(soldNum / 1000).toFixed(1)}rb+ terjual`;
-        else soldDisplay = `${soldNum}+ terjual`;
-        parts.push(soldDisplay);
-      } else {
-        parts.push(`${soldStr} terjual`);
-      }
-    } else {
-      parts.push(soldStr);
-    }
-  }
+  const soldText = formatCompactSoldCount(sold);
+  return soldText ? `Terjual ${soldText.replace(/\s*terjual$/i, '')}` : '';
+}
 
-  return parts.join(' | ');
+function getProductPriceNumber(product) {
+  const direct = product?.priceNumber ?? product?.price_value ?? product?.price_val;
+  const directNumber = Number(direct);
+  if (Number.isFinite(directNumber) && directNumber > 0) return directNumber;
+
+  const raw = String(product?.price_raw || product?.price_text || product?.price || '').replace(/[^\d]/g, '');
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function getActiveBudgetInfo() {
+  return window.app?.state?.budgetInfo || null;
+}
+
+function isProductOverbudget(product) {
+  const budgetInfo = getActiveBudgetInfo();
+  const maxBudget = Number(budgetInfo?.max ?? budgetInfo?.maxBudget ?? budgetInfo?.max_budget ?? 0);
+  if (!Number.isFinite(maxBudget) || maxBudget <= 0) return false;
+  const price = getProductPriceNumber(product);
+  return price > maxBudget;
 }
 
 function getProductImage(product) {
@@ -538,13 +593,15 @@ function updateRecommendationLogo(mode) {
   }
 }
 
-function renderRecommendationProductCard(product) {
+function renderRecommendationProductCard(product, mode = activeRecommendationMode) {
   const item = window.app && typeof window.app.normalizeProduct === "function"
     ? window.app.normalizeProduct(product)
     : { ...(product || {}) };
   const id = getProductReviewId(item);
   const imageUrl = resolveProductImage(item);
   const title = item.title || "Produk Tokopedia";
+  const normalizedMode = normalizeRecommendationMode(mode) || "all";
+  const isCategoryMode = normalizedMode !== "all";
 
   // Format rating + sold
   const ratingMeta = formatRatingMeta(item);
@@ -556,9 +613,12 @@ function renderRecommendationProductCard(product) {
   const aiStr = formatAiConfidence(item);
 
   // Overbudget badge
-  const isOverbudget = Boolean(item.outside_budget || item.target_first_fallback);
+  const isOverbudget = isProductOverbudget(item);
   const overbudgetBadge = isOverbudget
     ? `<span class="rec-card-badge is-overbudget">Overbudget</span>`
+    : '';
+  const checkedPill = isCategoryMode
+    ? '<span class="rec-checked-pill">Sudah dicek</span>'
     : '';
 
   // Gambar atau placeholder
@@ -571,7 +631,8 @@ function renderRecommendationProductCard(product) {
 
   // TIDAK ADA tombol Benar/Salah/Buka di card — card seluruhnya clickable buka modal
   return `
-    <article class="recommendation-product-card" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="${escapeHtml(title)}">
+    <article class="recommendation-product-card${isCategoryMode ? ' is-checked-category-card' : ''}" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="${escapeHtml(title)}">
+      ${checkedPill}
       <div class="recommendation-product-image-wrap${imageUrl ? "" : " is-image-missing"}">
         ${imageHtml}
         ${placeholderHtml}
@@ -623,8 +684,11 @@ function renderRecommendationContent(mode) {
   const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
   const categoryLimit = Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 100));
 
-  // Ambil produk yang belum direview untuk mode ini
-  const products = getActiveRecommendationProducts(normalizedMode);
+  const categoryProducts = getRecommendationProducts(normalizedMode);
+  const activeProducts = getActiveRecommendationProducts(normalizedMode);
+  const products = activeProducts.length || !categoryProducts.length
+    ? activeProducts
+    : categoryProducts;
   const isAllMode = normalizedMode === 'all';
 
   let displayProducts;
@@ -643,8 +707,7 @@ function renderRecommendationContent(mode) {
       shortageMsg = '';
     } else if (actualCount < categoryLimit) {
       // Data valid kurang dari yang diminta
-      const modeName = { terbaik: 'Terbaik', termurah: 'Termurah', trusted: 'Most Trusted' }[normalizedMode] || normalizedMode;
-      shortageMsg = `Menampilkan ${actualCount} dari ${categoryLimit} yang diminta — hanya ${actualCount} produk yang cocok di kategori ${modeName}.`;
+      shortageMsg = `Kategori ini hanya punya ${actualCount} produk yang cocok dari ${categoryLimit} yang diminta.`;
     }
     // Kalau actualCount >= categoryLimit: tidak perlu pesan, tampilkan categoryLimit item
   }
@@ -653,7 +716,7 @@ function renderRecommendationContent(mode) {
   if (displayProducts.length === 0) {
     html = '<div class="recommendation-empty">Belum ada produk yang cocok untuk kategori ini.</div>';
   } else {
-    html = displayProducts.map(product => renderRecommendationProductCard(product)).join('');
+    html = displayProducts.map(product => renderRecommendationProductCard(product, normalizedMode)).join('');
     if (shortageMsg) {
       html += `<div class="recommendation-shortage-notice">${escapeHtml(shortageMsg)}</div>`;
     }
@@ -1088,12 +1151,8 @@ function createCheckedProductCard(record) {
   price.className = "checked-product-price";
   price.textContent = formatProductPrice(product);
 
-  // Rating + sold
-  const ratingNum = Number(product.rating) || 0;
-  const reviewCount = Number(product.review_count || product.reviewCount || 0);
-  const ratingStr = ratingNum > 0 ? formatRating(ratingNum, reviewCount) : '';
-  const soldRaw = product.sold || product.sold_text || product.soldCount || product.sold_count || '';
-  const soldStr = soldRaw ? formatSoldCount(soldRaw) : '';
+  // Rating/review, fallback ke sold count jika review count tidak tersedia.
+  const ratingStr = formatRatingMeta(product);
 
   const metaRow = document.createElement("div");
   metaRow.className = "checked-product-meta-row";
@@ -1103,19 +1162,9 @@ function createCheckedProductCard(record) {
     ratingEl.textContent = ratingStr;
     metaRow.appendChild(ratingEl);
   }
-  if (soldStr) {
-    const soldEl = document.createElement("span");
-    soldEl.className = "checked-meta-sold";
-    soldEl.textContent = soldStr;
-    metaRow.appendChild(soldEl);
-  }
 
   // Keyakinan AI
-  const aiValue = product.confidenceScore ?? product.ai_confidence ?? product.relevance_score;
-  const aiNumeric = Number(aiValue);
-  const aiStr = (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0)
-    ? `Keyakinan AI: ${aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100)}%`
-    : '';
+  const aiStr = formatAiConfidence(product);
 
   const sourceMeta = document.createElement("p");
   sourceMeta.className = "checked-product-meta";
@@ -1158,9 +1207,19 @@ function renderCheckedProductsBox(mode) {
   const grid = document.querySelector(".checked-products-grid");
   const count = document.querySelector(".checked-products-count");
   if (!box || !grid) return;
+  const normalizedMode = normalizeRecommendationMode(mode) || "all";
+
+  if (normalizedMode !== "all") {
+    box.classList.add("hidden");
+    grid.innerHTML = "";
+    if (count) count.textContent = "0 produk";
+    return;
+  }
+
+  box.classList.remove("hidden");
 
   // Hanya tampilkan produk yang diklik "Benar" (positive)
-  const allRecords = getCheckedProductsForMode(mode);
+  const allRecords = getCheckedProductsForMode("all");
   const records = allRecords.filter(r => r.result === 'positive');
 
   if (count) count.textContent = `${records.length} produk`;
@@ -2365,6 +2424,7 @@ class ScraperApp {
       recommendationSourceProducts: [],
       recommendationsOpen: false,
       metadata: {},
+      budgetInfo: null,
       sortMode: 'terbaik',
       elapsedTimer: null,
       progressStartedAtMs: null,
@@ -2555,7 +2615,8 @@ class ScraperApp {
 
   updateBudgetInfo() {
     const budget = this.parseBudgetInput();
-    const tol = Math.max(0, Math.min(Number.parseFloat(this.$('tolerance')?.value || '20'), 100));
+    const toleranceRaw = this.$('tolerance')?.value;
+    const tol = Math.max(0, Math.min(Number.parseFloat(toleranceRaw || '0'), 100));
     const info = this.$('budget-info');
     if (!budget || !info) {
       info?.classList.add('hidden');
@@ -2738,7 +2799,7 @@ class ScraperApp {
     const parsedTarget = Number.parseInt(targetRaw, 10);
     const target = Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : 50;
     const toleranceRaw = this.$('tolerance')?.value;
-    const tolerance = toleranceRaw ? Number.parseFloat(toleranceRaw) : 20;
+    const tolerance = toleranceRaw ? Number.parseFloat(toleranceRaw) : 0;
     // AI selalu aktif — otomatis pakai rules kalau Ollama tidak tersedia
     const ai = true;
     const engineMode = 'auto';
@@ -2758,6 +2819,7 @@ class ScraperApp {
     this.state.comparison = [];
     this.state.selectedEngine = null;
     this.state.recommendations = {};
+    this.state.budgetInfo = null;
     this.state.recommendationsOpen = false;
     this.state.sortMode = this.activeSortMode();
     this.show('progress-panel');
@@ -3129,6 +3191,7 @@ class ScraperApp {
     window.__MARKETSPY_PRODUCTS__ = this.state.products;
     this.state.recommendations = data.recommendations || {};
     this.state.metadata = data.result_metadata || {};
+    this.state.budgetInfo = data.budget_info || null;
     this.state.engineMode = data.engine_mode || 'auto';
     this.state.metadata.engine_mode = this.state.engineMode;
     this.state.sortMode = data.sort_mode || this.state.metadata.sort_mode || this.state.sortMode || 'terbaik';
@@ -3224,6 +3287,7 @@ class ScraperApp {
   renderBudgetBar(budgetInfo) {
     const bar = this.$('r-budget-bar');
     const text = this.$('r-budget-text');
+    this.state.budgetInfo = budgetInfo || null;
     if (!budgetInfo || !bar || !text) {
       bar?.classList.add('hidden');
       return;
@@ -3300,6 +3364,7 @@ class ScraperApp {
     window.__MARKETSPY_PRODUCTS__ = this.state.products;
     this.state.recommendations = item.recommendations || {};
     this.state.metadata = item.result_metadata || {};
+    this.state.budgetInfo = item.budget_info || null;
     this.state.recommendationsOpen = true;
     this.state.recommendationMode = 'all';
     activeRecommendationMode = 'all';
@@ -4574,30 +4639,9 @@ function renderProductDetail(product) {
   if (price) price.textContent = formatRupiah(product.price_value || product.priceNumber || product.price || 0);
 
   if (meta) {
-    const ratingNum = Number(product.rating || product.star) || 0;
-    const reviewCount = Number(product.review_count || product.reviewCount || 0);
-    let ratingStr = '';
-    if (ratingNum > 0) {
-      let countStr = '';
-      if (reviewCount >= 1000) countStr = `${(reviewCount / 1000).toFixed(1).replace('.', ',')}rb`;
-      else if (reviewCount > 0) countStr = `${reviewCount}+`;
-      ratingStr = countStr ? `⭐ ${ratingNum} (${countStr})` : `⭐ ${ratingNum}`;
-    }
-
-    const soldRaw = product.sold || product.sold_count || product.soldCount || "-";
-    const soldStr = soldRaw && soldRaw !== "-" ? formatSoldCount(soldRaw) : (soldRaw === "-" ? "" : "");
-
-    const aiValue = product.ai_confidence || product.confidenceScore || product.confidence || product.combined_score || null;
-    const aiNumeric = Number(aiValue);
-    let aiStr = '';
-    if (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0) {
-      const pct = aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100);
-      const decisionSource = product.ai_source || product.decision_source || '';
-      const isRulesOnly = /rule/i.test(decisionSource) && !/llm|ai|classifier/i.test(decisionSource);
-      aiStr = isRulesOnly ? `Rules: diterima` : `🧠 Keyakinan AI: ${pct}%`;
-    }
-
-    const parts = [ratingStr, soldStr ? `🛍️ ${soldStr}` : '', aiStr].filter(Boolean);
+    const ratingStr = formatRatingMeta(product);
+    const aiStr = formatAiConfidence(product);
+    const parts = [ratingStr, aiStr].filter(Boolean);
     meta.innerHTML = parts.map(p => `<span>${escapeHtml(p)}</span>`).join('');
   }
 

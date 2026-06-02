@@ -3534,7 +3534,7 @@ body.modal-open {
   border-radius: 26px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   background: rgba(2, 6, 23, 0.64);
-  overflow: hidden;
+  overflow: visible;
   transform: translateZ(0);
   transition:
     transform 150ms ease,
@@ -4307,6 +4307,42 @@ body.modal-open {
 }
 
 /* ============================================================
+   CATEGORY CARD STYLING — GREEN BORDER + PILL
+   ============================================================ */
+
+.recommendation-product-card.is-checked-category-card {
+  border-color: rgba(16, 185, 129, 0.42) !important;
+  border-width: 2px;
+}
+
+.recommendation-product-card.is-checked-category-card:hover,
+.recommendation-product-card.is-checked-category-card:focus-within {
+  border-color: rgba(16, 185, 129, 0.68) !important;
+  box-shadow:
+    0 24px 64px rgba(15, 23, 42, 0.36),
+    0 0 0 2px rgba(52, 211, 153, 0.24) inset;
+}
+
+.rec-checked-pill {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.18);
+  border: 1px solid rgba(16, 185, 129, 0.42);
+  color: #34d399;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* ============================================================
    MARKETSPY UI FIX — CHECKED PRODUCT CARD (DETAIL LAYOUT)
    ============================================================ */
 
@@ -4691,13 +4727,14 @@ body.modal-open {
 .category-limit-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 10px 16px;
-  margin: 12px 0 0;
-  border-radius: 14px;
-  background: rgba(15, 23, 42, 0.62);
-  border: 1px solid rgba(96, 165, 250, 0.22);
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: nowrap;
+  padding: 10px 14px;
+  margin: 14px 0 0;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.52);
+  border: 1px solid rgba(96, 165, 250, 0.16);
 }
 
 .category-limit-bar.hidden {
@@ -4706,40 +4743,65 @@ body.modal-open {
 
 .category-limit-label {
   color: #94a3b8;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .category-limit-input {
-  width: 72px;
-  min-height: 34px;
-  border: 1px solid rgba(96, 165, 250, 0.28);
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.88);
+  width: 80px !important;
+  max-width: 120px !important;
+  min-width: 76px !important;
+  min-height: 32px;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: 8px;
+  background: rgba(7, 11, 24, 0.8);
   color: #e5eefc;
-  padding: 6px 10px;
-  font-size: 13px;
+  padding: 5px 8px;
+  font-size: 12px;
   font-weight: 700;
   text-align: center;
   outline: none;
+  flex: 0 0 auto !important;
+}
+
+/* Hide spinner arrows for input[type=number] */
+.category-limit-input::-webkit-outer-spin-button,
+.category-limit-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.category-limit-input[type=number] {
+  -moz-appearance: textfield;
 }
 
 .category-limit-input:focus {
-  border-color: rgba(96, 165, 250, 0.6);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.16);
+  border-color: rgba(96, 165, 250, 0.5);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
 .category-limit-suffix {
   color: #94a3b8;
-  font-size: 13px;
+  font-size: 12px;
   white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.category-limit-apply {
+  flex: 0 0 auto !important;
+  white-space: nowrap;
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 11px;
 }
 
 .btn-sm {
-  min-height: 34px;
-  padding: 6px 14px;
-  font-size: 12px;
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 /* ============================================================
