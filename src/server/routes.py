@@ -320,10 +320,12 @@ def _candidate_pool_snapshot(
 ) -> dict[str, Any]:
     normalizer = normalize_products_with_report(raw_products, engine_name)
     deduped = deduplicate_products(normalizer.output)
-    product_candidates = [product for product in deduped if is_valid_product_candidate(product)]
+    # When budget is empty, don't require price for valid product check
+    require_price = bool(req.budget)
+    product_candidates = [product for product in deduped if is_valid_product_candidate(product, require_price=require_price)]
     invalid_non_product_removed = len(deduped) - len(product_candidates)
     budget_result = filter_by_budget(product_candidates, req.budget, req.tolerance)
-    candidates = [product for product in budget_result.kept if is_valid_product_candidate(product)]
+    candidates = [product for product in budget_result.kept if is_valid_product_candidate(product, require_price=require_price)]
     return {
         "scraped_raw": len(raw_products),
         "after_dedupe": len(deduped),
@@ -772,7 +774,9 @@ async def _filter_pipeline(
     normalizer = normalize_products_with_report(raw_products, engine, search_id)
     normalized = normalizer.output
     deduped = deduplicate_products(normalized)
-    product_candidates = [product for product in deduped if is_valid_product_candidate(product)]
+    # When budget is empty, don't require price for valid product check
+    require_price = bool(req.budget)
+    product_candidates = [product for product in deduped if is_valid_product_candidate(product, require_price=require_price)]
     invalid_non_product_removed = len(deduped) - len(product_candidates)
     image_total = len(normalized)
     missing_rate = (normalizer.images_missing_count / image_total) if image_total else 0.0
@@ -820,8 +824,9 @@ async def _filter_pipeline(
     budget_result = filter_by_budget(product_candidates, req.budget, req.tolerance)
     strict_budget_mode = bool(STRICT_BUDGET_MODE)
     target_first_mode = bool(getattr(req, "target_first_mode", False))
-    budget_valid_count = len([product for product in budget_result.kept if is_valid_product_candidate(product)])
-    candidates = [product for product in budget_result.kept if is_valid_product_candidate(product)]
+    require_price = bool(req.budget)
+    budget_valid_count = len([product for product in budget_result.kept if is_valid_product_candidate(product, require_price=require_price)])
+    candidates = [product for product in budget_result.kept if is_valid_product_candidate(product, require_price=require_price)]
     target_first_added = 0
     if target_first_mode and budget_valid_count < req.target_count:
         target_first_fill = _target_first_budget_fallbacks(
@@ -904,7 +909,8 @@ async def _filter_pipeline(
 
     target_display = min(req.target_count, len(candidates))
     ranked = _sort_products(list(ai_valid), req.sort_mode)
-    final = ranked[:target_display]
+    # AUDIT FIX: Use requested target_count directly, not constrained to candidates
+    final = ranked[:req.target_count]
     public_final = [_public_product_payload(product) for product in final]
     public_image_found = sum(1 for product in public_final if product.get("has_image"))
     log(

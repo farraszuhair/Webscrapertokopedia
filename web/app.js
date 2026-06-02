@@ -47,11 +47,73 @@ function formatSoldCount(sold) {
   return `${num}+ terjual`;
 }
 
-function formatAiConfidence(confidence) {
-  const conf = Number(confidence);
-  if (!conf || conf < 0) return 'N/A';
-  if (conf > 1) return `${conf}%`;
-  return `${Math.round(conf * 100)}%`;
+function formatAiConfidence(product) {
+  // Priority: ai_confidence, confidence, combined_score, semantic_score, relevance_score
+  const raw = product?.ai_confidence ?? 
+              product?.confidence ?? 
+              product?.combined_score ?? 
+              product?.semantic_score ??
+              product?.relevance_score ?? 
+              null;
+
+  if (raw == null) return 'Keyakinan AI: N/A';
+
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric)) return 'Keyakinan AI: N/A';
+
+  // If decimal (0-1 range), convert to percentage
+  if (numeric <= 1) {
+    const pct = Math.round(numeric * 100);
+    return `Keyakinan AI: ${pct}%`;
+  }
+
+  // If already percentage
+  if (numeric > 1) {
+    return `Keyakinan AI: ${Math.round(numeric)}%`;
+  }
+
+  return 'Keyakinan AI: N/A';
+}
+
+function formatRatingMeta(product) {
+  const rating = Number(product?.rating) || 0;
+  const reviewCount = product?.review_count || product?.rating_count || product?.reviewCount || 0;
+  const sold = product?.sold_count || product?.sold || product?.sold_text || '';
+
+  const parts = [];
+
+  if (rating > 0) {
+    const countNum = Number(reviewCount);
+    if (countNum > 0) {
+      let countStr;
+      if (countNum >= 1000000) countStr = `${(countNum / 1000000).toFixed(1).replace('.', ',')}jt+ rating`;
+      else if (countNum >= 1000) countStr = `${(countNum / 1000).toFixed(1).replace('.', ',')}rb rating`;
+      else countStr = `${countNum}+ rating`;
+      parts.push(`⭐ ${rating} (${countStr})`);
+    } else {
+      parts.push(`⭐ ${rating}`);
+    }
+  }
+
+  if (sold) {
+    const soldStr = String(sold);
+    if (!/terjual/i.test(soldStr)) {
+      const soldNum = Number(soldStr.replace(/[^\d]/g, ''));
+      if (soldNum > 0) {
+        let soldDisplay;
+        if (soldNum >= 1000000) soldDisplay = `${(soldNum / 1000000).toFixed(1)}jt+ terjual`;
+        else if (soldNum >= 1000) soldDisplay = `${(soldNum / 1000).toFixed(1)}rb+ terjual`;
+        else soldDisplay = `${soldNum}+ terjual`;
+        parts.push(soldDisplay);
+      } else {
+        parts.push(`${soldStr} terjual`);
+      }
+    } else {
+      parts.push(soldStr);
+    }
+  }
+
+  return parts.join(' | ');
 }
 
 function getProductImage(product) {
@@ -484,34 +546,14 @@ function renderRecommendationProductCard(product) {
   const imageUrl = resolveProductImage(item);
   const title = item.title || "Produk Tokopedia";
 
-  // Format rating: "⭐ 5 (3,4rb)" atau "⭐ 5 (800+)"
-  const ratingNum = Number(item.rating) || 0;
-  const reviewCount = Number(item.review_count || item.reviewCount || 0);
-  let ratingStr = '';
-  if (ratingNum > 0) {
-    let countStr = '';
-    if (reviewCount >= 1000) countStr = `${(reviewCount / 1000).toFixed(1).replace('.', ',')}rb`;
-    else if (reviewCount > 0) countStr = `${reviewCount}+`;
-    ratingStr = countStr ? `⭐ ${ratingNum} (${countStr})` : `⭐ ${ratingNum}`;
-  }
-
-  // Format sold — hindari duplikat "terjual terjual"
-  const soldRaw = item.sold || item.sold_text || item.soldCount || item.sold_count || '';
-  const soldStr = soldRaw ? formatSoldCount(soldRaw) : '';
+  // Format rating + sold
+  const ratingMeta = formatRatingMeta(item);
 
   // Format harga
   const priceStr = formatProductPrice(item);
 
-  // Format keyakinan AI dalam persen
-  const aiValue = item.confidenceScore ?? item.ai_confidence ?? item.relevance_score;
-  const aiNumeric = Number(aiValue);
-  let aiStr = '';
-  if (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0) {
-    const pct = aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100);
-    const decisionSource = item.ai_source || item.decision_source || '';
-    const isRulesOnly = /rule/i.test(decisionSource) && !/llm|ai|classifier/i.test(decisionSource);
-    aiStr = isRulesOnly ? `Rules: diterima` : `Keyakinan AI: ${pct}%`;
-  }
+  // Format keyakinan AI
+  const aiStr = formatAiConfidence(item);
 
   // Overbudget badge
   const isOverbudget = Boolean(item.outside_budget || item.target_first_fallback);
@@ -538,10 +580,7 @@ function renderRecommendationProductCard(product) {
         ${overbudgetBadge}
         <h4 class="recommendation-product-title">${escapeHtml(title)}</h4>
         <div class="recommendation-product-price">${escapeHtml(priceStr)}</div>
-        <div class="recommendation-product-rating-row">
-          ${ratingStr ? `<span class="rec-rating">${escapeHtml(ratingStr)}</span>` : ''}
-          ${soldStr ? `<span class="rec-sold">${escapeHtml(soldStr)}</span>` : ''}
-        </div>
+        ${ratingMeta ? `<div class="recommendation-product-rating-row"><span class="rec-rating">${escapeHtml(ratingMeta)}</span></div>` : ''}
         ${aiStr ? `<div class="rec-ai-confidence">${escapeHtml(aiStr)}</div>` : ''}
       </div>
     </article>
