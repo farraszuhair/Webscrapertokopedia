@@ -4306,23 +4306,6 @@ body.modal-open {
   font-weight: 700;
 }
 
-/* ============================================================
-   CATEGORY CARD STYLING — GREEN BORDER + PILL
-   ============================================================ */
-
-.recommendation-product-card.is-checked-category-card {
-  border-color: rgba(16, 185, 129, 0.42) !important;
-  border-width: 2px;
-}
-
-.recommendation-product-card.is-checked-category-card:hover,
-.recommendation-product-card.is-checked-category-card:focus-within {
-  border-color: rgba(16, 185, 129, 0.68) !important;
-  box-shadow:
-    0 24px 64px rgba(15, 23, 42, 0.36),
-    0 0 0 2px rgba(52, 211, 153, 0.24) inset;
-}
-
 .rec-checked-pill {
   position: absolute;
   top: 12px;
@@ -4724,12 +4707,15 @@ body.modal-open {
    CATEGORY LIMIT BAR
    ============================================================ */
 
-.category-limit-bar {
+.category-limit-bar,
+.category-limit-control {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
-  flex-wrap: nowrap;
+  gap: 14px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
   padding: 10px 14px;
   margin: 14px 0 0;
   border-radius: 12px;
@@ -4750,7 +4736,7 @@ body.modal-open {
 }
 
 .category-limit-input {
-  width: 80px !important;
+  width: 96px !important;
   max-width: 120px !important;
   min-width: 76px !important;
   min-height: 32px;
@@ -4787,6 +4773,12 @@ body.modal-open {
   font-size: 12px;
   white-space: nowrap;
   flex: 0 0 auto;
+}
+
+.category-limit-bar span,
+.category-limit-control span {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .category-limit-apply {

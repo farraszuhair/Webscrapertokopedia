@@ -188,11 +188,99 @@ function getProductImage(product) {
   return '';
 }
 
-function getCategoryProducts(category, limit) {
+function normalizeCategoryNumber(value) {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeRating(value) {
+  const rating = normalizeCategoryNumber(value);
+  if (rating <= 0) return 0;
+  return Math.min(rating, 5) / 5;
+}
+
+function normalizeCount(value) {
+  return Math.max(0, parseCountValue(value));
+}
+
+function normalizeConfidence(product) {
+  const raw = product?.confidenceScore
+    ?? product?.confidence
+    ?? product?.ai_confidence
+    ?? product?.combined_score
+    ?? product?.semantic_score
+    ?? product?.relevance_score
+    ?? 0;
+  const numeric = normalizeCategoryNumber(raw);
+  if (numeric <= 0) return 0;
+  return Math.min(numeric > 1 ? numeric / 100 : numeric, 1);
+}
+
+function isRelevantProduct(product) {
+  if (!product) return false;
+  const title = String(product.title || product.name || '').trim();
+  if (!title) return false;
+  if (product.ai_decision === false || product.is_relevant === false || product.relevant === false) return false;
+
+  const label = String(product.ai_label || product.relevance_label || product.label || '').toLowerCase();
+  if (label.includes('tidak_relevan') || label.includes('irrelevant')) return false;
+  return true;
+}
+
+function getBestProducts(products) {
+  return [...(products || [])]
+    .filter(isRelevantProduct)
+    .sort((a, b) => {
+      const scoreA =
+        normalizeRating(a.rating) * 35 +
+        normalizeCount(a.sold_count || a.soldCount || a.sold || a.sold_text) * 0.02 +
+        normalizeCount(a.review_count || a.rating_count || a.reviewCount || a.ratingCount) * 0.03 +
+        normalizeConfidence(a) * 25;
+
+      const scoreB =
+        normalizeRating(b.rating) * 35 +
+        normalizeCount(b.sold_count || b.soldCount || b.sold || b.sold_text) * 0.02 +
+        normalizeCount(b.review_count || b.rating_count || b.reviewCount || b.ratingCount) * 0.03 +
+        normalizeConfidence(b) * 25;
+
+      return scoreB - scoreA;
+    });
+}
+
+function getCheapestProducts(products) {
+  return [...(products || [])]
+    .filter(isRelevantProduct)
+    .filter(product => getProductPriceNumber(product) > 0)
+    .sort((a, b) => getProductPriceNumber(a) - getProductPriceNumber(b));
+}
+
+function getTrustedProducts(products) {
+  return [...(products || [])]
+    .filter(isRelevantProduct)
+    .sort((a, b) => {
+      const trustA =
+        normalizeCount(a.sold_count || a.soldCount || a.sold || a.sold_text) * 0.04 +
+        normalizeCount(a.review_count || a.rating_count || a.reviewCount || a.ratingCount) * 0.05 +
+        normalizeRating(a.rating) * 25 +
+        normalizeConfidence(a) * 20 +
+        (a.is_official || a.is_mall || a.is_power_merchant ? 20 : 0);
+
+      const trustB =
+        normalizeCount(b.sold_count || b.soldCount || b.sold || b.sold_text) * 0.04 +
+        normalizeCount(b.review_count || b.rating_count || b.reviewCount || b.ratingCount) * 0.05 +
+        normalizeRating(b.rating) * 25 +
+        normalizeConfidence(b) * 20 +
+        (b.is_official || b.is_mall || b.is_power_merchant ? 20 : 0);
+
+      return trustB - trustA;
+    });
+}
+
+function getCategoryProducts(category) {
   if (!window.app || !window.app.buildRecommendationBuckets) return [];
+  const normalizedMode = normalizeRecommendationMode(category) || "all";
   const buckets = window.app.buildRecommendationBuckets();
-  const products = buckets[category] || [];
-  return limit ? products.slice(0, limit) : products;
+  return buckets[normalizedMode] || [];
 }
 
 /* ─── ANIMATION & TRANSFORM ─── */
@@ -416,6 +504,7 @@ let activeModalProduct = null;
 let modalTransitionRunning = false;
 let feedbackSubmitting = false;
 const reviewedProductIds = new Set();
+const rejectedProductIds = new Set();
 const hoverTimers = new WeakMap();
 const activeHoverTimerIds = new Set();
 const activeHoverCards = new Set();
@@ -479,7 +568,21 @@ function normalizeRecommendationMode(mode) {
 }
 
 function getProductReviewId(product) {
-  return String(product?.id || product?.url || product?.product_url || product?.title || "");
+  return String(product?.id || product?.url || product?.product_url || product?.title || "").trim();
+}
+
+function getProductUrlId(product) {
+  return String(product?.url || product?.product_url || "").trim();
+}
+
+function productIdentityMatches(a, b) {
+  const aId = getProductReviewId(a);
+  const bId = getProductReviewId(b);
+  if (aId && bId && aId === bId) return true;
+
+  const aUrl = getProductUrlId(a);
+  const bUrl = getProductUrlId(b);
+  return Boolean(aUrl && bUrl && aUrl === bUrl);
 }
 
 function normalizeFeedbackResult(value) {
@@ -489,9 +592,53 @@ function normalizeFeedbackResult(value) {
   return "negative";
 }
 
+function getFeedbackStateList(key) {
+  const state = window.app?.state;
+  if (!state) return [];
+  if (!Array.isArray(state[key])) state[key] = [];
+  return state[key];
+}
+
+function findFeedbackStateIndex(list, product) {
+  return list.findIndex(item => productIdentityMatches(item, product));
+}
+
+function findFeedbackStateProduct(key, product) {
+  const list = getFeedbackStateList(key);
+  const index = findFeedbackStateIndex(list, product);
+  return index >= 0 ? list[index] : null;
+}
+
+function removeFeedbackStateProduct(key, product) {
+  const list = getFeedbackStateList(key);
+  const index = findFeedbackStateIndex(list, product);
+  if (index >= 0) list.splice(index, 1);
+}
+
+function upsertFeedbackStateProduct(key, product, feedbackData) {
+  const list = getFeedbackStateList(key);
+  const payload = { ...(product || {}), ...feedbackData };
+  const index = findFeedbackStateIndex(list, payload);
+  if (index >= 0) {
+    list[index] = { ...list[index], ...payload };
+  } else {
+    list.push(payload);
+  }
+}
+
 function isProductReviewed(product) {
+  if (!product) return false;
+  return Boolean(findFeedbackStateProduct("reviewedProducts", product));
+}
+
+function isProductRejected(product) {
+  if (!product) return false;
   const id = getProductReviewId(product);
-  return Boolean(id && (reviewState.checkedById.has(id) || reviewedProductIds.has(id)));
+  return Boolean(findFeedbackStateProduct("rejectedProducts", product) || (id && rejectedProductIds.has(id)));
+}
+
+function isProductFeedbackHandled(product) {
+  return isProductReviewed(product) || isProductRejected(product);
 }
 
 function invalidateRecommendationCache() {
@@ -504,6 +651,11 @@ function resetReviewState() {
   reviewState.checkedOrder.length = 0;
   reviewState.activeMode = "all";
   reviewedProductIds.clear();
+  rejectedProductIds.clear();
+  if (window.app?.state) {
+    window.app.state.reviewedProducts = [];
+    window.app.state.rejectedProducts = [];
+  }
   invalidateRecommendationCache();
 }
 
@@ -511,35 +663,54 @@ function markProductAsReviewed(product, result, extra = {}) {
   const id = getProductReviewId(product);
   if (!id) return "";
   const normalizedResult = normalizeFeedbackResult(result);
+  const reviewedAt = new Date().toISOString();
+  const sourceMode = activeRecommendationMode || "all";
 
   if (!reviewState.checkedById.has(id)) {
     reviewState.checkedOrder.push(id);
   }
 
-  reviewedProductIds.add(id);
   reviewState.checkedById.set(id, {
     id,
     product,
     result: normalizedResult,
     reasons: extra.reasons || [],
     note: extra.note || "",
-    reviewedAt: Date.now(),
-    sourceMode: activeRecommendationMode || "all"
+    reviewedAt,
+    sourceMode
   });
+
+  if (normalizedResult === "positive") {
+    reviewedProductIds.add(id);
+    rejectedProductIds.delete(id);
+    removeFeedbackStateProduct("rejectedProducts", product);
+    upsertFeedbackStateProduct("reviewedProducts", product, {
+      feedback: "benar",
+      reviewedAt,
+      sourceCategory: sourceMode,
+      reasons: extra.reasons || [],
+      note: extra.note || ""
+    });
+  } else {
+    rejectedProductIds.add(id);
+    reviewedProductIds.delete(id);
+    removeFeedbackStateProduct("reviewedProducts", product);
+    upsertFeedbackStateProduct("rejectedProducts", product, {
+      feedback: "salah",
+      rejectedAt: reviewedAt,
+      sourceCategory: sourceMode,
+      reasons: extra.reasons || [],
+      note: extra.note || ""
+    });
+  }
 
   invalidateRecommendationCache();
   return id;
 }
 
 function getActiveRecommendationProducts(mode) {
-  const reviewedIds = new Set([
-    ...reviewState.checkedById.keys(),
-    ...reviewedProductIds
-  ]);
-
   return getRecommendationProducts(mode).filter(product => {
-    const id = getProductReviewId(product);
-    return !id || !reviewedIds.has(id);
+    return !isProductFeedbackHandled(product);
   });
 }
 
@@ -549,13 +720,16 @@ function getCheckedProductsForMode(mode) {
     .map(id => reviewState.checkedById.get(id))
     .filter(Boolean);
 
-  if (normalizedMode === "all") return records;
+  if (normalizedMode === "all") {
+    return records.filter(record => record.result === "positive");
+  }
 
   const modeProductIds = new Set(
     getRecommendationProducts(normalizedMode).map(product => getProductReviewId(product))
   );
 
   return records.filter(record => {
+    if (record.result !== "positive") return false;
     if (record.sourceMode === normalizedMode) return true;
     return modeProductIds.has(record.id);
   });
@@ -601,7 +775,6 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
   const imageUrl = resolveProductImage(item);
   const title = item.title || "Produk Tokopedia";
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
-  const isCategoryMode = normalizedMode !== "all";
 
   // Format rating + sold
   const ratingMeta = formatRatingMeta(item);
@@ -617,7 +790,9 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
   const overbudgetBadge = isOverbudget
     ? `<span class="rec-card-badge is-overbudget">Overbudget</span>`
     : '';
-  const checkedPill = isCategoryMode
+  
+  // SUDAH DICEK badge HANYA untuk produk yang user sudah review (klik Benar)
+  const checkedPill = isProductReviewed(item)
     ? '<span class="rec-checked-pill">Sudah dicek</span>'
     : '';
 
@@ -631,7 +806,7 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
 
   // TIDAK ADA tombol Benar/Salah/Buka di card — card seluruhnya clickable buka modal
   return `
-    <article class="recommendation-product-card${isCategoryMode ? ' is-checked-category-card' : ''}" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="${escapeHtml(title)}">
+    <article class="recommendation-product-card" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="${escapeHtml(title)}">
       ${checkedPill}
       <div class="recommendation-product-image-wrap${imageUrl ? "" : " is-image-missing"}">
         ${imageHtml}
@@ -682,13 +857,9 @@ function renderRecommendationContent(mode) {
   const inlineInput = document.getElementById('category_limit_inline');
   const hiddenInput = document.getElementById('category_limit');
   const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
-  const categoryLimit = Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 100));
+  const categoryLimit = Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 50));
 
-  const categoryProducts = getRecommendationProducts(normalizedMode);
-  const activeProducts = getActiveRecommendationProducts(normalizedMode);
-  const products = activeProducts.length || !categoryProducts.length
-    ? activeProducts
-    : categoryProducts;
+  const categoryProducts = getCategoryProducts(normalizedMode);
   const isAllMode = normalizedMode === 'all';
 
   let displayProducts;
@@ -696,25 +867,25 @@ function renderRecommendationContent(mode) {
 
   if (isAllMode) {
     // Semua Barang: tampilkan semua, tidak dibatasi category_limit
-    displayProducts = products;
+    displayProducts = categoryProducts;
   } else {
     // Kategori lain: tampilkan maksimal categoryLimit, tapi tidak dipaksa penuh
-    const actualCount = products.length;
-    displayProducts = products.slice(0, categoryLimit);
+    const actualCount = categoryProducts.length;
+    displayProducts = categoryProducts.slice(0, categoryLimit);
 
     if (actualCount === 0) {
       // Tidak ada produk sama sekali
       shortageMsg = '';
     } else if (actualCount < categoryLimit) {
       // Data valid kurang dari yang diminta
-      shortageMsg = `Kategori ini hanya punya ${actualCount} produk yang cocok dari ${categoryLimit} yang diminta.`;
+      shortageMsg = `Kategori ini hanya punya ${actualCount} produk valid dari ${categoryLimit} yang diminta.`;
     }
     // Kalau actualCount >= categoryLimit: tidak perlu pesan, tampilkan categoryLimit item
   }
 
   let html = '';
   if (displayProducts.length === 0) {
-    html = '<div class="recommendation-empty">Belum ada produk yang cocok untuk kategori ini.</div>';
+    html = '<div class="recommendation-empty">Belum ada produk valid untuk kategori ini.</div>';
   } else {
     html = displayProducts.map(product => renderRecommendationProductCard(product, normalizedMode)).join('');
     if (shortageMsg) {
@@ -1209,7 +1380,9 @@ function renderCheckedProductsBox(mode) {
   if (!box || !grid) return;
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
 
-  if (normalizedMode !== "all") {
+  const records = getCheckedProductsForMode("all");
+
+  if (normalizedMode !== "all" || records.length === 0) {
     box.classList.add("hidden");
     grid.innerHTML = "";
     if (count) count.textContent = "0 produk";
@@ -1218,22 +1391,11 @@ function renderCheckedProductsBox(mode) {
 
   box.classList.remove("hidden");
 
-  // Hanya tampilkan produk yang diklik "Benar" (positive)
-  const allRecords = getCheckedProductsForMode("all");
-  const records = allRecords.filter(r => r.result === 'positive');
-
   if (count) count.textContent = `${records.length} produk`;
 
   grid.innerHTML = "";
 
-  if (!records.length) {
-    const empty = document.createElement("div");
-    empty.className = "checked-products-empty";
-    empty.textContent = "Belum ada produk yang ditandai Benar.";
-    grid.appendChild(empty);
-  } else {
-    records.forEach(record => grid.appendChild(createCheckedProductCard(record)));
-  }
+  records.forEach(record => grid.appendChild(createCheckedProductCard(record)));
 
   if (checkedLayout && typeof checkedLayout.refresh === "function") {
     requestAnimationFrame(() => checkedLayout.refresh());
@@ -1502,7 +1664,7 @@ function getNextModalProduct() {
 
   for (let i = activeModalIndex + 1; i < activeModalProducts.length; i++) {
     const candidate = activeModalProducts[i];
-    if (!isProductReviewed(candidate)) {
+    if (!isProductFeedbackHandled(candidate)) {
       activeModalIndex = i;
       return candidate;
     }
@@ -1785,9 +1947,6 @@ async function handleGridFeedback(productId, type, card, extra = {}) {
       reasons: extra.reasons || [],
       note: extra.note || ""
     });
-
-    // Tandai sebagai reviewed
-    reviewedProductIds.add(String(productId));
 
     // Cari product object dari state
     const product = (window.__MARKETSPY_PRODUCTS__ || []).find(p => getProductReviewId(p) === String(productId));
@@ -2119,17 +2278,6 @@ if (!window.__MARKETSPY_REC_FEEDBACK_BOUND__) {
     if (checkedCard) {
       const openBtn = event.target.closest(".checked-action-btn.is-open");
       if (openBtn) return; // biarkan link buka produk jalan normal
-
-      const productId = checkedCard.dataset.productId;
-      if (productId) {
-        const record = reviewState.checkedById.get(productId);
-        if (record?.product) {
-          const queue = Array.from(reviewState.checkedById.values())
-            .filter(r => r.result === 'positive')
-            .map(r => r.product);
-          openProductDetailModal(record.product, queue);
-        }
-      }
       return;
     }
   });
@@ -2415,6 +2563,8 @@ class ScraperApp {
   constructor() {
     this.state = {
       products: [],
+      reviewedProducts: [],
+      rejectedProducts: [],
       query: null,
       searchId: null,
       pollTimer: null,
@@ -3459,72 +3609,13 @@ class ScraperApp {
   }
 
   buildRecommendationBuckets() {
-    const list = [
-      ...(this.state.recommendationSourceProducts?.length
-        ? this.state.recommendationSourceProducts
-        : this.state.products)
-    ];
-
-    const number = (value) => {
-      const parsed = Number(String(value ?? 0).replace(',', '.'));
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    const price = (p) => {
-      const value = number(p.priceNumber ?? p.price_value ?? p.price);
-      return value > 0 ? value : Number.MAX_SAFE_INTEGER;
-    };
-    const rating = (p) => number(p.rating);
-    const confidence = (p) => number(p.confidenceScore ?? p.confidence ?? p.relevance_score ?? p.ai_confidence);
-    const sold = (p) => number(p.soldCount ?? p.sold_count);
-    const reviewCount = (p) => number(p.review_count ?? p.reviewCount ?? 0);
-
-    // Skor trust gabungan untuk Most Trusted
-    const trustScore = (p) => {
-      const shopStr = String(p.storeName || p.shop_name || p.shop || '').toLowerCase();
-      const shopBoost = /(official|mall|power merchant|pro)/.test(shopStr) ? 0.3 : 0;
-      const ratingNorm = rating(p) / 5;
-      const soldNorm = Math.min(sold(p), 10000) / 10000;
-      const reviewNorm = Math.min(reviewCount(p), 5000) / 5000;
-      const confNorm = confidence(p) > 1 ? confidence(p) / 100 : confidence(p);
-      return shopBoost + ratingNorm * 0.3 + soldNorm * 0.25 + reviewNorm * 0.2 + confNorm * 0.25;
-    };
-
-    // Skor terbaik gabungan
-    const bestScore = (p) => {
-      const ratingNorm = rating(p) / 5;
-      const reviewNorm = Math.min(reviewCount(p), 5000) / 5000;
-      const soldNorm = Math.min(sold(p), 10000) / 10000;
-      const confNorm = confidence(p) > 1 ? confidence(p) / 100 : confidence(p);
-      return ratingNorm * 0.35 + reviewNorm * 0.25 + soldNorm * 0.2 + confNorm * 0.2;
-    };
-
-    // Filter produk yang punya harga valid untuk Termurah
-    const withValidPrice = list.filter(p => price(p) < Number.MAX_SAFE_INTEGER);
-
-    // Filter produk yang punya rating untuk Terbaik (minimal ada rating)
-    const withRating = list.filter(p => rating(p) > 0);
-
-    // Filter produk yang punya sold/review untuk Most Trusted
-    const withTrustSignal = list.filter(p => sold(p) > 0 || reviewCount(p) > 0 || rating(p) > 0);
+    const list = [...(this.state.products || [])];
 
     return {
-      // Semua Barang: semua produk, urutan asli (sudah di-sort backend)
       all: [...list],
-
-      // Terbaik: produk dengan rating, diurutkan skor terbaik
-      terbaik: (withRating.length > 0 ? withRating : list)
-        .slice()
-        .sort((a, b) => bestScore(b) - bestScore(a)),
-
-      // Termurah: produk dengan harga valid, diurutkan harga terendah
-      termurah: (withValidPrice.length > 0 ? withValidPrice : list)
-        .slice()
-        .sort((a, b) => price(a) - price(b) || rating(b) - rating(a)),
-
-      // Most Trusted: produk dengan sinyal kepercayaan, diurutkan trust score
-      trusted: (withTrustSignal.length > 0 ? withTrustSignal : list)
-        .slice()
-        .sort((a, b) => trustScore(b) - trustScore(a)),
+      terbaik: getBestProducts(list),
+      termurah: getCheapestProducts(list),
+      trusted: getTrustedProducts(list),
     };
   }
 
@@ -3741,6 +3832,7 @@ class ScraperApp {
     });
     this.state.products = this.sortProducts(this.state.products, nextMode);
     window.__MARKETSPY_PRODUCTS__ = this.state.products;
+    invalidateRecommendationCache();
     if (rerender) {
       this.renderProducts();
       this.animateProductCards();
@@ -4903,7 +4995,7 @@ function moveToNextReviewProduct() {
 
   for (let index = activeReviewIndex + 1; index < queue.length; index += 1) {
     const candidate = queue[index];
-    if (!isProductReviewed(candidate)) {
+    if (!isProductFeedbackHandled(candidate)) {
       activeReviewQueue = queue;
       activeReviewIndex = index;
       activeDetailProduct = candidate;
@@ -4912,7 +5004,7 @@ function moveToNextReviewProduct() {
   }
 
   const refreshedQueue = getActiveRecommendationProducts(activeRecommendationMode);
-  const nextProduct = refreshedQueue.find(product => !isProductReviewed(product));
+  const nextProduct = refreshedQueue.find(product => !isProductFeedbackHandled(product));
   if (!nextProduct) {
     activeReviewQueue = refreshedQueue;
     activeReviewIndex = -1;
