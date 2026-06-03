@@ -98,6 +98,18 @@ _BAD_PRODUCT_IMAGE_KEYWORDS = (
     "/campaign/",
     "assets/promo",
     "assets/campaign",
+    "placeholder",
+    "no-image",
+    "noimage",
+    "blank",
+    "sprite",
+    "/icon",
+    "icons/",
+    "icon-",
+    "shop-logo",
+    "store-logo",
+    "avatar",
+    "badge",
     "6.6",
     "7.7",
     "8.8",
@@ -121,7 +133,10 @@ def normalize_image_url(url: Any | None) -> str | None:
         return None
     if url.startswith("//"):
         url = "https:" + url
-    if url.lower().replace(" ", "") in {"undefined", "null", "noimage"}:
+    compact = url.lower().replace(" ", "")
+    if compact in {"undefined", "null", "noimage", "no-image", "blank"}:
+        return None
+    if "svg+xml" in compact or ".svg" in compact:
         return None
     if url.startswith("data:image/"):
         return url
@@ -132,11 +147,24 @@ def normalize_image_url(url: Any | None) -> str | None:
     return url
 
 
-def pick_product_image(product: dict[str, Any]) -> str | None:
-    candidates = [
+def _sanitize_ai_confidence_label(value: Any | None) -> str:
+    text = str(value or "").strip()
+    lowered = text.lower()
+    if not text or lowered in {"rules", "validasi: rules", "rules: diterima", "lolos filter aturan"}:
+        return "Terverifikasi aturan"
+    return text
+
+
+def collect_product_image_candidates(product: dict[str, Any]) -> list[str]:
+    candidates: list[Any] = [
+        product.get("primary_image"),
         product.get("image_url"),
         product.get("imageUrl"),
         product.get("image"),
+        product.get("fallback_image"),
+        product.get("detail_image"),
+        product.get("hero_image"),
+        product.get("main_image"),
         product.get("thumbnail_url"),
         product.get("thumbnailUrl"),
         product.get("thumbnail"),
@@ -148,31 +176,26 @@ def pick_product_image(product: dict[str, Any]) -> str | None:
         product.get("original_image_url"),
         product.get("media_url"),
         product.get("url_gambar"),
+        product.get("image_candidates"),
     ]
 
-    images = product.get("images")
-    if isinstance(images, list) and images:
-        candidates.extend(images)
+    for key in ("images", "pictures", "media"):
+        value = product.get(key)
+        if isinstance(value, (list, tuple)):
+            candidates.extend(value)
+        elif isinstance(value, dict):
+            candidates.append(value)
 
-    pictures = product.get("pictures")
-    if isinstance(pictures, list) and pictures:
-        candidates.extend(pictures)
+    normalized: list[str] = []
+    seen: set[str] = set()
 
-    media = product.get("media")
-    if isinstance(media, dict):
-        candidates.extend([
-            media.get("image"),
-            media.get("image_url"),
-            media.get("imageUrl"),
-            media.get("thumbnail"),
-            media.get("thumbnail_url"),
-            media.get("thumbnailUrl"),
-            media.get("url"),
-        ])
-    elif isinstance(media, list):
-        candidates.extend(media)
-
-    for candidate in candidates:
+    def add(candidate: Any) -> None:
+        if not candidate:
+            return
+        if isinstance(candidate, (list, tuple)):
+            for item in candidate:
+                add(item)
+            return
         if isinstance(candidate, dict):
             nested = (
                 candidate.get("url")
@@ -184,13 +207,27 @@ def pick_product_image(product: dict[str, Any]) -> str | None:
                 or candidate.get("thumbnailUrl")
                 or candidate.get("thumbnail")
             )
-            normalized = normalize_image_url(nested)
-        else:
-            normalized = normalize_image_url(candidate)
-        if normalized:
-            return normalized
+            add(nested)
+            for nested_key in ("images", "pictures", "media", "image_candidates"):
+                nested_value = candidate.get(nested_key)
+                if isinstance(nested_value, (list, tuple)):
+                    add(nested_value)
+            return
 
-    return None
+        url = normalize_image_url(candidate)
+        if not url or url in seen:
+            return
+        seen.add(url)
+        normalized.append(url)
+
+    for candidate in candidates:
+        add(candidate)
+
+    return normalized
+
+
+def pick_product_image(product: dict[str, Any]) -> str | None:
+    return next(iter(collect_product_image_candidates(product)), None)
 
 
 def normalize_image(raw: dict[str, Any]) -> str | None:
@@ -258,7 +295,17 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         except ValueError:
             pass
 
-    image_url = normalize_image(raw)
+    image_candidates = collect_product_image_candidates(raw)
+    image_url = image_candidates[0] if image_candidates else None
+    fallback_image = image_candidates[1] if len(image_candidates) > 1 else None
+
+    ai_source_text = str(raw.get("decision_source") or raw.get("ai_source") or "").lower()
+    ai_was_used = bool(raw.get("ai_used") is True or raw.get("ai_checked") is True or ai_source_text == "ai")
+    ai_confidence_label = raw.get("ai_confidence_label", "")
+    if ai_was_used:
+        ai_confidence_label = str(ai_confidence_label or "").strip()
+    else:
+        ai_confidence_label = _sanitize_ai_confidence_label(ai_confidence_label)
 
     normalized = {
         "id": raw.get("id") or _product_id(title, url, parsed_price),
@@ -281,6 +328,11 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "url": url, # backward compat
         "image_url": image_url,
         "image": image_url, # backward compat
+        "primary_image": image_url,
+        "fallback_image": fallback_image,
+        "image_candidates": image_candidates,
+        "image_source_type": raw.get("image_source_type") or ("scraped_candidate" if image_url else "placeholder"),
+        "image_status": "ok" if image_url else "missing",
         "has_image": bool(image_url),
         "source_engine": engine,
         "source_query": _first_text(raw, ("source_query", "query_variant")),
@@ -296,9 +348,10 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "ai_checked": raw.get("ai_checked", False),
         "ai_used": raw.get("ai_used", False),
         "classifier_enabled": raw.get("classifier_enabled", False),
+        "rule_passed": raw.get("rule_passed", False),
         "ai_confidence": raw.get("ai_confidence", None),
         "ai_model_confidence": raw.get("ai_model_confidence", None),
-        "ai_confidence_label": raw.get("ai_confidence_label", ""),
+        "ai_confidence_label": ai_confidence_label,
         "ai_source": raw.get("ai_source", ""),
         "decision_source": raw.get("decision_source", ""),
         "decision_source_detail": raw.get("decision_source_detail", ""),

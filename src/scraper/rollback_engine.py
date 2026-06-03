@@ -440,6 +440,18 @@ class RollbackEngine:
                 '/campaign/',
                 'assets/promo',
                 'assets/campaign',
+                'placeholder',
+                'no-image',
+                'noimage',
+                'blank',
+                'sprite',
+                '/icon',
+                'icons/',
+                'icon-',
+                'shop-logo',
+                'store-logo',
+                'avatar',
+                'badge',
                 '6.6',
                 '7.7',
                 '8.8',
@@ -457,7 +469,7 @@ class RollbackEngine:
               if (!url) return '';
               if (url.startsWith('//')) url = `https:${url}`;
               const compact = url.toLowerCase().replace(/\s+/g, '');
-              if (['undefined', 'null', 'noimage'].includes(compact)) return '';
+              if (['undefined', 'null', 'noimage', 'no-image', 'blank'].includes(compact)) return '';
               if (compact.includes('svg')) return '';
               if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) return url;
               return '';
@@ -476,6 +488,8 @@ class RollbackEngine:
               const width = Number(img.width || 0);
               const height = Number(img.height || 0);
               const ratio = width && height ? width / height : 1;
+              if (width > 0 && width < 72) return -999;
+              if (height > 0 && height < 72) return -999;
               if (width >= 180 && height > 0 && ratio > 2.15) return -999;
               if (height >= 180 && width > 0 && ratio < 0.35) return -999;
 
@@ -505,13 +519,25 @@ class RollbackEngine:
             }
 
             function pickBestProductImage(images, productTitle = '') {
-              return images
+              return pickProductImageCandidates(images, productTitle)[0] || '';
+            }
+
+            function pickProductImageCandidates(images, productTitle = '') {
+              const ranked = images
                 .map((img) => ({
                   src: normalizeImageUrl(img.src || ''),
                   score: scoreProductImageCandidate(img, productTitle),
                 }))
                 .filter((img) => img.src && img.score > 0)
-                .sort((a, b) => b.score - a.score)[0]?.src || '';
+                .sort((a, b) => b.score - a.score);
+              const seen = new Set();
+              const result = [];
+              ranked.forEach((img) => {
+                if (seen.has(img.src)) return;
+                seen.add(img.src);
+                result.push(img.src);
+              });
+              return result;
             }
 
             function getImageFromCard(card, productTitle = '') {
@@ -567,7 +593,14 @@ class RollbackEngine:
                 pushCandidate(img.getAttribute('data-original-src'), img);
                 pushCandidate(img.getAttribute('data-original'), img);
                 pushCandidate(img.getAttribute('data-lazy-src'), img);
+                pushCandidate(img.getAttribute('data-lazy'), img);
+                pushCandidate(img.getAttribute('data-lazy-img'), img);
+                pushCandidate(img.getAttribute('data-defer-src'), img);
                 pushCandidate(img.getAttribute('data-image'), img);
+                pushCandidate(img.getAttribute('data-image-src'), img);
+                pushCandidate(img.getAttribute('data-src-large'), img);
+                pushCandidate(img.getAttribute('data-thumb'), img);
+                pushCandidate(img.getAttribute('data-img'), img);
                 pushCandidate(img.getAttribute('data-url'), img);
                 pushSrcset(img.getAttribute('srcset'), img);
                 pushSrcset(img.getAttribute('data-srcset'), img);
@@ -576,7 +609,14 @@ class RollbackEngine:
               pushBackgroundUrl(card);
               card.querySelectorAll('[style*="background"]').forEach(pushBackgroundUrl);
 
-              return pickBestProductImage(images, productTitle);
+              const candidates = pickProductImageCandidates(images, productTitle);
+              return {
+                primary: candidates[0] || '',
+                fallback: candidates[1] || '',
+                candidates,
+                status: candidates[0] ? 'ok' : 'missing',
+                sourceType: candidates[0] ? 'card_candidate' : 'placeholder',
+              };
             }
 
             const seen = new Set();
@@ -617,7 +657,8 @@ class RollbackEngine:
                   (imageNode ? imageNode.getAttribute('alt') : '') ||
                   lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                   '';
-                const imageUrl = getImageFromCard(card, title);
+                const imageData = getImageFromCard(card, title);
+                const imageUrl = imageData.primary || '';
                 const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
                 const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
                 const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
@@ -633,6 +674,11 @@ class RollbackEngine:
                   image_url: imageUrl || '',
                   image: imageUrl || '',
                   thumbnail: imageUrl || '',
+                  primary_image: imageUrl || '',
+                  fallback_image: imageData.fallback || '',
+                  image_candidates: (imageData.candidates || []).slice(0, 8),
+                  image_source_type: imageData.sourceType,
+                  image_status: imageData.status,
                   source_engine: 'rollback',
                 });
               }
@@ -662,7 +708,8 @@ class RollbackEngine:
                 lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                 'Produk Tokopedia';
               const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
-              const imageUrl = getImageFromCard(card, title);
+              const imageData = getImageFromCard(card, title);
+              const imageUrl = imageData.primary || '';
               const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
               const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
               pushProduct({
@@ -677,6 +724,11 @@ class RollbackEngine:
                 image_url: imageUrl || '',
                 image: imageUrl || '',
                 thumbnail: imageUrl || '',
+                primary_image: imageUrl || '',
+                fallback_image: imageData.fallback || '',
+                image_candidates: (imageData.candidates || []).slice(0, 8),
+                image_source_type: imageData.sourceType,
+                image_status: imageData.status,
                 source_engine: 'rollback',
               });
             }

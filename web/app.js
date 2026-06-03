@@ -6,6 +6,8 @@
 
 /* ─── HELPER FUNCTIONS ─── */
 
+const RULE_VALIDATION_LABEL = "Terverifikasi aturan";
+
 function formatPrice(value) {
   if (!value) return 'Harga tidak tersedia';
   const num = Number(value);
@@ -115,13 +117,7 @@ function formatSoldCount(sold) {
 }
 
 function formatDecisionLabel(product, globalAiStatus = null) {
-  const raw = product?.ai_confidence ?? 
-              product?.confidence ?? 
-              product?.combined_score ?? 
-              product?.semantic_score ??
-              product?.relevance_score ?? 
-              product?.confidenceScore ??
-              null;
+  const raw = product?.ai_confidence ?? product?.ai_model_confidence ?? null;
 
   const numeric = Number(raw);
   const appState = window.app?.state || {};
@@ -150,7 +146,7 @@ function formatDecisionLabel(product, globalAiStatus = null) {
     return `Keyakinan AI: ${Math.max(0, Math.min(100, percent))}%`;
   }
 
-  return "Lolos filter aturan";
+  return RULE_VALIDATION_LABEL;
 }
 
 function formatAiConfidence(product) {
@@ -217,7 +213,9 @@ function normalizeProductImageCandidate(value) {
   }
 
   if (!url) return "";
-  if (["undefined", "null", "noimage"].includes(url.toLowerCase().replace(/\s+/g, ""))) return "";
+  const compact = url.toLowerCase().replace(/\s+/g, "");
+  if (["undefined", "null", "noimage", "no-image", "blank"].includes(compact)) return "";
+  if (compact.includes("svg+xml") || compact.includes(".svg")) return "";
   if (url.startsWith("//")) url = `https:${url}`;
   if (/^https?:\/\//i.test(url) || /^data:image\//i.test(url)) return url;
   return "";
@@ -246,6 +244,18 @@ function isPromotionalImage(url = "", alt = "", className = "", parentClassName 
     "/campaign/",
     "assets/promo",
     "assets/campaign",
+    "placeholder",
+    "no-image",
+    "noimage",
+    "blank",
+    "sprite",
+    "/icon",
+    "icons/",
+    "icon-",
+    "shop-logo",
+    "store-logo",
+    "avatar",
+    "badge",
     "6.6",
     "7.7",
     "8.8",
@@ -260,6 +270,18 @@ function isPromotionalImage(url = "", alt = "", className = "", parentClassName 
 
 function isBadProductImage(url = "", alt = "", className = "", parentClassName = "", contextText = "") {
   return isPromotionalImage(url, alt, className, parentClassName, contextText);
+}
+
+function shouldRejectImage(url = "", meta = {}) {
+  const normalized = normalizeProductImageCandidate(url);
+  if (!normalized) return true;
+  return isBadProductImage(
+    normalized,
+    meta.alt || "",
+    meta.className || "",
+    meta.parentClassName || "",
+    meta.contextText || ""
+  );
 }
 
 function scoreProductImageCandidate(img, productTitle = "") {
@@ -277,6 +299,8 @@ function scoreProductImageCandidate(img, productTitle = "") {
   const height = Number(img?.height || img?.naturalHeight || 0);
   const ratio = width && height ? width / height : 1;
 
+  if (width > 0 && width < 72) return -999;
+  if (height > 0 && height < 72) return -999;
   if (width >= 180 && height > 0 && ratio > 2.15) return -999;
   if (height >= 180 && width > 0 && ratio < 0.35) return -999;
 
@@ -311,7 +335,120 @@ function scoreProductImageCandidate(img, productTitle = "") {
   return score;
 }
 
+function isUsableProductImage(img, productTitle = "") {
+  return scoreProductImageCandidate(img, productTitle) > 0;
+}
+
+function pickProductImageCandidates(images, productTitle = "") {
+  const ranked = [...(images || [])]
+    .map((img) => {
+      const src = normalizeProductImageCandidate(img?.src || img?.url || img);
+      return {
+        src,
+        score: scoreProductImageCandidate(img, productTitle)
+      };
+    })
+    .filter((img) => img.src && img.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const seen = new Set();
+  const result = [];
+  ranked.forEach((img) => {
+    const key = img.src.split("#")[0];
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(img.src);
+  });
+  return result;
+}
+
 function pickBestProductImage(images, productTitle = "") {
+  return pickProductImageCandidates(images, productTitle)[0] || "";
+}
+
+function collectProductImageCandidates(product) {
+  const title = product?.title || product?.name || "Gambar produk";
+  const candidates = [];
+  const push = (value, meta = {}) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => push(item, meta));
+      return;
+    }
+
+    if (typeof value === "object") {
+      const src = normalizeProductImageCandidate(value);
+      if (src) {
+        candidates.push({
+          src,
+          alt: value.alt || value.title || title,
+          className: value.className || value.class || value.type || meta.className || "",
+          parentClassName: value.parentClassName || meta.parentClassName || "",
+          contextText: value.contextText || value.source || meta.contextText || "",
+          width: value.width || value.naturalWidth || meta.width || 0,
+          height: value.height || value.naturalHeight || meta.height || 0,
+        });
+      }
+      ["images", "media", "pictures", "image_candidates"].forEach((key) => {
+        if (Array.isArray(value[key])) push(value[key], meta);
+      });
+      return;
+    }
+
+    const src = normalizeProductImageCandidate(value);
+    if (!src) return;
+    candidates.push({
+      src,
+      alt: title,
+      className: meta.className || "",
+      parentClassName: meta.parentClassName || "",
+      contextText: meta.contextText || "",
+      width: meta.width || 0,
+      height: meta.height || 0,
+    });
+  };
+
+  push(product?.primary_image, { className: "primary_image", contextText: "product primary" });
+  push(product?.image_url, { className: "image_url", contextText: "product image" });
+  push(product?.imageUrl, { className: "imageUrl", contextText: "product image" });
+  push(product?.image, { className: "image", contextText: "product image" });
+  push(product?.fallback_image, { className: "fallback_image", contextText: "product fallback" });
+  push(product?.detail_image, { className: "detail_image", contextText: "product detail" });
+  push(product?.hero_image, { className: "hero_image", contextText: "product detail" });
+  push(product?.main_image, { className: "main_image", contextText: "product main" });
+  push(product?.thumbnail_url, { className: "thumbnail_url", contextText: "product thumbnail" });
+  push(product?.thumbnailUrl, { className: "thumbnailUrl", contextText: "product thumbnail" });
+  push(product?.thumbnail, { className: "thumbnail", contextText: "product thumbnail" });
+  push(product?.thumb, { className: "thumb", contextText: "product thumbnail" });
+  push(product?.img, { className: "img", contextText: "product image" });
+  push(product?.picture, { className: "picture", contextText: "product image" });
+  push(product?.photo, { className: "photo", contextText: "product image" });
+  push(product?.product_image, { className: "product_image", contextText: "product image" });
+  push(product?.original_image_url, { className: "original_image_url", contextText: "product image" });
+  push(product?.media_url, { className: "media_url", contextText: "product media" });
+  push(product?.image_candidates, { className: "image_candidates", contextText: "product candidates" });
+  push(product?.images, { className: "images", contextText: "product images" });
+  push(product?.media, { className: "media", contextText: "product media" });
+  push(product?.pictures, { className: "pictures", contextText: "product pictures" });
+
+  return candidates;
+}
+
+function getProductImageCandidateUrls(product) {
+  return pickProductImageCandidates(collectProductImageCandidates(product), product?.title || product?.name || "");
+}
+
+function getFallbackImage(product, failedUrls = []) {
+  const failed = new Set((failedUrls || []).map((url) => normalizeProductImageCandidate(url)).filter(Boolean));
+  return getProductImageCandidateUrls(product).find((url) => !failed.has(normalizeProductImageCandidate(url))) || "";
+}
+
+function getProductImageUrl(product) {
+  return getProductImageCandidateUrls(product)[0] || "";
+}
+
+/*
+function pickBestProductImage_legacy(images, productTitle = "") {
   return [...(images || [])]
     .map((img) => ({
       src: normalizeProductImageCandidate(img?.src || img?.url || img),
@@ -320,30 +457,8 @@ function pickBestProductImage(images, productTitle = "") {
     .filter((img) => img.src && img.score > 0)
     .sort((a, b) => b.score - a.score)[0]?.src || "";
 }
-
-function getProductImageUrl(product) {
-  const title = product?.title || product?.name || "";
-  const candidates = [
-    { src: product?.image_url, alt: title, className: "image_url", width: product?.image_width, height: product?.image_height },
-    { src: product?.imageUrl, alt: title, className: "imageUrl" },
-    { src: product?.image, alt: title, className: "image" },
-    { src: product?.thumbnail_url, alt: title, className: "thumbnail_url" },
-    { src: product?.thumbnailUrl, alt: title, className: "thumbnailUrl" },
-    { src: product?.thumbnail, alt: title, className: "thumbnail" },
-    { src: product?.thumb, alt: title, className: "thumb" },
-    { src: product?.img, alt: title, className: "img" },
-    { src: product?.picture, alt: title, className: "picture" },
-    { src: product?.photo, alt: title, className: "photo" },
-    { src: product?.product_image, alt: title, className: "product_image" },
-    { src: product?.original_image_url, alt: title, className: "original_image_url" },
-    { src: product?.media_url, alt: title, className: "media_url" },
-    ...(Array.isArray(product?.images) ? product.images : []),
-    ...(Array.isArray(product?.media) ? product.media : [product?.media].filter(Boolean)),
-    ...(Array.isArray(product?.pictures) ? product.pictures : []),
-  ];
-
-  return pickBestProductImage(candidates, title);
 }
+*/
 
 function getProductImage(product) {
   return getProductImageUrl(product);
@@ -363,7 +478,9 @@ function renderImagePlaceholderHtml(message = "Gambar tidak tersedia") {
 }
 
 function renderProductImage(product, options = {}) {
-  const imageUrl = getProductImageUrl(product);
+  const imageUrls = getProductImageCandidateUrls(product);
+  const imageUrl = imageUrls[0] || "";
+  const alternateImages = imageUrls.slice(1, 8);
   const className = options.className || "product-image";
   const title = product?.title || product?.name || "Gambar produk";
 
@@ -376,10 +493,12 @@ function renderProductImage(product, options = {}) {
       class="${escapeHtml(className)}"
       src="${escapeHtml(imageUrl)}"
       data-original-src="${escapeHtml(imageUrl)}"
+      data-image-candidates="${escapeHtml(JSON.stringify(alternateImages))}"
       alt="${escapeHtml(title)}"
       loading="lazy"
       decoding="async"
       referrerpolicy="no-referrer"
+      onerror="handleImageError(this)"
     />
     <div class="product-image-placeholder is-hidden" aria-hidden="true">
       <strong>Gambar tidak tersedia</strong>
@@ -825,11 +944,50 @@ function handleImageError(img) {
     placeholder.classList.remove("is-hidden");
   } else {
     const fallbackPlaceholder = document.createElement("div");
-    fallbackPlaceholder.className = "image-placeholder";
     fallbackPlaceholder.className = "product-image-placeholder";
-    fallbackPlaceholder.textContent = "TIDAK ADA GAMBAR";
+    fallbackPlaceholder.innerHTML = "<strong>Gambar tidak tersedia</strong><span>Produk tetap bisa dibuka lewat detail.</span>";
     img.replaceWith(fallbackPlaceholder);
   }
+}
+
+function readImageCandidateDataset(img) {
+  try {
+    const parsed = JSON.parse(img?.dataset?.imageCandidates || "[]");
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function markImageCandidateFailed(img, url) {
+  if (!img || !url) return;
+  const failed = new Set((img.dataset.failedImages || "").split("\n").filter(Boolean));
+  failed.add(normalizeProductImageCandidate(url) || String(url));
+  img.dataset.failedImages = Array.from(failed).join("\n");
+}
+
+function tryNextImageCandidate(img) {
+  if (!img) return false;
+  const failed = new Set((img.dataset.failedImages || "").split("\n").filter(Boolean));
+  const current = normalizeProductImageCandidate(img.currentSrc || img.src || "");
+  if (current) failed.add(current);
+
+  const next = readImageCandidateDataset(img).find((candidate) => {
+    const normalized = normalizeProductImageCandidate(candidate);
+    return normalized && !failed.has(normalized) && !shouldRejectImage(normalized);
+  });
+
+  if (!next) {
+    img.dataset.failedImages = Array.from(failed).join("\n");
+    return false;
+  }
+
+  img.dataset.failedImages = Array.from(failed).join("\n");
+  img.dataset.originalSrc = next;
+  delete img.dataset.proxyTried;
+  img.src = next;
+  img.classList.remove("is-hidden");
+  return true;
 }
 
 
@@ -1064,7 +1222,7 @@ function getCheckedProductsForMode(mode) {
     .filter(Boolean);
 
   if (normalizedMode === "all") {
-    return records.filter(record => record.result === "positive");
+    return records;
   }
 
   const modeProductIds = new Set(
@@ -1072,7 +1230,6 @@ function getCheckedProductsForMode(mode) {
   );
 
   return records.filter(record => {
-    if (record.result !== "positive") return false;
     if (record.sourceMode === normalizedMode) return true;
     return modeProductIds.has(record.id);
   });
@@ -1135,8 +1292,8 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
     ? `<span class="rec-card-badge is-overbudget">Overbudget</span>`
     : '';
   
-  // SUDAH DICEK badge HANYA untuk produk yang user sudah review (klik Benar)
-  const checkedPill = isProductReviewed(item)
+  // SUDAH DICEK hanya muncul setelah user klik Benar atau Salah.
+  const checkedPill = isProductFeedbackHandled(item)
     ? '<span class="rec-checked-pill">Sudah dicek</span>'
     : '';
 
@@ -1162,12 +1319,16 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
 }
 
 function setupProductImageErrorHandlers(scope = document) {
-  scope.querySelectorAll(".recommendation-product-image, .product-image").forEach(img => {
+  scope.querySelectorAll(".recommendation-product-image, .product-image, .checked-product-image, .product-detail-image, .product-modal-image").forEach(img => {
     if (img.dataset.errorHandlerBound === "true") return;
     img.dataset.errorHandlerBound = "true";
 
     img.onerror = () => {
-      const originalSrc = img.dataset.originalSrc || img.src;
+      const currentSrc = img.currentSrc || img.src || img.dataset.originalSrc || "";
+      markImageCandidateFailed(img, currentSrc);
+      if (tryNextImageCandidate(img)) return;
+
+      const originalSrc = img.dataset.originalSrc || currentSrc;
       if (canProxyImageUrl(originalSrc) && window.app && typeof window.app.proxyImageUrl === "function" && !img.dataset.proxyTried) {
         img.dataset.proxyTried = "1";
         img.src = window.app.proxyImageUrl(originalSrc);
@@ -1200,11 +1361,7 @@ function renderRecommendationContent(mode) {
     limitBar.classList.toggle('hidden', normalizedMode === 'all');
   }
 
-  // Ambil category_limit dari inline input atau hidden input
-  const inlineInput = document.getElementById('category_limit_inline');
-  const hiddenInput = document.getElementById('category_limit');
-  const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
-  const categoryLimit = Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 50));
+  const categoryLimit = getCategoryLimit();
 
   const categoryProducts = getCategoryProducts(normalizedMode);
   const isAllMode = normalizedMode === 'all';
@@ -1225,7 +1382,7 @@ function renderRecommendationContent(mode) {
       shortageMsg = '';
     } else if (actualCount < categoryLimit) {
       // Data valid kurang dari yang diminta
-      shortageMsg = `Kategori ini hanya punya ${actualCount} produk valid dari ${categoryLimit} yang diminta.`;
+      shortageMsg = `Anda meminta ${categoryLimit} produk, tetapi kategori ini hanya memiliki ${actualCount} produk yang cocok.`;
     }
     // Kalau actualCount >= categoryLimit: tidak perlu pesan, tampilkan categoryLimit item
   }
@@ -1483,6 +1640,22 @@ function getRecommendationProducts(mode) {
   return getCachedRecommendationProducts(mode);
 }
 
+function getCategoryLimit() {
+  const inlineInput = document.getElementById('category_limit_inline');
+  const hiddenInput = document.getElementById('category_limit');
+  const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
+  return Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 50));
+}
+
+function syncCategoryLimitInputs() {
+  const inlineInput = document.getElementById('category_limit_inline');
+  const hiddenInput = document.getElementById('category_limit');
+  const limit = getCategoryLimit();
+  if (inlineInput) inlineInput.value = String(limit);
+  if (hiddenInput) hiddenInput.value = String(limit);
+  return limit;
+}
+
 function cssEscapeValue(value) {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return CSS.escape(String(value));
@@ -1635,27 +1808,33 @@ function createCheckedProductCard(record) {
   layout.className = "checked-product-layout";
 
   // Gambar produk
-  const imageUrl = resolveProductImage(product);
+  const imageUrls = getProductImageCandidateUrls(product);
+  const imageUrl = imageUrls[0] || "";
   const imgWrap = document.createElement("div");
   imgWrap.className = "checked-product-image-wrap";
   if (imageUrl) {
     const img = document.createElement("img");
     img.className = "checked-product-image";
     img.src = imageUrl;
+    img.dataset.originalSrc = imageUrl;
+    img.dataset.imageCandidates = JSON.stringify(imageUrls.slice(1, 8));
     img.alt = product.title || "Gambar produk";
     img.loading = "lazy";
     img.referrerPolicy = "no-referrer";
     img.onerror = () => {
-      if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+      markImageCandidateFailed(img, img.currentSrc || img.src || imageUrl);
+      if (tryNextImageCandidate(img)) return;
+      const currentSrc = img.dataset.originalSrc || imageUrl;
+      if (canProxyImageUrl(currentSrc) && !img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
         img.dataset.proxyTried = "1";
-        img.src = window.app.proxyImageUrl(imageUrl);
+        img.src = window.app.proxyImageUrl(currentSrc);
         return;
       }
-      imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Tidak ada gambar</div>';
+      imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Gambar tidak tersedia</div>';
     };
     imgWrap.appendChild(img);
   } else {
-    imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Tidak ada gambar</div>';
+    imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Gambar tidak tersedia</div>';
   }
 
   // Info produk
@@ -2630,6 +2809,7 @@ if (!window.__MARKETSPY_CATEGORY_LIMIT_BOUND__) {
     const applyBtn = event.target.closest("#category-limit-apply");
     if (!applyBtn) return;
     event.preventDefault();
+    syncCategoryLimitInputs();
     renderRecommendationContent(activeRecommendationMode);
   });
 
@@ -2637,6 +2817,7 @@ if (!window.__MARKETSPY_CATEGORY_LIMIT_BOUND__) {
   document.addEventListener("keydown", event => {
     if (event.key === "Enter" && event.target.id === "category_limit_inline") {
       event.preventDefault();
+      syncCategoryLimitInputs();
       renderRecommendationContent(activeRecommendationMode);
     }
   });
@@ -3233,7 +3414,7 @@ class ScraperApp {
     const scraperMessage = this.$('ai-scraper-message');
 
     if (scraperBadge) {
-      scraperBadge.textContent = status?.ok ? 'AI Aktif' : 'Rules saja';
+      scraperBadge.textContent = status?.ok ? 'AI Aktif' : 'Aturan aktif';
       scraperBadge.className = `ai-scraper-badge ${status?.ok ? 'is-ready' : 'is-fallback'}`;
     }
     if (scraperMessage) {
@@ -3245,12 +3426,12 @@ class ScraperApp {
     if (!badge || !message || !classifier || !semantic || !json || !install) return;
 
     const capabilities = status?.capabilities || {};
-    badge.textContent = status?.ok ? 'Siap' : 'Rules saja';
+    badge.textContent = status?.ok ? 'Siap' : 'Aturan aktif';
     badge.className = `ai-status-badge ${status?.ok ? 'is-ready' : 'is-missing'}`;
     message.textContent = status?.ok
       ? (status.message || 'AI Orchestrator siap')
       : 'Model AI belum terinstall. Jalankan: ollama pull gemma3:4b';
-    classifier.textContent = status?.classifier || 'Rules saja';
+    classifier.textContent = status?.classifier || 'Aturan aktif';
     semantic.textContent = capabilities.semantic ? 'nomic-embed-text terpasang' : 'nomic-embed-text belum ada';
     json.textContent = capabilities.json_repair ? 'phi4-mini terpasang' : 'phi4-mini belum ada';
 
@@ -4256,7 +4437,8 @@ class ScraperApp {
   createProductImage(product) {
     const wrapper = document.createElement('div');
     wrapper.className = 'product-image-wrap';
-    const imageUrl = this.resolveProductImage(product);
+    const imageUrls = getProductImageCandidateUrls(product);
+    const imageUrl = imageUrls[0] || '';
     if (!imageUrl) {
       wrapper.appendChild(this.createImagePlaceholder('Gambar tidak tersedia'));
       return wrapper;
@@ -4265,13 +4447,18 @@ class ScraperApp {
     const img = document.createElement('img');
     img.className = 'product-image';
     img.src = imageUrl;
+    img.dataset.originalSrc = imageUrl;
+    img.dataset.imageCandidates = JSON.stringify(imageUrls.slice(1, 8));
     img.alt = product.title || 'Gambar produk';
     img.loading = 'lazy';
     img.referrerPolicy = 'no-referrer';
     img.onerror = () => {
-      if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried) {
+      markImageCandidateFailed(img, img.currentSrc || img.src || imageUrl);
+      if (tryNextImageCandidate(img)) return;
+      const currentSrc = img.dataset.originalSrc || imageUrl;
+      if (canProxyImageUrl(currentSrc) && !img.dataset.proxyTried) {
         img.dataset.proxyTried = '1';
-        img.src = this.proxyImageUrl(imageUrl);
+        img.src = this.proxyImageUrl(currentSrc);
         return;
       }
       wrapper.replaceChildren(this.createImagePlaceholder('Gambar tidak tersedia'));
@@ -4485,16 +4672,24 @@ class ScraperApp {
 
     const img = dialog.querySelector(".product-modal-image");
     if (img) {
-      const imageUrl = this.resolveProductImage(product);
+      const imageUrls = getProductImageCandidateUrls(product);
+      const imageUrl = imageUrls[0] || "";
       delete img.dataset.proxyTried;
+      img.dataset.originalSrc = imageUrl;
+      img.dataset.imageCandidates = JSON.stringify(imageUrls.slice(1, 8));
       img.src = imageUrl || '';
       img.referrerPolicy = 'no-referrer';
+      img.classList.toggle("is-hidden", !imageUrl);
       img.onerror = () => {
-        if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried) {
+        markImageCandidateFailed(img, img.currentSrc || img.src || imageUrl);
+        if (tryNextImageCandidate(img)) return;
+        const currentSrc = img.dataset.originalSrc || imageUrl;
+        if (canProxyImageUrl(currentSrc) && !img.dataset.proxyTried) {
           img.dataset.proxyTried = '1';
-          img.src = this.proxyImageUrl(imageUrl);
+          img.src = this.proxyImageUrl(currentSrc);
         } else {
           img.src = '';
+          img.classList.add("is-hidden");
         }
       };
     }
@@ -5037,11 +5232,14 @@ function renderProductDetail(product) {
     meta.innerHTML = parts.map(p => `<span>${escapeHtml(p)}</span>`).join('');
   }
 
-  const imageUrl = resolveProductImage(product);
+  const imageUrls = getProductImageCandidateUrls(product);
+  const imageUrl = imageUrls[0] || "";
 
   if (img && placeholder) {
     if (imageUrl) {
       delete img.dataset.proxyTried;
+      img.dataset.originalSrc = imageUrl;
+      img.dataset.imageCandidates = JSON.stringify(imageUrls.slice(1, 8));
       img.src = imageUrl;
       img.alt = product.title || "Gambar produk";
       img.referrerPolicy = "no-referrer";
@@ -5049,9 +5247,12 @@ function renderProductDetail(product) {
       placeholder.classList.add("is-hidden");
       
       img.onerror = () => {
-        if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+        markImageCandidateFailed(img, img.currentSrc || img.src || imageUrl);
+        if (tryNextImageCandidate(img)) return;
+        const currentSrc = img.dataset.originalSrc || imageUrl;
+        if (canProxyImageUrl(currentSrc) && !img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
           img.dataset.proxyTried = "1";
-          img.src = window.app.proxyImageUrl(imageUrl);
+          img.src = window.app.proxyImageUrl(currentSrc);
           return;
         }
         placeholder.innerHTML = "<strong>Gambar tidak tersedia</strong><span>Produk tetap bisa dibuka lewat detail.</span>";

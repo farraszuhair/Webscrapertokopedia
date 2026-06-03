@@ -98,6 +98,7 @@ def _mark_product(
     product["ai_checked"] = ai_used
     product["ai_used"] = ai_used
     product["classifier_enabled"] = ai_used
+    product["rule_passed"] = bool(accepted) and not ai_used
     if ai_used:
         product["ai_confidence"] = round(confidence, 3)
         product["ai_model_confidence"] = round(confidence, 3)
@@ -105,7 +106,7 @@ def _mark_product(
     else:
         product["ai_confidence"] = None
         product["ai_model_confidence"] = None
-        product["ai_confidence_label"] = "Lolos filter aturan"
+        product["ai_confidence_label"] = "Terverifikasi aturan"
     product["ai_decision"] = bool(accepted)
     product["ai_label"] = "relevan" if accepted else "tidak_relevan"
     product["ai_reason"] = reason
@@ -723,6 +724,7 @@ async def filter_products(
             product["rule_source"] = "rescued_false_obvious_junk"
             product["ai_checked"] = False
             product["ai_used"] = False
+            product["rule_passed"] = True
             product["reason"] = "Rescued because strong laptop/GPU evidence overrides accessory word"
             product["ai_reason"] = product["reason"]
             product["confidence"] = round(max(
@@ -732,7 +734,7 @@ async def filter_products(
             ), 3)
             product["ai_confidence"] = None
             product["ai_model_confidence"] = None
-            product["ai_confidence_label"] = "Lolos filter aturan"
+            product["ai_confidence_label"] = "Terverifikasi aturan"
             rescued_false_junk.append(product)
             continue
         remaining_rejected.append(product)
@@ -1204,9 +1206,10 @@ async def filter_products(
         product["rule_source"] = source
         product["ai_checked"] = False
         product["ai_used"] = False
+        product["rule_passed"] = True
         product["ai_confidence"] = None
         product["ai_model_confidence"] = None
-        product["ai_confidence_label"] = "Lolos filter aturan"
+        product["ai_confidence_label"] = "Terverifikasi aturan"
         product["reason"] = reason
         fallback_candidates.append(product)
         return True
@@ -1480,9 +1483,10 @@ async def filter_products(
                     marked["rule_source"] = "fallback_after_ai_reject_positive_laptop"
                     marked["ai_checked"] = False
                     marked["ai_used"] = False
+                    marked["rule_passed"] = True
                     marked["ai_confidence"] = None
                     marked["ai_model_confidence"] = None
-                    marked["ai_confidence_label"] = "Lolos filter aturan"
+                    marked["ai_confidence_label"] = "Terverifikasi aturan"
                     marked["reason"] = "AI rejected but product has valid gaming laptop evidence"
                     marked["ai_reason"] = marked["reason"]
                     marked["rule_score"] = round(rule_score, 3)
@@ -1495,9 +1499,10 @@ async def filter_products(
                     marked["rule_source"] = "fallback_after_ai_reject"
                     marked["ai_checked"] = False
                     marked["ai_used"] = False
+                    marked["rule_passed"] = True
                     marked["ai_confidence"] = None
                     marked["ai_model_confidence"] = None
-                    marked["ai_confidence_label"] = "Lolos filter aturan"
+                    marked["ai_confidence_label"] = "Terverifikasi aturan"
                     marked["reason"] = "AI rejected, kept as fallback because no hard rejection applies"
                     marked["ai_reason"] = marked["reason"]
                     marked["rule_score"] = round(rule_score, 3)
