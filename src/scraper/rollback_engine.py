@@ -405,7 +405,7 @@ class RollbackEngine:
             const isProductUrl = (href) => {
               try {
                 const url = new URL(href, location.href);
-                if (!url.hostname.includes('tokopedia.com')) return false;
+                if (!['www.tokopedia.com', 'tokopedia.com'].includes(url.hostname)) return false;
                 if (['/search', '/cart', '/help', '/discovery', '/official-store'].some(
                   prefix => url.pathname.startsWith(prefix)
                 )) return false;
@@ -418,41 +418,59 @@ class RollbackEngine:
               return match ? match[0].trim() : '';
             };
             function getImageFromCard(card) {
-              const img =
-                card.querySelector('img[src]') ||
-                card.querySelector('img[data-src]') ||
-                card.querySelector('picture img');
-
               const candidates = [];
-              if (img) {
+              const pushSrcset = (srcset) => {
+                if (!srcset) return;
+                String(srcset)
+                  .split(',')
+                  .map((item) => item.trim().split(/\s+/)[0])
+                  .filter(Boolean)
+                  .forEach((url) => candidates.push(url));
+              };
+              const pushBackgroundUrl = (node) => {
+                if (!node) return;
+                const style = window.getComputedStyle(node);
+                const raw = style && style.backgroundImage;
+                const match = raw && raw.match(/url\(["']?([^"')]+)["']?\)/i);
+                if (match) candidates.push(match[1]);
+              };
+
+              card.querySelectorAll('picture source, source').forEach((source) => {
+                pushSrcset(source.getAttribute('srcset'));
+                pushSrcset(source.getAttribute('data-srcset'));
+              });
+
+              card.querySelectorAll('img').forEach((img) => {
                 candidates.push(img.currentSrc);
                 candidates.push(img.src);
                 candidates.push(img.getAttribute('src'));
                 candidates.push(img.getAttribute('data-src'));
+                candidates.push(img.getAttribute('data-original-src'));
                 candidates.push(img.getAttribute('data-original'));
+                candidates.push(img.getAttribute('data-lazy-src'));
+                candidates.push(img.getAttribute('data-image'));
+                candidates.push(img.getAttribute('data-url'));
+                pushSrcset(img.getAttribute('srcset'));
+                pushSrcset(img.getAttribute('data-srcset'));
+              });
 
-                const srcset = img.getAttribute('srcset');
-                if (srcset) {
-                  candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
+              pushBackgroundUrl(card);
+              card.querySelectorAll('[style*="background"]').forEach(pushBackgroundUrl);
+
+              for (const candidate of candidates) {
+                if (typeof candidate !== 'string') continue;
+                let url = candidate.trim();
+                if (!url) continue;
+                if (url.startsWith('//')) url = `https:${url}`;
+                const compact = url.toLowerCase().replace(/\s+/g, '');
+                if (['undefined', 'null', 'noimage'].includes(compact)) continue;
+                if (compact.includes('svg')) continue;
+                if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) {
+                  return url;
                 }
               }
 
-              const source = card.querySelector('source[srcset]');
-              if (source) {
-                const srcset = source.getAttribute('srcset');
-                if (srcset) {
-                  candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
-                }
-              }
-
-              return candidates.find((url) =>
-                typeof url === 'string' &&
-                url.startsWith('http') &&
-                !url.startsWith('data:image') &&
-                !url.toLowerCase().includes('base64') &&
-                !url.toLowerCase().includes('svg') &&
-                !['undefined', 'null', 'noimage'].includes(url.trim().toLowerCase().replace(/\s+/g, ''))
-              ) || null;
+              return null;
             }
 
             const seen = new Set();
@@ -477,7 +495,8 @@ class RollbackEngine:
                 const text = card.innerText || '';
                 const priceRaw = priceOf(text);
                 if (!priceRaw) continue;
-                const anchor = card.querySelector('a[href*="tokopedia.com/"]');
+                const anchor = Array.from(card.querySelectorAll('a[href*="tokopedia.com/"]'))
+                  .find(item => isProductUrl(item.href));
                 const lines = linesOf(text);
                 const selectorTitle =
                   card.querySelector('[data-testid="spnSRPProdName"]') ||
@@ -505,7 +524,9 @@ class RollbackEngine:
                   rating: ratingMatch ? ratingMatch[1] : '',
                   sold: soldMatch ? soldMatch[0] : '',
                   url: cleanUrl(anchor ? anchor.href : ''),
+                  image_url: imageUrl || '',
                   image: imageUrl || '',
+                  thumbnail: imageUrl || '',
                   source_engine: 'rollback',
                 });
               }
@@ -547,7 +568,9 @@ class RollbackEngine:
                 rating: ratingMatch ? ratingMatch[1] : '',
                 sold: soldMatch ? soldMatch[0] : '',
                 url: cleanUrl(href),
+                image_url: imageUrl || '',
                 image: imageUrl || '',
+                thumbnail: imageUrl || '',
                 source_engine: 'rollback',
               });
             }

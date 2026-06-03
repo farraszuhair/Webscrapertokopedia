@@ -77,7 +77,7 @@ def _clean_url(url: str) -> str:
     return re.split(r"[?#]", url.strip(), maxsplit=1)[0]
 
 
-def normalize_image_url(url: str | None) -> str | None:
+def normalize_image_url(url: Any | None) -> str | None:
     if not url:
         return None
     url = str(url).strip().strip('"').strip("'")
@@ -85,9 +85,11 @@ def normalize_image_url(url: str | None) -> str | None:
         return None
     if url.startswith("//"):
         url = "https:" + url
-    if not (url.startswith("http://") or url.startswith("https://")):
-        return None
     if url.lower().replace(" ", "") in {"undefined", "null", "noimage"}:
+        return None
+    if url.startswith("data:image/"):
+        return url
+    if not (url.startswith("http://") or url.startswith("https://")):
         return None
     return url
 
@@ -95,12 +97,18 @@ def normalize_image_url(url: str | None) -> str | None:
 def pick_product_image(product: dict[str, Any]) -> str | None:
     candidates = [
         product.get("image_url"),
+        product.get("imageUrl"),
         product.get("image"),
+        product.get("thumbnail_url"),
+        product.get("thumbnailUrl"),
         product.get("thumbnail"),
         product.get("thumb"),
         product.get("img"),
         product.get("photo"),
         product.get("picture"),
+        product.get("product_image"),
+        product.get("original_image_url"),
+        product.get("media_url"),
         product.get("url_gambar"),
     ]
 
@@ -108,21 +116,35 @@ def pick_product_image(product: dict[str, Any]) -> str | None:
     if isinstance(images, list) and images:
         candidates.extend(images)
 
+    pictures = product.get("pictures")
+    if isinstance(pictures, list) and pictures:
+        candidates.extend(pictures)
+
     media = product.get("media")
     if isinstance(media, dict):
         candidates.extend([
             media.get("image"),
+            media.get("image_url"),
+            media.get("imageUrl"),
             media.get("thumbnail"),
+            media.get("thumbnail_url"),
+            media.get("thumbnailUrl"),
             media.get("url"),
         ])
+    elif isinstance(media, list):
+        candidates.extend(media)
 
     for candidate in candidates:
         if isinstance(candidate, dict):
             nested = (
-                candidate.get("image")
+                candidate.get("url")
+                or candidate.get("src")
                 or candidate.get("image_url")
+                or candidate.get("imageUrl")
+                or candidate.get("image")
+                or candidate.get("thumbnail_url")
+                or candidate.get("thumbnailUrl")
                 or candidate.get("thumbnail")
-                or candidate.get("url")
             )
             normalized = normalize_image_url(nested)
         else:

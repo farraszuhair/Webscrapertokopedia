@@ -4254,6 +4254,14 @@ body.modal-open {
   font-weight: 700;
 }
 
+.category-reason {
+  margin: 4px 0 0;
+  color: #93c5fd;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 700;
+}
+
 /* Overbudget badge */
 .rec-card-badge.is-overbudget,
 .product-badge.is-overbudget {
@@ -4794,6 +4802,62 @@ body.modal-open {
   padding: 5px 12px;
   font-size: 11px;
   font-weight: 700;
+}
+
+/* ============================================================
+   PRODUCT IMAGE FALLBACK FIX
+   ============================================================ */
+
+.product-image-wrap {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 22px 22px 0 0;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.product-image {
+  width: 100%;
+  height: 220px;
+  display: block;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
+.product-image-placeholder::before {
+  content: none !important;
+}
+
+.product-image-placeholder,
+.image-placeholder,
+.product-detail-image-placeholder {
+  min-height: 220px;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+  color: #94a3b8;
+  background:
+    radial-gradient(circle at center, rgba(59, 130, 246, 0.12), transparent 45%),
+    rgba(15, 23, 42, 0.9);
+}
+
+.recommendation-product-image-wrap .product-image-placeholder,
+.recommendation-product-image-wrap .image-placeholder {
+  min-height: 100%;
+}
+
+.product-image-placeholder strong,
+.image-placeholder strong,
+.product-detail-image-placeholder strong {
+  font-size: 16px;
+  color: #94a3b8;
+}
+
+.product-image-placeholder span,
+.image-placeholder span,
+.product-detail-image-placeholder span {
+  font-size: 13px;
+  color: #64748b;
 }
 
 /* ============================================================

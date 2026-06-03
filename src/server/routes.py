@@ -153,7 +153,7 @@ async def fetch_result(search_id: str):
 @router.get("/api/image-proxy")
 async def image_proxy(url: str = Query(..., min_length=8)):
     image_url = normalize_image_url(url)
-    if not image_url:
+    if not image_url or not image_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid image URL")
 
     headers = {

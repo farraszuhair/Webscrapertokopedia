@@ -65,8 +65,7 @@ function formatCompactSoldCount(value) {
   const raw = String(value || '').trim();
 
   if (!count && raw) {
-    const cleaned = raw.replace(/\s+/g, ' ').replace(/terjual\s+terjual/ig, 'terjual');
-    return /terjual/i.test(cleaned) ? cleaned : `${cleaned} terjual`;
+    return normalizeSoldText(raw);
   }
 
   if (!count) return '';
@@ -74,6 +73,14 @@ function formatCompactSoldCount(value) {
   if (count >= 1000) return `${formatOneDecimal(count / 1000)}rb terjual`;
   if (count >= 100) return `${count}+ terjual`;
   return `${count} terjual`;
+}
+
+function normalizeSoldText(value) {
+  if (!value) return "";
+  let text = String(value).trim().replace(/\s+/g, " ");
+  text = text.replace(/\s*terjual\s*terjual/gi, " terjual").trim();
+  if (!/terjual/i.test(text)) text += " terjual";
+  return text;
 }
 
 function hasRealAiSource(product) {
@@ -107,9 +114,7 @@ function formatSoldCount(sold) {
   return formatCompactSoldCount(sold);
 }
 
-function formatAiConfidence(product) {
-  if (isRulesFallback(product)) return 'Rules: diterima';
-
+function formatDecisionLabel(product) {
   const raw = product?.ai_confidence ?? 
               product?.confidence ?? 
               product?.combined_score ?? 
@@ -118,17 +123,26 @@ function formatAiConfidence(product) {
               product?.confidenceScore ??
               null;
 
-  if (raw == null || raw === '') return '';
-
   const numeric = Number(raw);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return hasRealAiSource(product) ? '' : 'Rules: diterima';
+  const source = String(product?.decision_source || product?.ai_source || product?.source || '').toLowerCase();
+  const isRules = /rule|fallback/.test(source) && !/(llm|ollama|classifier|model|ai)/.test(source);
+  const aiEnabled =
+    product?.ai_checked === true ||
+    product?.ai_used === true ||
+    product?.decision_source === "ai" ||
+    product?.source === "ai" ||
+    hasRealAiSource(product);
+
+  if (Number.isFinite(numeric) && numeric > 0 && ((aiEnabled && !isRules) || !isRules)) {
+    const percent = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
+    return `Keyakinan AI: ${Math.max(0, Math.min(100, percent))}%`;
   }
 
-  if (!hasRealAiSource(product)) return 'Rules: diterima';
+  return "Validasi: Rules";
+}
 
-  const pct = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
-  return `Keyakinan AI: ${pct}%`;
+function formatAiConfidence(product) {
+  return formatDecisionLabel(product);
 }
 
 function formatRatingMeta(product) {
@@ -171,21 +185,102 @@ function isProductOverbudget(product) {
   return price > maxBudget;
 }
 
-function getProductImage(product) {
-  const candidates = [
-    product?.image_url, product?.image, product?.thumbnail, product?.thumb,
-    product?.img, product?.photo, Array.isArray(product?.images) ? product.images[0] : null,
-    product?.media?.image, product?.media?.thumbnail, product?.media?.url
-  ];
-  for (const val of candidates) {
-    if (!val) continue;
-    let url = String(val).trim();
-    if (!url) continue;
-    if (/^data:image\//i.test(url)) return url;
-    if (url.startsWith("//")) url = `https:${url}`;
-    if (/^https?:\/\//i.test(url)) return url;
+function normalizeProductImageCandidate(value) {
+  if (!value) return "";
+  let url = "";
+  if (typeof value === "object") {
+    url = String(
+      value.url ||
+      value.image_url ||
+      value.imageUrl ||
+      value.image ||
+      value.thumbnail_url ||
+      value.thumbnailUrl ||
+      value.thumbnail ||
+      value.src ||
+      ""
+    ).trim();
+  } else {
+    url = String(value).trim();
   }
-  return '';
+
+  if (!url) return "";
+  if (["undefined", "null", "noimage"].includes(url.toLowerCase().replace(/\s+/g, ""))) return "";
+  if (url.startsWith("//")) url = `https:${url}`;
+  if (/^https?:\/\//i.test(url) || /^data:image\//i.test(url)) return url;
+  return "";
+}
+
+function getProductImageUrl(product) {
+  const candidates = [
+    product?.image_url,
+    product?.imageUrl,
+    product?.image,
+    product?.thumbnail_url,
+    product?.thumbnailUrl,
+    product?.thumbnail,
+    product?.thumb,
+    product?.img,
+    product?.picture,
+    product?.photo,
+    product?.product_image,
+    product?.original_image_url,
+    product?.media_url,
+    Array.isArray(product?.images) ? product.images[0] : null,
+    Array.isArray(product?.media) ? product.media[0]?.url : product?.media?.url,
+    Array.isArray(product?.pictures) ? product.pictures[0]?.url : null,
+    product?.media?.image,
+    product?.media?.thumbnail,
+  ];
+
+  for (const candidate of candidates) {
+    const url = normalizeProductImageCandidate(candidate);
+    if (url) return url;
+  }
+  return "";
+}
+
+function getProductImage(product) {
+  return getProductImageUrl(product);
+}
+
+function canProxyImageUrl(url) {
+  return /^https?:\/\//i.test(String(url || ""));
+}
+
+function renderImagePlaceholderHtml(message = "Gambar tidak tersedia") {
+  return `
+    <div class="product-image-placeholder" aria-hidden="true">
+      <strong>${escapeHtml(message)}</strong>
+      <span>Produk tetap bisa dibuka lewat detail.</span>
+    </div>
+  `;
+}
+
+function renderProductImage(product, options = {}) {
+  const imageUrl = getProductImageUrl(product);
+  const className = options.className || "product-image";
+  const title = product?.title || product?.name || "Gambar produk";
+
+  if (!imageUrl) {
+    return renderImagePlaceholderHtml("Gambar tidak tersedia");
+  }
+
+  return `
+    <img
+      class="${escapeHtml(className)}"
+      src="${escapeHtml(imageUrl)}"
+      data-original-src="${escapeHtml(imageUrl)}"
+      alt="${escapeHtml(title)}"
+      loading="lazy"
+      decoding="async"
+      referrerpolicy="no-referrer"
+    />
+    <div class="product-image-placeholder is-hidden" aria-hidden="true">
+      <strong>Gambar gagal dimuat</strong>
+      <span>Produk tetap bisa dibuka lewat detail.</span>
+    </div>
+  `;
 }
 
 function normalizeCategoryNumber(value) {
@@ -216,6 +311,10 @@ function normalizeConfidence(product) {
   return Math.min(numeric > 1 ? numeric / 100 : numeric, 1);
 }
 
+function parseCompactCount(value) {
+  return parseCountValue(value);
+}
+
 function isRelevantProduct(product) {
   if (!product) return false;
   const title = String(product.title || product.name || '').trim();
@@ -230,21 +329,56 @@ function isRelevantProduct(product) {
 function getBestProducts(products) {
   return [...(products || [])]
     .filter(isRelevantProduct)
-    .sort((a, b) => {
-      const scoreA =
-        normalizeRating(a.rating) * 35 +
-        normalizeCount(a.sold_count || a.soldCount || a.sold || a.sold_text) * 0.02 +
-        normalizeCount(a.review_count || a.rating_count || a.reviewCount || a.ratingCount) * 0.03 +
-        normalizeConfidence(a) * 25;
+    .sort((a, b) => getBestScore(b) - getBestScore(a));
+}
 
-      const scoreB =
-        normalizeRating(b.rating) * 35 +
-        normalizeCount(b.sold_count || b.soldCount || b.sold || b.sold_text) * 0.02 +
-        normalizeCount(b.review_count || b.rating_count || b.reviewCount || b.ratingCount) * 0.03 +
-        normalizeConfidence(b) * 25;
+function getBestScore(product) {
+  const rating = Number(String(product?.rating || 0).replace(",", ".")) || 0;
+  const sold = parseCompactCount(product?.sold_count || product?.soldCount || product?.sold || product?.sold_text);
+  const reviews = parseCompactCount(product?.review_count || product?.rating_count || product?.reviewCount || product?.ratingCount || product?.review_text);
+  const confidenceRaw = Number(product?.ai_confidence ?? product?.confidence ?? product?.combined_score ?? product?.confidenceScore ?? 0);
+  const confidence = confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw;
+  const budgetBonus = product?.budget_status === "in_budget" || product?.budget_decision === "in_budget" ? 10 : 0;
+  const imageBonus = getProductImageUrl(product) ? 3 : 0;
 
-      return scoreB - scoreA;
-    });
+  return (
+    rating * 30 +
+    Math.log10(sold + 1) * 18 +
+    Math.log10(reviews + 1) * 15 +
+    confidence * 25 +
+    budgetBonus +
+    imageBonus
+  );
+}
+
+function getBestReason(product) {
+  const rating = Number(String(product?.rating || 0).replace(",", ".")) || 0;
+  const sold = parseCompactCount(product?.sold_count || product?.soldCount || product?.sold || product?.sold_text);
+  const reviews = parseCompactCount(product?.review_count || product?.rating_count || product?.reviewCount || product?.ratingCount || product?.review_text);
+  const confidence = Number(product?.ai_confidence ?? product?.confidence ?? product?.combined_score ?? product?.confidenceScore ?? 0);
+  const budgetStatus = product?.budget_status || product?.budget_decision;
+
+  if (rating >= 4.8 && sold >= 1000) {
+    return "Dipilih karena rating tinggi dan penjualan kuat.";
+  }
+
+  if (rating >= 4.8 && reviews >= 100) {
+    return "Dipilih karena rating tinggi dan ulasan cukup banyak.";
+  }
+
+  if (confidence >= 0.85 || confidence >= 85) {
+    return "Dipilih karena skor rekomendasi paling kuat.";
+  }
+
+  if (budgetStatus === "in_budget" && rating >= 4.5) {
+    return "Dipilih karena masuk budget dan rating bagus.";
+  }
+
+  if (sold >= 500) {
+    return "Dipilih karena performa penjualan cukup kuat.";
+  }
+
+  return "Dipilih karena paling cocok dengan pencarian dibanding kandidat lain.";
 }
 
 function getCheapestProducts(products) {
@@ -772,7 +906,7 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
     ? window.app.normalizeProduct(product)
     : { ...(product || {}) };
   const id = getProductReviewId(item);
-  const imageUrl = resolveProductImage(item);
+  const imageUrl = getProductImageUrl(item);
   const title = item.title || "Produk Tokopedia";
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
 
@@ -783,7 +917,8 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
   const priceStr = formatProductPrice(item);
 
   // Format keyakinan AI
-  const aiStr = formatAiConfidence(item);
+  const aiStr = formatDecisionLabel(item);
+  const bestReason = normalizedMode === "terbaik" ? getBestReason(item) : "";
 
   // Overbudget badge
   const isOverbudget = isProductOverbudget(item);
@@ -796,13 +931,7 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
     ? '<span class="rec-checked-pill">Sudah dicek</span>'
     : '';
 
-  // Gambar atau placeholder
-  const imageHtml = imageUrl
-    ? `<img class="recommendation-product-image" src="${escapeHtml(imageUrl)}" data-original-src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" decoding="async" />`
-    : "";
-  const placeholderHtml = imageUrl
-    ? `<div class="product-image-placeholder is-hidden" aria-hidden="true"></div>`
-    : `<div class="product-image-placeholder" aria-hidden="true"><span>Gambar tidak tersedia</span></div>`;
+  const imageHtml = renderProductImage(item, { className: "recommendation-product-image" });
 
   // TIDAK ADA tombol Benar/Salah/Buka di card — card seluruhnya clickable buka modal
   return `
@@ -810,7 +939,6 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
       ${checkedPill}
       <div class="recommendation-product-image-wrap${imageUrl ? "" : " is-image-missing"}">
         ${imageHtml}
-        ${placeholderHtml}
       </div>
       <div class="recommendation-product-card-details">
         ${overbudgetBadge}
@@ -818,24 +946,34 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
         <div class="recommendation-product-price">${escapeHtml(priceStr)}</div>
         ${ratingMeta ? `<div class="recommendation-product-rating-row"><span class="rec-rating">${escapeHtml(ratingMeta)}</span></div>` : ''}
         ${aiStr ? `<div class="rec-ai-confidence">${escapeHtml(aiStr)}</div>` : ''}
+        ${bestReason ? `<p class="category-reason">${escapeHtml(bestReason)}</p>` : ''}
       </div>
     </article>
   `;
 }
 
 function setupProductImageErrorHandlers(scope = document) {
-  scope.querySelectorAll(".recommendation-product-image").forEach(img => {
+  scope.querySelectorAll(".recommendation-product-image, .product-image").forEach(img => {
     if (img.dataset.errorHandlerBound === "true") return;
     img.dataset.errorHandlerBound = "true";
 
     img.onerror = () => {
       const originalSrc = img.dataset.originalSrc || img.src;
-      if (originalSrc && window.app && typeof window.app.proxyImageUrl === "function" && !img.dataset.proxyTried) {
+      if (canProxyImageUrl(originalSrc) && window.app && typeof window.app.proxyImageUrl === "function" && !img.dataset.proxyTried) {
         img.dataset.proxyTried = "1";
         img.src = window.app.proxyImageUrl(originalSrc);
         return;
       }
 
+      const wrapper = img.closest(".recommendation-product-image-wrap, .product-image-wrap");
+      const placeholder = wrapper?.querySelector(".product-image-placeholder");
+      if (placeholder) {
+        const strong = placeholder.querySelector("strong");
+        const span = placeholder.querySelector("span");
+        if (strong) strong.textContent = "Gambar gagal dimuat";
+        if (span) span.textContent = "Produk tetap bisa dibuka lewat detail.";
+        placeholder.classList.remove("is-hidden");
+      }
       handleImageError(img);
     };
   });
@@ -1297,8 +1435,9 @@ function createCheckedProductCard(record) {
     img.src = imageUrl;
     img.alt = product.title || "Gambar produk";
     img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
     img.onerror = () => {
-      if (!img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+      if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
         img.dataset.proxyTried = "1";
         img.src = window.app.proxyImageUrl(imageUrl);
         return;
@@ -1517,31 +1656,7 @@ function showRecommendationDialogWithAnimation() {
 }
 
 function resolveProductImage(product) {
-  const candidates = [
-    product?.image_url,
-    product?.image,
-    product?.thumbnail,
-    product?.thumb,
-    product?.img,
-    product?.photo,
-    Array.isArray(product?.images) ? product.images[0] : null,
-    product?.media?.image,
-    product?.media?.thumbnail,
-    product?.media?.url
-  ];
-
-  for (const value of candidates) {
-    if (!value) continue;
-
-    let url = String(value).trim();
-
-    if (!url) continue;
-    if (/^data:image\//i.test(url)) return url;
-    if (url.startsWith("//")) url = `https:${url}`;
-    if (/^https?:\/\//i.test(url)) return url;
-  }
-
-  return "";
+  return getProductImageUrl(product);
 }
 
 function escapeHtml(str) {
@@ -1579,7 +1694,7 @@ function setText(selector, value) {
 }
 
 function fillRecommendationModal(product) {
-  const imageUrl = resolveProductImage(product);
+  const imageUrl = getProductImageUrl(product);
 
   const imgWrap = document.querySelector(".recommendation-modal-image-wrap");
 
@@ -1592,23 +1707,29 @@ function fillRecommendationModal(product) {
           alt="Gambar produk"
           loading="lazy"
           decoding="async"
+          referrerpolicy="no-referrer"
         />
       `;
 
       const newImg = imgWrap.querySelector("img");
       newImg.addEventListener("error", () => {
+        if (canProxyImageUrl(imageUrl) && !newImg.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+          newImg.dataset.proxyTried = "1";
+          newImg.src = window.app.proxyImageUrl(imageUrl);
+          return;
+        }
         imgWrap.innerHTML = `
           <div class="image-placeholder">
-            <strong>Tidak ada gambar</strong>
-            <span>Gambar tidak tersedia</span>
+            <strong>Gambar gagal dimuat</strong>
+            <span>Produk tetap bisa dibuka lewat detail.</span>
           </div>
         `;
       }, { once: true });
     } else {
       imgWrap.innerHTML = `
         <div class="image-placeholder">
-          <strong>Tidak ada gambar</strong>
-          <span>Gambar tidak tersedia</span>
+          <strong>Gambar tidak tersedia</strong>
+          <span>Produk tetap bisa dibuka lewat detail.</span>
         </div>
       `;
     }
@@ -1620,7 +1741,7 @@ function fillRecommendationModal(product) {
   setText(".recommendation-modal-price", formatProductPrice(product));
   setText(".recommendation-modal-rating", `⭐ ${product?.rating || "-"}`);
   setText(".recommendation-modal-sold", `🛍️ ${product?.sold || product?.sold_text || "0 terjual"}`);
-  setText(".recommendation-modal-confidence", `🧠 Keyakinan AI: ${product?.confidenceScore ?? product?.confidence ?? product?.ai_confidence ?? product?.relevance_score ?? "-"}`);
+  setText(".recommendation-modal-confidence", formatDecisionLabel(product));
 
   const openBtn = document.querySelector("#recommendation-product-dialog .open-product-btn");
   if (openBtn) {
@@ -3644,8 +3765,9 @@ class ScraperApp {
       img.src = imageUrl;
       img.alt = item.title || 'Gambar produk';
       img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
       img.onerror = () => {
-        if (imageUrl && !img.dataset.proxyTried) {
+        if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried) {
           img.dataset.proxyTried = '1';
           img.src = this.proxyImageUrl(imageUrl);
           return;
@@ -3899,31 +4021,7 @@ class ScraperApp {
   }
 
   resolveProductImage(product) {
-    const candidates = [
-      product?.image_url,
-      product?.image,
-      product?.thumbnail,
-      product?.thumb,
-      product?.img,
-      product?.photo,
-      Array.isArray(product?.images) ? product.images[0] : null,
-      product?.media?.image,
-      product?.media?.thumbnail,
-      product?.media?.url,
-    ];
-
-    for (const value of candidates) {
-      if (!value) continue;
-      let url = String(value).trim();
-      if (!url) continue;
-      if (['undefined', 'null', 'noimage'].includes(url.toLowerCase().replace(/\s+/g, ''))) continue;
-      if (/^data:image\//i.test(url)) return url;
-      if (url.startsWith('//')) url = `https:${url}`;
-      if (!/^https?:\/\//i.test(url)) continue;
-      return url;
-    }
-
-    return null;
+    return getProductImageUrl(product) || null;
   }
 
   getValidImageUrl(product) {
@@ -3937,10 +4035,10 @@ class ScraperApp {
   createImagePlaceholder(text) {
     const placeholder = document.createElement('div');
     placeholder.className = 'product-image-placeholder';
-    const icon = document.createElement('span');
-    icon.textContent = 'Tidak ada gambar';
-    const label = document.createElement('small');
-    label.textContent = text;
+    const icon = document.createElement('strong');
+    icon.textContent = text || 'Gambar tidak tersedia';
+    const label = document.createElement('span');
+    label.textContent = 'Produk tetap bisa dibuka lewat detail.';
     placeholder.append(icon, label);
     return placeholder;
   }
@@ -3959,8 +4057,9 @@ class ScraperApp {
     img.src = imageUrl;
     img.alt = product.title || 'Gambar produk';
     img.loading = 'lazy';
+    img.referrerPolicy = 'no-referrer';
     img.onerror = () => {
-      if (!img.dataset.proxyTried) {
+      if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried) {
         img.dataset.proxyTried = '1';
         img.src = this.proxyImageUrl(imageUrl);
         return;
@@ -4040,15 +4139,12 @@ class ScraperApp {
       overBadge.className = 'product-badge is-overbudget';
       badges.appendChild(overBadge);
     }
-    if (aiValue != null && Number.isFinite(aiNumeric)) {
-      badges.appendChild(this.createBadge(`AI ${aiNumeric.toFixed(2)} ${aiConfidenceLabel}`));
-    }
+    badges.appendChild(this.createBadge(formatDecisionLabel(product)));
     const learnedAdjustment = Number(product.learned_adjustment ?? 0);
     if (Number.isFinite(learnedAdjustment) && Math.abs(learnedAdjustment) > 0) {
       const sign = learnedAdjustment > 0 ? '+' : '';
       badges.appendChild(this.createBadge(`Learned ${sign}${learnedAdjustment.toFixed(2)}`));
     }
-    badges.appendChild(this.createBadge(product.ai_source || product.decision_source || 'rule'));
     if (product.source || product.source_engine) badges.appendChild(this.createBadge(product.source || product.source_engine));
     if (product.outside_budget || product.budget_badge) badges.appendChild(this.createBadge(product.budget_badge || 'Di luar budget'));
     body.appendChild(badges);
@@ -4180,9 +4276,11 @@ class ScraperApp {
     const img = dialog.querySelector(".product-modal-image");
     if (img) {
       const imageUrl = this.resolveProductImage(product);
+      delete img.dataset.proxyTried;
       img.src = imageUrl || '';
+      img.referrerPolicy = 'no-referrer';
       img.onerror = () => {
-        if (imageUrl && !img.dataset.proxyTried) {
+        if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried) {
           img.dataset.proxyTried = '1';
           img.src = this.proxyImageUrl(imageUrl);
         } else {
@@ -4220,15 +4318,7 @@ class ScraperApp {
 
     const confEl = dialog.querySelector(".product-modal-confidence");
     if (confEl) {
-      const aiValue = product.confidenceScore ?? product.ai_confidence ?? product.relevance_score;
-      const aiNumeric = Number(aiValue);
-      let confStr = '';
-      if (aiValue != null && Number.isFinite(aiNumeric) && aiNumeric > 0) {
-        const pct = aiNumeric > 1 ? Math.round(aiNumeric) : Math.round(aiNumeric * 100);
-        const decisionSource = product.ai_source || product.decision_source || '';
-        const isRulesOnly = /rule/i.test(decisionSource) && !/llm|ai|classifier/i.test(decisionSource);
-        confStr = isRulesOnly ? `Rules: diterima` : `🧠 Keyakinan AI: ${pct}%`;
-      }
+      const confStr = formatDecisionLabel(product);
       confEl.textContent = confStr;
       confEl.style.display = confStr ? 'inline' : 'none';
     }
@@ -4741,16 +4831,25 @@ function renderProductDetail(product) {
 
   if (img && placeholder) {
     if (imageUrl) {
+      delete img.dataset.proxyTried;
       img.src = imageUrl;
       img.alt = product.title || "Gambar produk";
+      img.referrerPolicy = "no-referrer";
       img.classList.remove("is-hidden");
       placeholder.classList.add("is-hidden");
       
       img.onerror = () => {
+        if (canProxyImageUrl(imageUrl) && !img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+          img.dataset.proxyTried = "1";
+          img.src = window.app.proxyImageUrl(imageUrl);
+          return;
+        }
+        placeholder.innerHTML = "<strong>Gambar gagal dimuat</strong><span>Produk tetap bisa dibuka lewat detail.</span>";
         img.classList.add("is-hidden");
         placeholder.classList.remove("is-hidden");
       };
     } else {
+      placeholder.innerHTML = "<strong>Gambar tidak tersedia</strong><span>Produk tetap bisa dibuka lewat detail.</span>";
       img.removeAttribute("src");
       img.classList.add("is-hidden");
       placeholder.classList.remove("is-hidden");
