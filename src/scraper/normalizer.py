@@ -77,6 +77,42 @@ def _clean_url(url: str) -> str:
     return re.split(r"[?#]", url.strip(), maxsplit=1)[0]
 
 
+_BAD_PRODUCT_IMAGE_KEYWORDS = (
+    "promo",
+    "promo guncang",
+    "banner",
+    "campaign",
+    "ads",
+    "iklan",
+    "guncang",
+    "cashback",
+    "voucher",
+    "flash",
+    "sale",
+    "bebas ongkir",
+    "bebas-ongkir",
+    "free ongkir",
+    "free-ongkir",
+    "tokopedia.com/promo",
+    "/promo/",
+    "/campaign/",
+    "assets/promo",
+    "assets/campaign",
+    "6.6",
+    "7.7",
+    "8.8",
+    "9.9",
+    "10.10",
+    "11.11",
+    "12.12",
+)
+
+
+def _is_bad_product_image_url(url: str) -> bool:
+    text = str(url or "").lower()
+    return any(keyword in text for keyword in _BAD_PRODUCT_IMAGE_KEYWORDS)
+
+
 def normalize_image_url(url: Any | None) -> str | None:
     if not url:
         return None
@@ -90,6 +126,8 @@ def normalize_image_url(url: Any | None) -> str | None:
     if url.startswith("data:image/"):
         return url
     if not (url.startswith("http://") or url.startswith("https://")):
+        return None
+    if _is_bad_product_image_url(url):
         return None
     return url
 
@@ -252,7 +290,19 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "ai_decision": raw.get("ai_decision", None),
         "ai_reason": raw.get("ai_reason", ""),
         "confidence": raw.get("confidence", 0) or 0,
+        "combined_score": raw.get("combined_score", None),
+        "semantic_score": raw.get("semantic_score", None),
+        "rule_score": raw.get("rule_score", None),
+        "ai_checked": raw.get("ai_checked", False),
+        "ai_used": raw.get("ai_used", False),
+        "classifier_enabled": raw.get("classifier_enabled", False),
+        "ai_confidence": raw.get("ai_confidence", None),
+        "ai_model_confidence": raw.get("ai_model_confidence", None),
+        "ai_confidence_label": raw.get("ai_confidence_label", ""),
+        "ai_source": raw.get("ai_source", ""),
         "decision_source": raw.get("decision_source", ""),
+        "decision_source_detail": raw.get("decision_source_detail", ""),
+        "rule_source": raw.get("rule_source", ""),
     }
 
     # Compatibility aliases for old frontend/AI code. Old logic bad. Replaced.

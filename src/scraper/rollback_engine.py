@@ -417,60 +417,166 @@ class RollbackEngine:
               const match = String(text || '').match(/Rp\s*[\d.,]+(?:\s*(?:juta|jt|mio|rb|ribu|k))?/i);
               return match ? match[0].trim() : '';
             };
-            function getImageFromCard(card) {
-              const candidates = [];
-              const pushSrcset = (srcset) => {
+            function isBadProductImage(url = '', alt = '', className = '', parentClassName = '', contextText = '') {
+              const text = `${url} ${alt} ${className} ${parentClassName} ${contextText}`.toLowerCase();
+              const badKeywords = [
+                'promo',
+                'promo guncang',
+                'banner',
+                'campaign',
+                'ads',
+                'iklan',
+                'guncang',
+                'cashback',
+                'voucher',
+                'flash',
+                'sale',
+                'bebas ongkir',
+                'bebas-ongkir',
+                'free ongkir',
+                'free-ongkir',
+                'tokopedia.com/promo',
+                '/promo/',
+                '/campaign/',
+                'assets/promo',
+                'assets/campaign',
+                '6.6',
+                '7.7',
+                '8.8',
+                '9.9',
+                '10.10',
+                '11.11',
+                '12.12',
+              ];
+              return badKeywords.some((keyword) => text.includes(keyword));
+            }
+
+            function normalizeImageUrl(raw) {
+              if (typeof raw !== 'string') return '';
+              let url = raw.trim();
+              if (!url) return '';
+              if (url.startsWith('//')) url = `https:${url}`;
+              const compact = url.toLowerCase().replace(/\s+/g, '');
+              if (['undefined', 'null', 'noimage'].includes(compact)) return '';
+              if (compact.includes('svg')) return '';
+              if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) return url;
+              return '';
+            }
+
+            function scoreProductImageCandidate(img, productTitle = '') {
+              const url = normalizeImageUrl(img.src || '');
+              const alt = String(img.alt || '');
+              const className = String(img.className || '');
+              const parentClassName = String(img.parentClassName || '');
+              const contextText = String(img.contextText || '');
+              if (!url) return -999;
+              if (isBadProductImage(url, alt, className, parentClassName, contextText)) return -999;
+
+              let score = 0;
+              const width = Number(img.width || 0);
+              const height = Number(img.height || 0);
+              const ratio = width && height ? width / height : 1;
+              if (width >= 180 && height > 0 && ratio > 2.15) return -999;
+              if (height >= 180 && width > 0 && ratio < 0.35) return -999;
+
+              if (width >= 120) score += 10;
+              if (height >= 120) score += 10;
+              if (width >= 250 || height >= 250) score += 8;
+
+              if (ratio >= 0.6 && ratio <= 1.8) score += 10;
+
+              const loweredUrl = url.toLowerCase();
+              if (loweredUrl.includes('images.tokopedia.net')) score += 15;
+              if (loweredUrl.includes('cache') || loweredUrl.includes('product') || loweredUrl.includes('prd')) score += 8;
+
+              const contextLower = `${className} ${parentClassName} ${contextText}`.toLowerCase();
+              if (contextLower.includes('product') || contextLower.includes('prd') || contextLower.includes('master-product-card')) score += 8;
+              if (contextLower.includes('image') || contextLower.includes('thumbnail')) score += 4;
+
+              const titleWords = String(productTitle)
+                .toLowerCase()
+                .split(/\s+/)
+                .filter((word) => word.length >= 4)
+                .slice(0, 6);
+              const altLower = alt.toLowerCase();
+              score += titleWords.filter((word) => altLower.includes(word)).length * 8;
+
+              return score;
+            }
+
+            function pickBestProductImage(images, productTitle = '') {
+              return images
+                .map((img) => ({
+                  src: normalizeImageUrl(img.src || ''),
+                  score: scoreProductImageCandidate(img, productTitle),
+                }))
+                .filter((img) => img.src && img.score > 0)
+                .sort((a, b) => b.score - a.score)[0]?.src || '';
+            }
+
+            function getImageFromCard(card, productTitle = '') {
+              const images = [];
+              const pushCandidate = (src, node = {}) => {
+                const url = normalizeImageUrl(src);
+                if (!url) return;
+                const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : {};
+                const parentClasses = [];
+                let parent = node.parentElement;
+                for (let depth = 0; depth < 4 && parent; depth += 1) {
+                  parentClasses.push(parent.className || parent.getAttribute?.('class') || '');
+                  parentClasses.push(parent.getAttribute?.('data-testid') || '');
+                  parentClasses.push(parent.getAttribute?.('aria-label') || '');
+                  parent = parent.parentElement;
+                }
+                images.push({
+                  src: url,
+                  alt: node.alt || node.getAttribute?.('alt') || node.getAttribute?.('aria-label') || '',
+                  className: node.className || node.getAttribute?.('class') || '',
+                  parentClassName: parentClasses.join(' '),
+                  contextText: node.getAttribute?.('data-testid') || node.getAttribute?.('aria-label') || '',
+                  width: node.naturalWidth || node.width || Math.round(rect.width || 0),
+                  height: node.naturalHeight || node.height || Math.round(rect.height || 0),
+                });
+              };
+              const pushSrcset = (srcset, node) => {
                 if (!srcset) return;
                 String(srcset)
                   .split(',')
                   .map((item) => item.trim().split(/\s+/)[0])
                   .filter(Boolean)
-                  .forEach((url) => candidates.push(url));
+                  .forEach((url) => pushCandidate(url, node));
               };
               const pushBackgroundUrl = (node) => {
                 if (!node) return;
                 const style = window.getComputedStyle(node);
                 const raw = style && style.backgroundImage;
                 const match = raw && raw.match(/url\(["']?([^"')]+)["']?\)/i);
-                if (match) candidates.push(match[1]);
+                if (match) pushCandidate(match[1], node);
               };
 
               card.querySelectorAll('picture source, source').forEach((source) => {
-                pushSrcset(source.getAttribute('srcset'));
-                pushSrcset(source.getAttribute('data-srcset'));
+                pushSrcset(source.getAttribute('srcset'), source);
+                pushSrcset(source.getAttribute('data-srcset'), source);
               });
 
               card.querySelectorAll('img').forEach((img) => {
-                candidates.push(img.currentSrc);
-                candidates.push(img.src);
-                candidates.push(img.getAttribute('src'));
-                candidates.push(img.getAttribute('data-src'));
-                candidates.push(img.getAttribute('data-original-src'));
-                candidates.push(img.getAttribute('data-original'));
-                candidates.push(img.getAttribute('data-lazy-src'));
-                candidates.push(img.getAttribute('data-image'));
-                candidates.push(img.getAttribute('data-url'));
-                pushSrcset(img.getAttribute('srcset'));
-                pushSrcset(img.getAttribute('data-srcset'));
+                pushCandidate(img.currentSrc, img);
+                pushCandidate(img.src, img);
+                pushCandidate(img.getAttribute('src'), img);
+                pushCandidate(img.getAttribute('data-src'), img);
+                pushCandidate(img.getAttribute('data-original-src'), img);
+                pushCandidate(img.getAttribute('data-original'), img);
+                pushCandidate(img.getAttribute('data-lazy-src'), img);
+                pushCandidate(img.getAttribute('data-image'), img);
+                pushCandidate(img.getAttribute('data-url'), img);
+                pushSrcset(img.getAttribute('srcset'), img);
+                pushSrcset(img.getAttribute('data-srcset'), img);
               });
 
               pushBackgroundUrl(card);
               card.querySelectorAll('[style*="background"]').forEach(pushBackgroundUrl);
 
-              for (const candidate of candidates) {
-                if (typeof candidate !== 'string') continue;
-                let url = candidate.trim();
-                if (!url) continue;
-                if (url.startsWith('//')) url = `https:${url}`;
-                const compact = url.toLowerCase().replace(/\s+/g, '');
-                if (['undefined', 'null', 'noimage'].includes(compact)) continue;
-                if (compact.includes('svg')) continue;
-                if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) {
-                  return url;
-                }
-              }
-
-              return null;
+              return pickBestProductImage(images, productTitle);
             }
 
             const seen = new Set();
@@ -504,7 +610,6 @@ class RollbackEngine:
                   card.querySelector('.prd_link-product-name');
                 const priceIndex = lines.findIndex(line => line.includes(priceRaw));
                 const imageNode = card.querySelector('img');
-                const imageUrl = getImageFromCard(card);
                 const title =
                   (selectorTitle && selectorTitle.textContent.trim()) ||
                   (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
@@ -512,6 +617,7 @@ class RollbackEngine:
                   (imageNode ? imageNode.getAttribute('alt') : '') ||
                   lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                   '';
+                const imageUrl = getImageFromCard(card, title);
                 const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
                 const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
                 const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
@@ -556,7 +662,7 @@ class RollbackEngine:
                 lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                 'Produk Tokopedia';
               const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
-              const imageUrl = getImageFromCard(card);
+              const imageUrl = getImageFromCard(card, title);
               const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
               const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
               pushProduct({

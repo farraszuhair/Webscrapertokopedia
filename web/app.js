@@ -114,7 +114,7 @@ function formatSoldCount(sold) {
   return formatCompactSoldCount(sold);
 }
 
-function formatDecisionLabel(product) {
+function formatDecisionLabel(product, globalAiStatus = null) {
   const raw = product?.ai_confidence ?? 
               product?.confidence ?? 
               product?.combined_score ?? 
@@ -124,21 +124,33 @@ function formatDecisionLabel(product) {
               null;
 
   const numeric = Number(raw);
-  const source = String(product?.decision_source || product?.ai_source || product?.source || '').toLowerCase();
-  const isRules = /rule|fallback/.test(source) && !/(llm|ollama|classifier|model|ai)/.test(source);
-  const aiEnabled =
+  const appState = window.app?.state || {};
+  const status = globalAiStatus || appState.aiStatus || appState.metadata?.ai_status || {};
+  const source = String(product?.decision_source || product?.ai_source || '').toLowerCase();
+  const aiActuallyUsed =
     product?.ai_checked === true ||
     product?.ai_used === true ||
-    product?.decision_source === "ai" ||
-    product?.source === "ai" ||
-    hasRealAiSource(product);
+    source === "ai" ||
+    source === "ai_orchestrator" ||
+    source === "classifier" ||
+    source === "llm";
+  const aiEnabled =
+    product?.classifier_enabled === true ||
+    product?.ai_checked === true ||
+    product?.ai_used === true ||
+    status === "ok" ||
+    status === "available" ||
+    status?.enabled === true ||
+    status?.classifier === true ||
+    status?.available === true ||
+    status?.ok === true;
 
-  if (Number.isFinite(numeric) && numeric > 0 && ((aiEnabled && !isRules) || !isRules)) {
+  if (aiEnabled && aiActuallyUsed && Number.isFinite(numeric) && numeric > 0) {
     const percent = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
     return `Keyakinan AI: ${Math.max(0, Math.min(100, percent))}%`;
   }
 
-  return "Validasi: Rules";
+  return "Lolos filter aturan";
 }
 
 function formatAiConfidence(product) {
@@ -211,33 +223,126 @@ function normalizeProductImageCandidate(value) {
   return "";
 }
 
-function getProductImageUrl(product) {
-  const candidates = [
-    product?.image_url,
-    product?.imageUrl,
-    product?.image,
-    product?.thumbnail_url,
-    product?.thumbnailUrl,
-    product?.thumbnail,
-    product?.thumb,
-    product?.img,
-    product?.picture,
-    product?.photo,
-    product?.product_image,
-    product?.original_image_url,
-    product?.media_url,
-    Array.isArray(product?.images) ? product.images[0] : null,
-    Array.isArray(product?.media) ? product.media[0]?.url : product?.media?.url,
-    Array.isArray(product?.pictures) ? product.pictures[0]?.url : null,
-    product?.media?.image,
-    product?.media?.thumbnail,
+function isPromotionalImage(url = "", alt = "", className = "", parentClassName = "", contextText = "") {
+  const text = `${url} ${alt} ${className} ${parentClassName} ${contextText}`.toLowerCase();
+  const badKeywords = [
+    "promo",
+    "promo guncang",
+    "banner",
+    "campaign",
+    "ads",
+    "iklan",
+    "guncang",
+    "cashback",
+    "voucher",
+    "flash",
+    "sale",
+    "bebas ongkir",
+    "bebas-ongkir",
+    "free ongkir",
+    "free-ongkir",
+    "tokopedia.com/promo",
+    "/promo/",
+    "/campaign/",
+    "assets/promo",
+    "assets/campaign",
+    "6.6",
+    "7.7",
+    "8.8",
+    "9.9",
+    "10.10",
+    "11.11",
+    "12.12"
   ];
 
-  for (const candidate of candidates) {
-    const url = normalizeProductImageCandidate(candidate);
-    if (url) return url;
-  }
-  return "";
+  return badKeywords.some((keyword) => text.includes(keyword));
+}
+
+function isBadProductImage(url = "", alt = "", className = "", parentClassName = "", contextText = "") {
+  return isPromotionalImage(url, alt, className, parentClassName, contextText);
+}
+
+function scoreProductImageCandidate(img, productTitle = "") {
+  const url = normalizeProductImageCandidate(img?.src || img?.url || img);
+  const alt = String(img?.alt || "");
+  const className = String(img?.className || "");
+  const parentClassName = String(img?.parentClassName || "");
+  const contextText = String(img?.contextText || "");
+
+  if (!url) return -999;
+  if (isBadProductImage(url, alt, className, parentClassName, contextText)) return -999;
+
+  let score = 2;
+  const width = Number(img?.width || img?.naturalWidth || 0);
+  const height = Number(img?.height || img?.naturalHeight || 0);
+  const ratio = width && height ? width / height : 1;
+
+  if (width >= 180 && height > 0 && ratio > 2.15) return -999;
+  if (height >= 180 && width > 0 && ratio < 0.35) return -999;
+
+  if (width >= 120) score += 10;
+  if (height >= 120) score += 10;
+  if (width >= 250 || height >= 250) score += 8;
+
+  if (ratio >= 0.6 && ratio <= 1.8) score += 10;
+
+  const loweredUrl = url.toLowerCase();
+  if (
+    loweredUrl.includes("images.tokopedia.net") ||
+    loweredUrl.includes("tokopedia-static.net") ||
+    loweredUrl.includes("p16-images") ||
+    loweredUrl.includes("p19-images")
+  ) score += 15;
+  if (loweredUrl.includes("cache") || loweredUrl.includes("product") || loweredUrl.includes("prd")) score += 8;
+
+  const contextLower = `${className} ${parentClassName} ${contextText}`.toLowerCase();
+  if (contextLower.includes("product") || contextLower.includes("prd") || contextLower.includes("master-product-card")) score += 8;
+  if (contextLower.includes("image") || contextLower.includes("thumbnail")) score += 4;
+
+  const titleWords = String(productTitle)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length >= 4)
+    .slice(0, 6);
+  const altLower = alt.toLowerCase();
+  const matchedWords = titleWords.filter((word) => altLower.includes(word)).length;
+  score += matchedWords * 8;
+
+  return score;
+}
+
+function pickBestProductImage(images, productTitle = "") {
+  return [...(images || [])]
+    .map((img) => ({
+      src: normalizeProductImageCandidate(img?.src || img?.url || img),
+      score: scoreProductImageCandidate(img, productTitle)
+    }))
+    .filter((img) => img.src && img.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.src || "";
+}
+
+function getProductImageUrl(product) {
+  const title = product?.title || product?.name || "";
+  const candidates = [
+    { src: product?.image_url, alt: title, className: "image_url", width: product?.image_width, height: product?.image_height },
+    { src: product?.imageUrl, alt: title, className: "imageUrl" },
+    { src: product?.image, alt: title, className: "image" },
+    { src: product?.thumbnail_url, alt: title, className: "thumbnail_url" },
+    { src: product?.thumbnailUrl, alt: title, className: "thumbnailUrl" },
+    { src: product?.thumbnail, alt: title, className: "thumbnail" },
+    { src: product?.thumb, alt: title, className: "thumb" },
+    { src: product?.img, alt: title, className: "img" },
+    { src: product?.picture, alt: title, className: "picture" },
+    { src: product?.photo, alt: title, className: "photo" },
+    { src: product?.product_image, alt: title, className: "product_image" },
+    { src: product?.original_image_url, alt: title, className: "original_image_url" },
+    { src: product?.media_url, alt: title, className: "media_url" },
+    ...(Array.isArray(product?.images) ? product.images : []),
+    ...(Array.isArray(product?.media) ? product.media : [product?.media].filter(Boolean)),
+    ...(Array.isArray(product?.pictures) ? product.pictures : []),
+  ];
+
+  return pickBestProductImage(candidates, title);
 }
 
 function getProductImage(product) {
@@ -277,7 +382,7 @@ function renderProductImage(product, options = {}) {
       referrerpolicy="no-referrer"
     />
     <div class="product-image-placeholder is-hidden" aria-hidden="true">
-      <strong>Gambar gagal dimuat</strong>
+      <strong>Gambar tidak tersedia</strong>
       <span>Produk tetap bisa dibuka lewat detail.</span>
     </div>
   `;
@@ -315,31 +420,45 @@ function parseCompactCount(value) {
   return parseCountValue(value);
 }
 
-function isRelevantProduct(product) {
+function isRelevantProduct(product, query = window.app?.state?.query || "") {
   if (!product) return false;
   const title = String(product.title || product.name || '').trim();
+  const titleLower = title.toLowerCase();
+  const queryLower = String(query || "").toLowerCase();
   if (!title) return false;
   if (product.ai_decision === false || product.is_relevant === false || product.relevant === false) return false;
 
   const label = String(product.ai_label || product.relevance_label || product.label || '').toLowerCase();
   if (label.includes('tidak_relevan') || label.includes('irrelevant')) return false;
+  if (/\blaptop\b|\bnotebook\b/.test(queryLower)) {
+    const hasLaptopSignal = /\blaptop\b|\bnotebook\b|\bloq\b|\blegion\b|\btuf\b|\bnitro\b|\bthin\b|\brog\b|\bideapad\b|\bvivobook\b/i.test(titleLower);
+    const separateParts = /\bvga\b|\bgpu\b|\bgraphics card\b|\bkartu grafis\b|\brtx\s?\d{3,4}\b|\bgtx\s?\d{3,4}\b/.test(titleLower)
+      && !hasLaptopSignal;
+    const accessory = /\btas\b|\bcase\b|\bcharger\b|\badaptor\b|\bcooling pad\b|\bstand\b|\bkeyboard\b|\bmouse\b|\bsticker\b/.test(titleLower);
+    if (!hasLaptopSignal || separateParts || accessory) return false;
+  }
   return true;
 }
 
-function getBestProducts(products) {
+function getBestProducts(products, query = window.app?.state?.query || "") {
   return [...(products || [])]
-    .filter(isRelevantProduct)
-    .sort((a, b) => getBestScore(b) - getBestScore(a));
+    .filter((product) => isRelevantProduct(product, query))
+    .sort((a, b) => getBestScore(b, query) - getBestScore(a, query));
 }
 
-function getBestScore(product) {
+function getBestScore(product, query = window.app?.state?.query || "") {
   const rating = Number(String(product?.rating || 0).replace(",", ".")) || 0;
   const sold = parseCompactCount(product?.sold_count || product?.soldCount || product?.sold || product?.sold_text);
   const reviews = parseCompactCount(product?.review_count || product?.rating_count || product?.reviewCount || product?.ratingCount || product?.review_text);
-  const confidenceRaw = Number(product?.ai_confidence ?? product?.confidence ?? product?.combined_score ?? product?.confidenceScore ?? 0);
+  const confidenceRaw = isAiUsedForProduct(product)
+    ? Number(product?.ai_confidence ?? product?.confidence ?? product?.combined_score ?? product?.confidenceScore ?? 0)
+    : 0;
   const confidence = confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw;
   const budgetBonus = product?.budget_status === "in_budget" || product?.budget_decision === "in_budget" ? 10 : 0;
   const imageBonus = getProductImageUrl(product) ? 3 : 0;
+  const title = String(product?.title || product?.name || "").toLowerCase();
+  const queryWords = String(query || "").toLowerCase().split(/\s+/).filter((word) => word.length >= 3);
+  const queryBonus = queryWords.filter((word) => title.includes(word)).length * 4;
 
   return (
     rating * 30 +
@@ -347,50 +466,140 @@ function getBestScore(product) {
     Math.log10(reviews + 1) * 15 +
     confidence * 25 +
     budgetBonus +
-    imageBonus
+    imageBonus +
+    queryBonus
   );
 }
 
-function getBestReason(product) {
+function isAiUsedForProduct(product) {
+  const source = String(product?.decision_source || product?.ai_source || "").toLowerCase();
+  return (
+    product?.ai_checked === true ||
+    product?.ai_used === true ||
+    source === "ai" ||
+    source === "ai_orchestrator" ||
+    source === "classifier" ||
+    source === "llm"
+  );
+}
+
+function humanJoin(parts) {
+  const clean = [...new Set((parts || []).filter(Boolean))];
+  if (clean.length <= 1) return clean[0] || "";
+  if (clean.length === 2) return `${clean[0]} dan ${clean[1]}`;
+  return `${clean.slice(0, -1).join(", ")}, dan ${clean[clean.length - 1]}`;
+}
+
+function getReasonStats(product, context = {}) {
   const rating = Number(String(product?.rating || 0).replace(",", ".")) || 0;
   const sold = parseCompactCount(product?.sold_count || product?.soldCount || product?.sold || product?.sold_text);
   const reviews = parseCompactCount(product?.review_count || product?.rating_count || product?.reviewCount || product?.ratingCount || product?.review_text);
-  const confidence = Number(product?.ai_confidence ?? product?.confidence ?? product?.combined_score ?? product?.confidenceScore ?? 0);
+  const confidenceRaw = Number(product?.ai_confidence ?? product?.confidence ?? 0);
+  const confidence = confidenceRaw > 1 ? confidenceRaw : confidenceRaw * 100;
   const budgetStatus = product?.budget_status || product?.budget_decision;
+  const price = getProductPriceNumber(product);
+  const title = String(product?.title || product?.name || "").toLowerCase();
+  const queryWords = String(context.query || "").toLowerCase().split(/\s+/).filter((word) => word.length >= 3);
+  const queryMatched = queryWords.length > 0 && queryWords.some((word) => title.includes(word));
+  const ratingText = formatRatingValue(rating);
+  const soldText = formatCompactSoldCount(sold).replace(/\s*terjual$/i, "");
+  const reviewText = formatCompactReviewCount(reviews);
 
-  if (rating >= 4.8 && sold >= 1000) {
-    return "Dipilih karena rating tinggi dan penjualan kuat.";
-  }
-
-  if (rating >= 4.8 && reviews >= 100) {
-    return "Dipilih karena rating tinggi dan ulasan cukup banyak.";
-  }
-
-  if (confidence >= 0.85 || confidence >= 85) {
-    return "Dipilih karena skor rekomendasi paling kuat.";
-  }
-
-  if (budgetStatus === "in_budget" && rating >= 4.5) {
-    return "Dipilih karena masuk budget dan rating bagus.";
-  }
-
-  if (sold >= 500) {
-    return "Dipilih karena performa penjualan cukup kuat.";
-  }
-
-  return "Dipilih karena paling cocok dengan pencarian dibanding kandidat lain.";
+  return {
+    rating,
+    ratingText,
+    sold,
+    soldText,
+    reviews,
+    reviewText,
+    confidence,
+    price,
+    inBudget: budgetStatus === "in_budget" || budgetStatus === "inside_budget",
+    trustedSeller: Boolean(product?.is_official || product?.is_mall || product?.is_power_merchant),
+    queryMatched,
+    aiUsed: isAiUsedForProduct(product),
+  };
 }
 
-function getCheapestProducts(products) {
+function getBestReason(product, context = {}) {
+  const stats = getReasonStats(product, context);
+  const parts = [];
+
+  if (stats.rating >= 4.8 && stats.ratingText) parts.push(`rating ${stats.ratingText}`);
+  else if (stats.rating >= 4.5) parts.push("rating bagus");
+
+  if (stats.sold >= 1000 && stats.soldText) parts.push(`${stats.soldText} terjual`);
+  else if (stats.sold >= 100) parts.push("penjualan kuat");
+  else if (stats.reviews >= 100 && stats.reviewText) parts.push(`${stats.reviewText} ulasan`);
+
+  if (stats.inBudget) parts.push("harga masih masuk budget");
+  else if (stats.price > 0) parts.push("harga masih kompetitif");
+
+  if (stats.trustedSeller && parts.length < 3) parts.push("toko lebih terpercaya");
+  if (stats.aiUsed && stats.confidence >= 85 && parts.length < 3) parts.push(`AI yakin ${Math.round(stats.confidence)}%`);
+  if (stats.queryMatched && parts.length < 3) parts.push("cocok dengan pencarian");
+
+  if (parts.length >= 2) return `Dipilih karena ${humanJoin(parts.slice(0, 3))}.`;
+  if (parts.length === 1) return `Dipilih karena ${parts[0]} dan relevansinya paling masuk akal.`;
+  return "Dipilih karena performa paling seimbang dari sisi rating, penjualan, dan harga.";
+}
+
+function getCheapestReason(product, context = {}) {
+  const stats = getReasonStats(product, context);
+  const supports = [];
+
+  if (stats.rating >= 4.6 && stats.ratingText) supports.push(`rating ${stats.ratingText}`);
+  if (stats.sold >= 100 && stats.soldText) supports.push(`${stats.soldText} terjual`);
+  if (stats.inBudget) supports.push("masih masuk budget");
+
+  if (supports.length >= 2) {
+    return `Dipilih karena lebih hemat dibanding kandidat lain, dengan ${humanJoin(supports.slice(0, 2))}.`;
+  }
+  if (supports.length === 1) {
+    return `Dipilih karena harga lebih rendah, tetapi masih punya ${supports[0]}.`;
+  }
+  if (stats.queryMatched) {
+    return "Dipilih karena harga paling hemat di antara kandidat yang masih cocok dengan pencarian.";
+  }
+  return "Dipilih karena harga paling rendah di antara kandidat yang masih relevan.";
+}
+
+function getTrustedReason(product, context = {}) {
+  const stats = getReasonStats(product, context);
+  const parts = [];
+
+  if (stats.sold >= 1000 && stats.soldText) parts.push(`${stats.soldText} terjual`);
+  else if (stats.sold >= 100) parts.push("penjualan stabil");
+
+  if (stats.reviews >= 500 && stats.reviewText) parts.push(`${stats.reviewText} ulasan`);
+  else if (stats.reviews >= 50) parts.push("ulasan meyakinkan");
+
+  if (stats.rating >= 4.7 && stats.ratingText) parts.push(`rating ${stats.ratingText}`);
+  if (stats.trustedSeller) parts.push("indikator toko lebih terpercaya");
+
+  if (parts.length >= 2) return `Dipilih karena ${humanJoin(parts.slice(0, 3))}.`;
+  if (parts.length === 1) return `Dipilih karena ${parts[0]} dan reputasinya lebih meyakinkan.`;
+  return "Dipilih karena masih relevan, meski data reputasi tokonya lebih terbatas.";
+}
+
+function getCategoryReason(product, mode, context = {}) {
+  const normalizedMode = normalizeRecommendationMode(mode) || "all";
+  if (normalizedMode === "terbaik") return getBestReason(product, context);
+  if (normalizedMode === "termurah") return getCheapestReason(product, context);
+  if (normalizedMode === "trusted") return getTrustedReason(product, context);
+  return "";
+}
+
+function getCheapestProducts(products, query = window.app?.state?.query || "") {
   return [...(products || [])]
-    .filter(isRelevantProduct)
+    .filter((product) => isRelevantProduct(product, query))
     .filter(product => getProductPriceNumber(product) > 0)
     .sort((a, b) => getProductPriceNumber(a) - getProductPriceNumber(b));
 }
 
-function getTrustedProducts(products) {
+function getTrustedProducts(products, query = window.app?.state?.query || "") {
   return [...(products || [])]
-    .filter(isRelevantProduct)
+    .filter((product) => isRelevantProduct(product, query))
     .sort((a, b) => {
       const trustA =
         normalizeCount(a.sold_count || a.soldCount || a.sold || a.sold_text) * 0.04 +
@@ -918,7 +1127,7 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
 
   // Format keyakinan AI
   const aiStr = formatDecisionLabel(item);
-  const bestReason = normalizedMode === "terbaik" ? getBestReason(item) : "";
+  const categoryReason = getCategoryReason(item, normalizedMode, { query: window.app?.state?.query || "" });
 
   // Overbudget badge
   const isOverbudget = isProductOverbudget(item);
@@ -946,7 +1155,7 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
         <div class="recommendation-product-price">${escapeHtml(priceStr)}</div>
         ${ratingMeta ? `<div class="recommendation-product-rating-row"><span class="rec-rating">${escapeHtml(ratingMeta)}</span></div>` : ''}
         ${aiStr ? `<div class="rec-ai-confidence">${escapeHtml(aiStr)}</div>` : ''}
-        ${bestReason ? `<p class="category-reason">${escapeHtml(bestReason)}</p>` : ''}
+        ${categoryReason ? `<p class="category-reason">${escapeHtml(categoryReason)}</p>` : ''}
       </div>
     </article>
   `;
@@ -970,7 +1179,7 @@ function setupProductImageErrorHandlers(scope = document) {
       if (placeholder) {
         const strong = placeholder.querySelector("strong");
         const span = placeholder.querySelector("span");
-        if (strong) strong.textContent = "Gambar gagal dimuat";
+        if (strong) strong.textContent = "Gambar tidak tersedia";
         if (span) span.textContent = "Produk tetap bisa dibuka lewat detail.";
         placeholder.classList.remove("is-hidden");
       }
@@ -1720,7 +1929,7 @@ function fillRecommendationModal(product) {
         }
         imgWrap.innerHTML = `
           <div class="image-placeholder">
-            <strong>Gambar gagal dimuat</strong>
+            <strong>Gambar tidak tersedia</strong>
             <span>Produk tetap bisa dibuka lewat detail.</span>
           </div>
         `;
@@ -3731,12 +3940,13 @@ class ScraperApp {
 
   buildRecommendationBuckets() {
     const list = [...(this.state.products || [])];
+    const query = this.state.query || "";
 
     return {
       all: [...list],
-      terbaik: getBestProducts(list),
-      termurah: getCheapestProducts(list),
-      trusted: getTrustedProducts(list),
+      terbaik: getBestProducts(list, query),
+      termurah: getCheapestProducts(list, query),
+      trusted: getTrustedProducts(list, query),
     };
   }
 
@@ -4064,7 +4274,7 @@ class ScraperApp {
         img.src = this.proxyImageUrl(imageUrl);
         return;
       }
-      wrapper.replaceChildren(this.createImagePlaceholder('Gambar gagal dimuat'));
+      wrapper.replaceChildren(this.createImagePlaceholder('Gambar tidak tersedia'));
     };
     wrapper.appendChild(img);
     return wrapper;
@@ -4844,7 +5054,7 @@ function renderProductDetail(product) {
           img.src = window.app.proxyImageUrl(imageUrl);
           return;
         }
-        placeholder.innerHTML = "<strong>Gambar gagal dimuat</strong><span>Produk tetap bisa dibuka lewat detail.</span>";
+        placeholder.innerHTML = "<strong>Gambar tidak tersedia</strong><span>Produk tetap bisa dibuka lewat detail.</span>";
         img.classList.add("is-hidden");
         placeholder.classList.remove("is-hidden");
       };

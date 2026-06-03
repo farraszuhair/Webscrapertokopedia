@@ -88,20 +88,33 @@ def _mark_product(
     combined_score: float | None = None,
 ) -> dict[str, Any]:
     confidence = max(0.0, min(0.98, float(confidence)))
+    source_raw = str(source or "").strip()
+    source_key = source_raw.lower()
+    ai_used = source_key in {"ai", "ai_orchestrator", "classifier", "llm"}
     product["relevance_score"] = round(confidence, 3)
     product["confidence"] = round(confidence, 3)
     product["rule_score"] = round(rule_score, 3)
     product["combined_score"] = round(combined_score if combined_score is not None else confidence, 3)
-    product["ai_confidence"] = round(confidence, 3)
-    product["ai_model_confidence"] = round(confidence, 3)
-    product["ai_confidence_label"] = _confidence_label(confidence)
+    product["ai_checked"] = ai_used
+    product["ai_used"] = ai_used
+    product["classifier_enabled"] = ai_used
+    if ai_used:
+        product["ai_confidence"] = round(confidence, 3)
+        product["ai_model_confidence"] = round(confidence, 3)
+        product["ai_confidence_label"] = _confidence_label(confidence)
+    else:
+        product["ai_confidence"] = None
+        product["ai_model_confidence"] = None
+        product["ai_confidence_label"] = "Lolos filter aturan"
     product["ai_decision"] = bool(accepted)
     product["ai_label"] = "relevan" if accepted else "tidak_relevan"
     product["ai_reason"] = reason
     product["reason"] = reason
     product["ai_explanation"] = reason
-    product["ai_source"] = source
-    product["decision_source"] = source
+    product["ai_source"] = "ai" if ai_used else "rules"
+    product["decision_source"] = "ai" if ai_used else "rules"
+    product["decision_source_detail"] = source_raw
+    product["rule_source"] = source_raw if not ai_used else product.get("rule_source")
     product["ai_categories"] = [product_category, category_match, query_intent]
     product["query_intent"] = query_intent
     product["product_category"] = product_category
@@ -121,7 +134,9 @@ def _product_key(product: dict[str, Any]) -> str:
 
 def _decision_priority(product: dict[str, Any]) -> int:
     priority = {
+        "ai": 0,
         "ai_orchestrator": 0,
+        "rules": 1,
         "rule_accept": 1,
         "fallback_expansion": 2,
         "fallback_after_ai_reject": 3,
@@ -131,7 +146,13 @@ def _decision_priority(product: dict[str, Any]) -> int:
         "fallback_ai_circuit_open": 5,
         "fallback_not_classified_cpu_limit": 6,
     }
-    return priority.get(str(product.get("decision_source") or product.get("ai_source") or ""), 9)
+    source = str(
+        product.get("decision_source_detail")
+        or product.get("decision_source")
+        or product.get("ai_source")
+        or ""
+    )
+    return priority.get(source, 9)
 
 
 def _rank_final_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -696,8 +717,12 @@ async def filter_products(
             and is_laptop_gaming_query(query)
             and has_laptop_main_evidence(str(product.get("title") or product.get("name") or ""))
         ):
-            product["decision_source"] = "rescued_false_obvious_junk"
-            product["ai_source"] = "rescued_false_obvious_junk"
+            product["decision_source"] = "rules"
+            product["decision_source_detail"] = "rescued_false_obvious_junk"
+            product["ai_source"] = "rules"
+            product["rule_source"] = "rescued_false_obvious_junk"
+            product["ai_checked"] = False
+            product["ai_used"] = False
             product["reason"] = "Rescued because strong laptop/GPU evidence overrides accessory word"
             product["ai_reason"] = product["reason"]
             product["confidence"] = round(max(
@@ -705,7 +730,9 @@ async def filter_products(
                 _as_number(product.get("semantic_score"), 0.0) * 0.85,
                 0.72,
             ), 3)
-            product["ai_confidence"] = product["confidence"]
+            product["ai_confidence"] = None
+            product["ai_model_confidence"] = None
+            product["ai_confidence_label"] = "Lolos filter aturan"
             rescued_false_junk.append(product)
             continue
         remaining_rejected.append(product)
@@ -1171,7 +1198,15 @@ async def filter_products(
         if semantic_score:
             product["semantic_score"] = round(semantic_score, 3)
         product["confidence"] = round(max(combined_score, rule_score, semantic_score, 0.35), 3)
-        product["decision_source"] = source
+        product["decision_source"] = "rules"
+        product["decision_source_detail"] = source
+        product["ai_source"] = "rules"
+        product["rule_source"] = source
+        product["ai_checked"] = False
+        product["ai_used"] = False
+        product["ai_confidence"] = None
+        product["ai_model_confidence"] = None
+        product["ai_confidence_label"] = "Lolos filter aturan"
         product["reason"] = reason
         fallback_candidates.append(product)
         return True
@@ -1439,16 +1474,30 @@ async def filter_products(
                     record_rejection("strong_learned_negative", marked)
                     rejected.append(marked)
                 elif positive_laptop_evidence and _is_valid_product(marked):
-                    marked["decision_source"] = "fallback_after_ai_reject_positive_laptop"
-                    marked["ai_source"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["decision_source"] = "rules"
+                    marked["ai_source"] = "rules"
+                    marked["decision_source_detail"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["rule_source"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["ai_checked"] = False
+                    marked["ai_used"] = False
+                    marked["ai_confidence"] = None
+                    marked["ai_model_confidence"] = None
+                    marked["ai_confidence_label"] = "Lolos filter aturan"
                     marked["reason"] = "AI rejected but product has valid gaming laptop evidence"
                     marked["ai_reason"] = marked["reason"]
                     marked["rule_score"] = round(rule_score, 3)
                     marked["combined_score"] = round(combined_score, 3)
                     fallback_candidates.append(marked)
                 elif _is_valid_product(marked):
-                    marked["decision_source"] = "fallback_after_ai_reject"
-                    marked["ai_source"] = "fallback_after_ai_reject"
+                    marked["decision_source"] = "rules"
+                    marked["ai_source"] = "rules"
+                    marked["decision_source_detail"] = "fallback_after_ai_reject"
+                    marked["rule_source"] = "fallback_after_ai_reject"
+                    marked["ai_checked"] = False
+                    marked["ai_used"] = False
+                    marked["ai_confidence"] = None
+                    marked["ai_model_confidence"] = None
+                    marked["ai_confidence_label"] = "Lolos filter aturan"
                     marked["reason"] = "AI rejected, kept as fallback because no hard rejection applies"
                     marked["ai_reason"] = marked["reason"]
                     marked["rule_score"] = round(rule_score, 3)
