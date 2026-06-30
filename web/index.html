@@ -109,10 +109,6 @@
               <span>ETA</span>
               <strong id="etaText">Menghitung...</strong>
             </div>
-            <div class="progress-time-pill" id="progressEnginePill" style="display: none;">
-              <span>Engine Aktif</span>
-              <strong id="progressEngineText">-</strong>
-            </div>
           </div>
         </div>
       </section>
@@ -268,9 +264,6 @@
           </div>
 
           <div class="restored-feedback-container">
-            <!-- Teks Instruksi di bagian paling atas (dari Gambar B) -->
-            <p class="feedback-instruction">Pilih satu atau lebih alasan agar AI bisa belajar.</p>
-
             <!-- Teks Pertanyaan Utama (dari Gambar A) -->
             <h3 class="feedback-question">Apakah produk ini sesuai?</h3>
 
@@ -281,8 +274,10 @@
               <a class="feedback-btn feedback-open" target="_blank" rel="noopener noreferrer">Buka Produk</a>
             </div>
 
-            <!-- Sub-Judul dan Kotak Alasan (selalu ditampilkan untuk meniru Gambar A) -->
-            <div class="feedback-reason-panel detail-feedback-reason-panel" data-detail-feedback-reason-panel>
+            <!-- Sub-Judul dan Kotak Alasan (muncul setelah klik Salah) -->
+            <div class="feedback-reason-panel detail-feedback-reason-panel" data-detail-feedback-reason-panel hidden>
+              <!-- Teks Instruksi di bagian atas (dari Gambar B) -->
+              <p class="feedback-instruction">Pilih satu atau lebih alasan agar AI bisa belajar.</p>
               <h3 class="feedback-reason-title-text">Kenapa produk ini salah?</h3>
               <div class="feedback-reason-grid" data-detail-feedback-reason-grid></div>
 

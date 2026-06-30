@@ -2899,6 +2899,7 @@ const PROGRESS_STAGE_TEXT = {
 };
 
 let lastProgressStage = null;
+let lastProgressEngine = null;
 let activeScrambleFrame = null;
 
 function getProgressStage(progress) {
@@ -2984,12 +2985,36 @@ function syncTopStatusFromProgress(progress) {
 
 function updateProgressStage(progress) {
   const nextStage = getProgressStage(progress);
+  const activeEngine = progress?.active_engine || progress?.engine || '';
 
-  if (nextStage === lastProgressStage) return;
+  if (nextStage === lastProgressStage && activeEngine === lastProgressEngine) return;
 
   lastProgressStage = nextStage;
+  lastProgressEngine = activeEngine;
 
-  const text = PROGRESS_STAGE_TEXT[nextStage] || PROGRESS_STAGE_TEXT.start;
+  const rawStage = String(progress?.stage || "").toLowerCase();
+  const engineLower = activeEngine.toLowerCase();
+
+  let text = PROGRESS_STAGE_TEXT[nextStage] || PROGRESS_STAGE_TEXT.start;
+
+  // 1. Teks Transisi Fallback (Sebelum/jaga-jaga jika Puppeteer gagal)
+  if (rawStage.includes("switching_to_rollback") || rawStage.includes("switching")) {
+    text = "Terjadi kendala, beralih ke Selenium (Fallback)...";
+  } else if (rawStage.includes("rollback_browser_starting") || rawStage.includes("rollback_opening")) {
+    text = "Menyiapkan browser Selenium (Fallback)...";
+  }
+  // 2. Teks Berjalan dengan engine Selenium (Fallback)
+  else if (engineLower === 'selenium' || engineLower === 'rollback') {
+    if (nextStage === 'start') {
+      text = "Menyiapkan Selenium (Fallback)...";
+    } else if (nextStage === 'opening_page') {
+      text = "Membuka Tokopedia via Selenium (Fallback)...";
+    } else if (nextStage === 'scraping') {
+      text = "Mengambil data via Selenium (Fallback)...";
+    } else if (nextStage === 'scrolling') {
+      text = "Membaca produk tambahan via Selenium (Fallback)...";
+    }
+  }
 
   // Update container data-progress-stage attribute
   const container = document.querySelector(".progress-clean-panel");
@@ -3593,6 +3618,7 @@ class ScraperApp {
     
     // Reset staged progress scramble
     lastProgressStage = null;
+    lastProgressEngine = null;
     if (activeScrambleFrame) {
       cancelAnimationFrame(activeScrambleFrame);
       activeScrambleFrame = null;
@@ -3761,24 +3787,6 @@ class ScraperApp {
     }
     const engineEl = this.$('pm-engine');
     if (engineEl) engineEl.textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
-
-    const progressEnginePill = this.$('progressEnginePill');
-    const progressEngineText = this.$('progressEngineText');
-    if (progressEnginePill && progressEngineText) {
-      const activeEngine = progress.active_engine || progress.engine || '';
-      if (activeEngine && activeEngine !== 'none' && activeEngine !== 'unknown') {
-        progressEnginePill.style.display = '';
-        let engineLabel = activeEngine;
-        if (activeEngine.toLowerCase() === 'puppeteer') {
-          engineLabel = '⚡ Puppeteer';
-        } else if (activeEngine.toLowerCase() === 'selenium' || activeEngine.toLowerCase() === 'rollback') {
-          engineLabel = '⚠️ Selenium';
-        }
-        progressEngineText.textContent = engineLabel;
-      } else {
-        progressEnginePill.style.display = 'none';
-      }
-    }
     const attemptEl = this.$('pm-attempt');
     if (attemptEl) attemptEl.textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
     this.updateStagePipeline(phase, pct);
@@ -5388,6 +5396,9 @@ function resetDetailFeedbackPanel() {
   const panel = document.querySelector("[data-detail-feedback-reason-panel]");
   if (panel) panel.hidden = true;
 
+  const container = document.querySelector(".restored-feedback-container");
+  if (container) container.classList.remove("show-reasons");
+
   document
     .querySelectorAll("[data-detail-feedback-reason-grid] .feedback-reason-chip")
     .forEach(chip => chip.classList.remove("is-selected"));
@@ -5629,6 +5640,8 @@ if (!window.__pasarIntaiProductModalEventsBound) {
       const answer = feedbackButton.dataset.feedbackAnswer;
 
       if (answer === "salah") {
+        const container = document.querySelector(".restored-feedback-container");
+        if (container) container.classList.add("show-reasons");
         revealDetailReasonPanel();
         return;
       }

@@ -5120,7 +5120,7 @@ body.modal-open {
 
 #productDetailInfoPanel {
   min-height: 100% !important;
-  height: auto !important;
+  height: 100% !important;
   max-height: none !important;
   overflow: visible !important;
   display: flex !important;
@@ -5132,7 +5132,14 @@ body.modal-open {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  justify-content: center; /* Centered by default */
   width: 100%;
+  min-height: 100% !important;
+  box-sizing: border-box;
+}
+
+.restored-feedback-container.show-reasons {
+  justify-content: flex-start !important;
 }
 
 /* 1. Teks Instruksi: Pilih satu atau lebih alasan agar AI bisa belajar. */
