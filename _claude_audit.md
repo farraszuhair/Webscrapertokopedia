@@ -3446,20 +3446,34 @@ def _mark_product(
     combined_score: float | None = None,
 ) -> dict[str, Any]:
     confidence = max(0.0, min(0.98, float(confidence)))
+    source_raw = str(source or "").strip()
+    source_key = source_raw.lower()
+    ai_used = source_key in {"ai", "ai_orchestrator", "classifier", "llm"}
     product["relevance_score"] = round(confidence, 3)
     product["confidence"] = round(confidence, 3)
     product["rule_score"] = round(rule_score, 3)
     product["combined_score"] = round(combined_score if combined_score is not None else confidence, 3)
-    product["ai_confidence"] = round(confidence, 3)
-    product["ai_model_confidence"] = round(confidence, 3)
-    product["ai_confidence_label"] = _confidence_label(confidence)
+    product["ai_checked"] = ai_used
+    product["ai_used"] = ai_used
+    product["classifier_enabled"] = ai_used
+    product["rule_passed"] = bool(accepted) and not ai_used
+    if ai_used:
+        product["ai_confidence"] = round(confidence, 3)
+        product["ai_model_confidence"] = round(confidence, 3)
+        product["ai_confidence_label"] = _confidence_label(confidence)
+    else:
+        product["ai_confidence"] = None
+        product["ai_model_confidence"] = None
+        product["ai_confidence_label"] = "Terverifikasi aturan"
     product["ai_decision"] = bool(accepted)
     product["ai_label"] = "relevan" if accepted else "tidak_relevan"
     product["ai_reason"] = reason
     product["reason"] = reason
     product["ai_explanation"] = reason
-    product["ai_source"] = source
-    product["decision_source"] = source
+    product["ai_source"] = "ai" if ai_used else "rules"
+    product["decision_source"] = "ai" if ai_used else "rules"
+    product["decision_source_detail"] = source_raw
+    product["rule_source"] = source_raw if not ai_used else product.get("rule_source")
     product["ai_categories"] = [product_category, category_match, query_intent]
     product["query_intent"] = query_intent
     product["product_category"] = product_category
@@ -3479,7 +3493,9 @@ def _product_key(product: dict[str, Any]) -> str:
 
 def _decision_priority(product: dict[str, Any]) -> int:
     priority = {
+        "ai": 0,
         "ai_orchestrator": 0,
+        "rules": 1,
         "rule_accept": 1,
         "fallback_expansion": 2,
         "fallback_after_ai_reject": 3,
@@ -3489,7 +3505,13 @@ def _decision_priority(product: dict[str, Any]) -> int:
         "fallback_ai_circuit_open": 5,
         "fallback_not_classified_cpu_limit": 6,
     }
-    return priority.get(str(product.get("decision_source") or product.get("ai_source") or ""), 9)
+    source = str(
+        product.get("decision_source_detail")
+        or product.get("decision_source")
+        or product.get("ai_source")
+        or ""
+    )
+    return priority.get(source, 9)
 
 
 def _rank_final_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4054,8 +4076,13 @@ async def filter_products(
             and is_laptop_gaming_query(query)
             and has_laptop_main_evidence(str(product.get("title") or product.get("name") or ""))
         ):
-            product["decision_source"] = "rescued_false_obvious_junk"
-            product["ai_source"] = "rescued_false_obvious_junk"
+            product["decision_source"] = "rules"
+            product["decision_source_detail"] = "rescued_false_obvious_junk"
+            product["ai_source"] = "rules"
+            product["rule_source"] = "rescued_false_obvious_junk"
+            product["ai_checked"] = False
+            product["ai_used"] = False
+            product["rule_passed"] = True
             product["reason"] = "Rescued because strong laptop/GPU evidence overrides accessory word"
             product["ai_reason"] = product["reason"]
             product["confidence"] = round(max(
@@ -4063,7 +4090,9 @@ async def filter_products(
                 _as_number(product.get("semantic_score"), 0.0) * 0.85,
                 0.72,
             ), 3)
-            product["ai_confidence"] = product["confidence"]
+            product["ai_confidence"] = None
+            product["ai_model_confidence"] = None
+            product["ai_confidence_label"] = "Terverifikasi aturan"
             rescued_false_junk.append(product)
             continue
         remaining_rejected.append(product)
@@ -4529,7 +4558,16 @@ async def filter_products(
         if semantic_score:
             product["semantic_score"] = round(semantic_score, 3)
         product["confidence"] = round(max(combined_score, rule_score, semantic_score, 0.35), 3)
-        product["decision_source"] = source
+        product["decision_source"] = "rules"
+        product["decision_source_detail"] = source
+        product["ai_source"] = "rules"
+        product["rule_source"] = source
+        product["ai_checked"] = False
+        product["ai_used"] = False
+        product["rule_passed"] = True
+        product["ai_confidence"] = None
+        product["ai_model_confidence"] = None
+        product["ai_confidence_label"] = "Terverifikasi aturan"
         product["reason"] = reason
         fallback_candidates.append(product)
         return True
@@ -4797,16 +4835,32 @@ async def filter_products(
                     record_rejection("strong_learned_negative", marked)
                     rejected.append(marked)
                 elif positive_laptop_evidence and _is_valid_product(marked):
-                    marked["decision_source"] = "fallback_after_ai_reject_positive_laptop"
-                    marked["ai_source"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["decision_source"] = "rules"
+                    marked["ai_source"] = "rules"
+                    marked["decision_source_detail"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["rule_source"] = "fallback_after_ai_reject_positive_laptop"
+                    marked["ai_checked"] = False
+                    marked["ai_used"] = False
+                    marked["rule_passed"] = True
+                    marked["ai_confidence"] = None
+                    marked["ai_model_confidence"] = None
+                    marked["ai_confidence_label"] = "Terverifikasi aturan"
                     marked["reason"] = "AI rejected but product has valid gaming laptop evidence"
                     marked["ai_reason"] = marked["reason"]
                     marked["rule_score"] = round(rule_score, 3)
                     marked["combined_score"] = round(combined_score, 3)
                     fallback_candidates.append(marked)
                 elif _is_valid_product(marked):
-                    marked["decision_source"] = "fallback_after_ai_reject"
-                    marked["ai_source"] = "fallback_after_ai_reject"
+                    marked["decision_source"] = "rules"
+                    marked["ai_source"] = "rules"
+                    marked["decision_source_detail"] = "fallback_after_ai_reject"
+                    marked["rule_source"] = "fallback_after_ai_reject"
+                    marked["ai_checked"] = False
+                    marked["ai_used"] = False
+                    marked["rule_passed"] = True
+                    marked["ai_confidence"] = None
+                    marked["ai_model_confidence"] = None
+                    marked["ai_confidence_label"] = "Terverifikasi aturan"
                     marked["reason"] = "AI rejected, kept as fallback because no hard rejection applies"
                     marked["ai_reason"] = marked["reason"]
                     marked["rule_score"] = round(rule_score, 3)
@@ -9040,7 +9094,55 @@ def _clean_url(url: str) -> str:
     return re.split(r"[?#]", url.strip(), maxsplit=1)[0]
 
 
-def normalize_image_url(url: str | None) -> str | None:
+_BAD_PRODUCT_IMAGE_KEYWORDS = (
+    "promo",
+    "promo guncang",
+    "banner",
+    "campaign",
+    "ads",
+    "iklan",
+    "guncang",
+    "cashback",
+    "voucher",
+    "flash",
+    "sale",
+    "bebas ongkir",
+    "bebas-ongkir",
+    "free ongkir",
+    "free-ongkir",
+    "tokopedia.com/promo",
+    "/promo/",
+    "/campaign/",
+    "assets/promo",
+    "assets/campaign",
+    "placeholder",
+    "no-image",
+    "noimage",
+    "blank",
+    "sprite",
+    "/icon",
+    "icons/",
+    "icon-",
+    "shop-logo",
+    "store-logo",
+    "avatar",
+    "badge",
+    "6.6",
+    "7.7",
+    "8.8",
+    "9.9",
+    "10.10",
+    "11.11",
+    "12.12",
+)
+
+
+def _is_bad_product_image_url(url: str) -> bool:
+    text = str(url or "").lower()
+    return any(keyword in text for keyword in _BAD_PRODUCT_IMAGE_KEYWORDS)
+
+
+def normalize_image_url(url: Any | None) -> str | None:
     if not url:
         return None
     url = str(url).strip().strip('"').strip("'")
@@ -9048,52 +9150,101 @@ def normalize_image_url(url: str | None) -> str | None:
         return None
     if url.startswith("//"):
         url = "https:" + url
+    compact = url.lower().replace(" ", "")
+    if compact in {"undefined", "null", "noimage", "no-image", "blank"}:
+        return None
+    if "svg+xml" in compact or ".svg" in compact:
+        return None
+    if url.startswith("data:image/"):
+        return url
     if not (url.startswith("http://") or url.startswith("https://")):
         return None
-    if url.lower().replace(" ", "") in {"undefined", "null", "noimage"}:
+    if _is_bad_product_image_url(url):
         return None
     return url
 
 
-def pick_product_image(product: dict[str, Any]) -> str | None:
-    candidates = [
+def _sanitize_ai_confidence_label(value: Any | None) -> str:
+    text = str(value or "").strip()
+    lowered = text.lower()
+    if not text or lowered in {"rules", "validasi: rules", "rules: diterima", "lolos filter aturan"}:
+        return "Terverifikasi aturan"
+    return text
+
+
+def collect_product_image_candidates(product: dict[str, Any]) -> list[str]:
+    candidates: list[Any] = [
+        product.get("primary_image"),
         product.get("image_url"),
+        product.get("imageUrl"),
         product.get("image"),
+        product.get("fallback_image"),
+        product.get("detail_image"),
+        product.get("hero_image"),
+        product.get("main_image"),
+        product.get("thumbnail_url"),
+        product.get("thumbnailUrl"),
         product.get("thumbnail"),
         product.get("thumb"),
         product.get("img"),
         product.get("photo"),
         product.get("picture"),
+        product.get("product_image"),
+        product.get("original_image_url"),
+        product.get("media_url"),
         product.get("url_gambar"),
+        product.get("image_candidates"),
     ]
 
-    images = product.get("images")
-    if isinstance(images, list) and images:
-        candidates.extend(images)
+    for key in ("images", "pictures", "media"):
+        value = product.get(key)
+        if isinstance(value, (list, tuple)):
+            candidates.extend(value)
+        elif isinstance(value, dict):
+            candidates.append(value)
 
-    media = product.get("media")
-    if isinstance(media, dict):
-        candidates.extend([
-            media.get("image"),
-            media.get("thumbnail"),
-            media.get("url"),
-        ])
+    normalized: list[str] = []
+    seen: set[str] = set()
 
-    for candidate in candidates:
+    def add(candidate: Any) -> None:
+        if not candidate:
+            return
+        if isinstance(candidate, (list, tuple)):
+            for item in candidate:
+                add(item)
+            return
         if isinstance(candidate, dict):
             nested = (
-                candidate.get("image")
+                candidate.get("url")
+                or candidate.get("src")
                 or candidate.get("image_url")
+                or candidate.get("imageUrl")
+                or candidate.get("image")
+                or candidate.get("thumbnail_url")
+                or candidate.get("thumbnailUrl")
                 or candidate.get("thumbnail")
-                or candidate.get("url")
             )
-            normalized = normalize_image_url(nested)
-        else:
-            normalized = normalize_image_url(candidate)
-        if normalized:
-            return normalized
+            add(nested)
+            for nested_key in ("images", "pictures", "media", "image_candidates"):
+                nested_value = candidate.get(nested_key)
+                if isinstance(nested_value, (list, tuple)):
+                    add(nested_value)
+            return
 
-    return None
+        url = normalize_image_url(candidate)
+        if not url or url in seen:
+            return
+        seen.add(url)
+        normalized.append(url)
+
+    for candidate in candidates:
+        add(candidate)
+
+    return normalized
+
+
+def pick_product_image(product: dict[str, Any]) -> str | None:
+    return next(iter(collect_product_image_candidates(product)), None)
 
 
 def normalize_image(raw: dict[str, Any]) -> str | None:
@@ -9161,7 +9312,17 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         except ValueError:
             pass
 
-    image_url = normalize_image(raw)
+    image_candidates = collect_product_image_candidates(raw)
+    image_url = image_candidates[0] if image_candidates else None
+    fallback_image = image_candidates[1] if len(image_candidates) > 1 else None
+
+    ai_source_text = str(raw.get("decision_source") or raw.get("ai_source") or "").lower()
+    ai_was_used = bool(raw.get("ai_used") is True or raw.get("ai_checked") is True or ai_source_text == "ai")
+    ai_confidence_label = raw.get("ai_confidence_label", "")
+    if ai_was_used:
+        ai_confidence_label = str(ai_confidence_label or "").strip()
+    else:
+        ai_confidence_label = _sanitize_ai_confidence_label(ai_confidence_label)
 
     normalized = {
         "id": raw.get("id") or _product_id(title, url, parsed_price),
@@ -9184,6 +9345,11 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "url": url, # backward compat
         "image_url": image_url,
         "image": image_url, # backward compat
+        "primary_image": image_url,
+        "fallback_image": fallback_image,
+        "image_candidates": image_candidates,
+        "image_source_type": raw.get("image_source_type") or ("scraped_candidate" if image_url else "placeholder"),
+        "image_status": "ok" if image_url else "missing",
         "has_image": bool(image_url),
         "source_engine": engine,
         "source_query": _first_text(raw, ("source_query", "query_variant")),
@@ -9193,7 +9359,20 @@ def _normalize_product_with_reason(raw: dict[str, Any], source_engine: str | Non
         "ai_decision": raw.get("ai_decision", None),
         "ai_reason": raw.get("ai_reason", ""),
         "confidence": raw.get("confidence", 0) or 0,
+        "combined_score": raw.get("combined_score", None),
+        "semantic_score": raw.get("semantic_score", None),
+        "rule_score": raw.get("rule_score", None),
+        "ai_checked": raw.get("ai_checked", False),
+        "ai_used": raw.get("ai_used", False),
+        "classifier_enabled": raw.get("classifier_enabled", False),
+        "rule_passed": raw.get("rule_passed", False),
+        "ai_confidence": raw.get("ai_confidence", None),
+        "ai_model_confidence": raw.get("ai_model_confidence", None),
+        "ai_confidence_label": ai_confidence_label,
+        "ai_source": raw.get("ai_source", ""),
         "decision_source": raw.get("decision_source", ""),
+        "decision_source_detail": raw.get("decision_source_detail", ""),
+        "rule_source": raw.get("rule_source", ""),
     }
 
     # Compatibility aliases for old frontend/AI code. Old logic bad. Replaced.
@@ -10022,7 +10201,7 @@ async function extractProducts(page, knownKeys, sourceQuery) {
     const isProductLikeUrl = (href) => {
       try {
         const url = new URL(href, location.href);
-        if (!url.hostname.includes('tokopedia.com')) return false;
+        if (!['www.tokopedia.com', 'tokopedia.com'].includes(url.hostname)) return false;
         const blocked = ['/search', '/cart', '/help', '/discovery', '/official-store'];
         if (blocked.some((prefix) => url.pathname.startsWith(prefix))) return false;
         return url.pathname.split('/').filter(Boolean).length >= 2;
@@ -10040,43 +10219,208 @@ async function extractProducts(page, knownKeys, sourceQuery) {
       return anchor;
     };
 
-    function getImageFromCard(card) {
-      const img =
-        card.querySelector('img[src]') ||
-        card.querySelector('img[data-src]') ||
-        card.querySelector('picture img');
+    function isBadProductImage(url = '', alt = '', className = '', parentClassName = '', contextText = '') {
+      const text = `${url} ${alt} ${className} ${parentClassName} ${contextText}`.toLowerCase();
+      const badKeywords = [
+        'promo',
+        'promo guncang',
+        'banner',
+        'campaign',
+        'ads',
+        'iklan',
+        'guncang',
+        'cashback',
+        'voucher',
+        'flash',
+        'sale',
+        'bebas ongkir',
+        'bebas-ongkir',
+        'free ongkir',
+        'free-ongkir',
+        'tokopedia.com/promo',
+        '/promo/',
+        '/campaign/',
+        'assets/promo',
+        'assets/campaign',
+        'placeholder',
+        'no-image',
+        'noimage',
+        'blank',
+        'sprite',
+        '/icon',
+        'icons/',
+        'icon-',
+        'shop-logo',
+        'store-logo',
+        'avatar',
+        'badge',
+        '6.6',
+        '7.7',
+        '8.8',
+        '9.9',
+        '10.10',
+        '11.11',
+        '12.12',
+      ];
+      return badKeywords.some((keyword) => text.includes(keyword));
+    }
 
-      const candidates = [];
+    function normalizeImageUrl(raw) {
+      if (typeof raw !== 'string') return '';
+      let url = raw.trim();
+      if (!url) return '';
+      if (url.startsWith('//')) url = `https:${url}`;
+      const compact = url.toLowerCase().replace(/\s+/g, '');
+      if (['undefined', 'null', 'noimage', 'no-image', 'blank'].includes(compact)) return '';
+      if (compact.includes('svg')) return '';
+      if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) return url;
+      return '';
+    }
 
-      if (img) {
-        candidates.push(img.currentSrc);
-        candidates.push(img.src);
-        candidates.push(img.getAttribute('src'));
-        candidates.push(img.getAttribute('data-src'));
-        candidates.push(img.getAttribute('data-original'));
+    function scoreProductImageCandidate(img, productTitle = '') {
+      const url = normalizeImageUrl(img.src || '');
+      const alt = String(img.alt || '');
+      const className = String(img.className || '');
+      const parentClassName = String(img.parentClassName || '');
+      const contextText = String(img.contextText || '');
+      if (!url) return -999;
+      if (isBadProductImage(url, alt, className, parentClassName, contextText)) return -999;
 
-        const srcset = img.getAttribute('srcset');
-        if (srcset) {
-          candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
+      let score = 0;
+      const width = Number(img.width || 0);
+      const height = Number(img.height || 0);
+      const ratio = width && height ? width / height : 1;
+      if (width > 0 && width < 72) return -999;
+      if (height > 0 && height < 72) return -999;
+      if (width >= 180 && height > 0 && ratio > 2.15) return -999;
+      if (height >= 180 && width > 0 && ratio < 0.35) return -999;
+
+      if (width >= 120) score += 10;
+      if (height >= 120) score += 10;
+      if (width >= 250 || height >= 250) score += 8;
+
+      if (ratio >= 0.6 && ratio <= 1.8) score += 10;
+
+      const loweredUrl = url.toLowerCase();
+      if (loweredUrl.includes('images.tokopedia.net')) score += 15;
+      if (loweredUrl.includes('cache') || loweredUrl.includes('product') || loweredUrl.includes('prd')) score += 8;
+
+      const contextLower = `${className} ${parentClassName} ${contextText}`.toLowerCase();
+      if (contextLower.includes('product') || contextLower.includes('prd') || contextLower.includes('master-product-card')) score += 8;
+      if (contextLower.includes('image') || contextLower.includes('thumbnail')) score += 4;
+
+      const titleWords = String(productTitle)
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((word) => word.length >= 4)
+        .slice(0, 6);
+      const altLower = alt.toLowerCase();
+      score += titleWords.filter((word) => altLower.includes(word)).length * 8;
+
+      return score;
+    }
+
+    function pickBestProductImage(images, productTitle = '') {
+      return pickProductImageCandidates(images, productTitle)[0] || '';
+    }
+
+    function pickProductImageCandidates(images, productTitle = '') {
+      const ranked = images
+        .map((img) => ({
+          src: normalizeImageUrl(img.src || ''),
+          score: scoreProductImageCandidate(img, productTitle),
+        }))
+        .filter((img) => img.src && img.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const seen = new Set();
+      const result = [];
+      ranked.forEach((img) => {
+        if (seen.has(img.src)) return;
+        seen.add(img.src);
+        result.push(img.src);
+      });
+      return result;
+    }
+
+    function getImageFromCard(card, productTitle = '') {
+      const images = [];
+      const pushCandidate = (src, node = {}) => {
+        const url = normalizeImageUrl(src);
+        if (!url) return;
+        const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : {};
+        const parentClasses = [];
+        let parent = node.parentElement;
+        for (let depth = 0; depth < 4 && parent; depth += 1) {
+          parentClasses.push(parent.className || parent.getAttribute?.('class') || '');
+          parentClasses.push(parent.getAttribute?.('data-testid') || '');
+          parentClasses.push(parent.getAttribute?.('aria-label') || '');
+          parent = parent.parentElement;
         }
-      }
+        images.push({
+          src: url,
+          alt: node.alt || node.getAttribute?.('alt') || node.getAttribute?.('aria-label') || '',
+          className: node.className || node.getAttribute?.('class') || '',
+          parentClassName: parentClasses.join(' '),
+          contextText: node.getAttribute?.('data-testid') || node.getAttribute?.('aria-label') || '',
+          width: node.naturalWidth || node.width || Math.round(rect.width || 0),
+          height: node.naturalHeight || node.height || Math.round(rect.height || 0),
+        });
+      };
 
-      const source = card.querySelector('source[srcset]');
-      if (source) {
-        const srcset = source.getAttribute('srcset');
-        if (srcset) {
-          candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
-        }
-      }
+      const pushSrcset = (srcset, node) => {
+        if (!srcset) return;
+        String(srcset)
+          .split(',')
+          .map((item) => item.trim().split(/\s+/)[0])
+          .filter(Boolean)
+          .forEach((url) => pushCandidate(url, node));
+      };
 
-      return candidates.find((url) =>
-        typeof url === 'string' &&
-        url.startsWith('http') &&
-        !url.startsWith('data:image') &&
-        !url.toLowerCase().includes('base64') &&
-        !url.toLowerCase().includes('svg') &&
-        !['undefined', 'null', 'noimage'].includes(url.trim().toLowerCase().replace(/\s+/g, ''))
-      ) || null;
+      const pushBackgroundUrl = (node) => {
+        if (!node) return;
+        const style = window.getComputedStyle(node);
+        const raw = style && style.backgroundImage;
+        const match = raw && raw.match(/url\(["']?([^"')]+)["']?\)/i);
+        if (match) pushCandidate(match[1], node);
+      };
+
+      card.querySelectorAll('picture source, source').forEach((source) => {
+        pushSrcset(source.getAttribute('srcset'), source);
+        pushSrcset(source.getAttribute('data-srcset'), source);
+      });
+
+      card.querySelectorAll('img').forEach((img) => {
+        pushCandidate(img.currentSrc, img);
+        pushCandidate(img.src, img);
+        pushCandidate(img.getAttribute('src'), img);
+        pushCandidate(img.getAttribute('data-src'), img);
+        pushCandidate(img.getAttribute('data-original-src'), img);
+        pushCandidate(img.getAttribute('data-original'), img);
+        pushCandidate(img.getAttribute('data-lazy-src'), img);
+        pushCandidate(img.getAttribute('data-lazy'), img);
+        pushCandidate(img.getAttribute('data-lazy-img'), img);
+        pushCandidate(img.getAttribute('data-defer-src'), img);
+        pushCandidate(img.getAttribute('data-image'), img);
+        pushCandidate(img.getAttribute('data-image-src'), img);
+        pushCandidate(img.getAttribute('data-src-large'), img);
+        pushCandidate(img.getAttribute('data-thumb'), img);
+        pushCandidate(img.getAttribute('data-img'), img);
+        pushCandidate(img.getAttribute('data-url'), img);
+        pushSrcset(img.getAttribute('srcset'), img);
+        pushSrcset(img.getAttribute('data-srcset'), img);
+      });
+
+      pushBackgroundUrl(card);
+      card.querySelectorAll('[style*="background"]').forEach(pushBackgroundUrl);
+
+      const candidates = pickProductImageCandidates(images, productTitle);
+      return {
+        primary: candidates[0] || '',
+        fallback: candidates[1] || '',
+        candidates,
+        status: candidates[0] ? 'ok' : 'missing',
+        sourceType: candidates[0] ? 'card_candidate' : 'placeholder',
+      };
     }
 
     const productFromContainer = (container, sourceAnchor = null) => {
@@ -10087,8 +10431,8 @@ async function extractProducts(page, knownKeys, sourceQuery) {
         container.querySelector?.("[data-testid='spnSRPProdName']") ||
         container.querySelector?.("[data-testid*='ProdName']") ||
         container.querySelector?.('.prd_link-product-name');
-      const anchor = sourceAnchor || container.querySelector?.("a[href*='tokopedia.com']");
-      const imageUrl = getImageFromCard(container);
+      const anchor = sourceAnchor || Array.from(container.querySelectorAll?.("a[href*='tokopedia.com']") || [])
+        .find((item) => isProductLikeUrl(item.href));
       const priceIndex = lines.findIndex((line) => priceRaw && line.includes(priceRaw));
       const fallbackTitle =
         (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
@@ -10096,6 +10440,8 @@ async function extractProducts(page, knownKeys, sourceQuery) {
         lines.find((line) => !line.startsWith('Rp') && line.length > 4) ||
         '';
       const title = (titleNode?.textContent || fallbackTitle || '').trim();
+      const imageData = getImageFromCard(container, title);
+      const imageUrl = imageData.primary || '';
       const url = cleanHref(anchor?.href || '');
       const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
       const sold = (text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i) || [])[0] || '';
@@ -10111,7 +10457,14 @@ async function extractProducts(page, knownKeys, sourceQuery) {
         rating: truncateText(rating, 10),
         sold: truncateText(sold, 30),
         url: truncateText(url, 500),
+        image_url: truncateText(imageUrl || '', 500),
         image: truncateText(imageUrl || '', 500),
+        thumbnail: truncateText(imageUrl || '', 500),
+        primary_image: truncateText(imageUrl || '', 500),
+        fallback_image: truncateText(imageData.fallback || '', 500),
+        image_candidates: (imageData.candidates || []).slice(0, 8).map((candidate) => truncateText(candidate, 500)),
+        image_source_type: imageData.sourceType,
+        image_status: imageData.status,
         source_engine: 'puppeteer',
       };
     };
@@ -10917,7 +11270,7 @@ class RollbackEngine:
             const isProductUrl = (href) => {
               try {
                 const url = new URL(href, location.href);
-                if (!url.hostname.includes('tokopedia.com')) return false;
+                if (!['www.tokopedia.com', 'tokopedia.com'].includes(url.hostname)) return false;
                 if (['/search', '/cart', '/help', '/discovery', '/official-store'].some(
                   prefix => url.pathname.startsWith(prefix)
                 )) return false;
@@ -10929,42 +11282,206 @@ class RollbackEngine:
               const match = String(text || '').match(/Rp\s*[\d.,]+(?:\s*(?:juta|jt|mio|rb|ribu|k))?/i);
               return match ? match[0].trim() : '';
             };
-            function getImageFromCard(card) {
-              const img =
-                card.querySelector('img[src]') ||
-                card.querySelector('img[data-src]') ||
-                card.querySelector('picture img');
+            function isBadProductImage(url = '', alt = '', className = '', parentClassName = '', contextText = '') {
+              const text = `${url} ${alt} ${className} ${parentClassName} ${contextText}`.toLowerCase();
+              const badKeywords = [
+                'promo',
+                'promo guncang',
+                'banner',
+                'campaign',
+                'ads',
+                'iklan',
+                'guncang',
+                'cashback',
+                'voucher',
+                'flash',
+                'sale',
+                'bebas ongkir',
+                'bebas-ongkir',
+                'free ongkir',
+                'free-ongkir',
+                'tokopedia.com/promo',
+                '/promo/',
+                '/campaign/',
+                'assets/promo',
+                'assets/campaign',
+                'placeholder',
+                'no-image',
+                'noimage',
+                'blank',
+                'sprite',
+                '/icon',
+                'icons/',
+                'icon-',
+                'shop-logo',
+                'store-logo',
+                'avatar',
+                'badge',
+                '6.6',
+                '7.7',
+                '8.8',
+                '9.9',
+                '10.10',
+                '11.11',
+                '12.12',
+              ];
+              return badKeywords.some((keyword) => text.includes(keyword));
+            }
 
-              const candidates = [];
-              if (img) {
-                candidates.push(img.currentSrc);
-                candidates.push(img.src);
-                candidates.push(img.getAttribute('src'));
-                candidates.push(img.getAttribute('data-src'));
-                candidates.push(img.getAttribute('data-original'));
+            function normalizeImageUrl(raw) {
+              if (typeof raw !== 'string') return '';
+              let url = raw.trim();
+              if (!url) return '';
+              if (url.startsWith('//')) url = `https:${url}`;
+              const compact = url.toLowerCase().replace(/\s+/g, '');
+              if (['undefined', 'null', 'noimage', 'no-image', 'blank'].includes(compact)) return '';
+              if (compact.includes('svg')) return '';
+              if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) return url;
+              return '';
+            }
 
-                const srcset = img.getAttribute('srcset');
-                if (srcset) {
-                  candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
+            function scoreProductImageCandidate(img, productTitle = '') {
+              const url = normalizeImageUrl(img.src || '');
+              const alt = String(img.alt || '');
+              const className = String(img.className || '');
+              const parentClassName = String(img.parentClassName || '');
+              const contextText = String(img.contextText || '');
+              if (!url) return -999;
+              if (isBadProductImage(url, alt, className, parentClassName, contextText)) return -999;
+
+              let score = 0;
+              const width = Number(img.width || 0);
+              const height = Number(img.height || 0);
+              const ratio = width && height ? width / height : 1;
+              if (width > 0 && width < 72) return -999;
+              if (height > 0 && height < 72) return -999;
+              if (width >= 180 && height > 0 && ratio > 2.15) return -999;
+              if (height >= 180 && width > 0 && ratio < 0.35) return -999;
+
+              if (width >= 120) score += 10;
+              if (height >= 120) score += 10;
+              if (width >= 250 || height >= 250) score += 8;
+
+              if (ratio >= 0.6 && ratio <= 1.8) score += 10;
+
+              const loweredUrl = url.toLowerCase();
+              if (loweredUrl.includes('images.tokopedia.net')) score += 15;
+              if (loweredUrl.includes('cache') || loweredUrl.includes('product') || loweredUrl.includes('prd')) score += 8;
+
+              const contextLower = `${className} ${parentClassName} ${contextText}`.toLowerCase();
+              if (contextLower.includes('product') || contextLower.includes('prd') || contextLower.includes('master-product-card')) score += 8;
+              if (contextLower.includes('image') || contextLower.includes('thumbnail')) score += 4;
+
+              const titleWords = String(productTitle)
+                .toLowerCase()
+                .split(/\s+/)
+                .filter((word) => word.length >= 4)
+                .slice(0, 6);
+              const altLower = alt.toLowerCase();
+              score += titleWords.filter((word) => altLower.includes(word)).length * 8;
+
+              return score;
+            }
+
+            function pickBestProductImage(images, productTitle = '') {
+              return pickProductImageCandidates(images, productTitle)[0] || '';
+            }
+
+            function pickProductImageCandidates(images, productTitle = '') {
+              const ranked = images
+                .map((img) => ({
+                  src: normalizeImageUrl(img.src || ''),
+                  score: scoreProductImageCandidate(img, productTitle),
+                }))
+                .filter((img) => img.src && img.score > 0)
+                .sort((a, b) => b.score - a.score);
+              const seen = new Set();
+              const result = [];
+              ranked.forEach((img) => {
+                if (seen.has(img.src)) return;
+                seen.add(img.src);
+                result.push(img.src);
+              });
+              return result;
+            }
+
+            function getImageFromCard(card, productTitle = '') {
+              const images = [];
+              const pushCandidate = (src, node = {}) => {
+                const url = normalizeImageUrl(src);
+                if (!url) return;
+                const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : {};
+                const parentClasses = [];
+                let parent = node.parentElement;
+                for (let depth = 0; depth < 4 && parent; depth += 1) {
+                  parentClasses.push(parent.className || parent.getAttribute?.('class') || '');
+                  parentClasses.push(parent.getAttribute?.('data-testid') || '');
+                  parentClasses.push(parent.getAttribute?.('aria-label') || '');
+                  parent = parent.parentElement;
                 }
-              }
+                images.push({
+                  src: url,
+                  alt: node.alt || node.getAttribute?.('alt') || node.getAttribute?.('aria-label') || '',
+                  className: node.className || node.getAttribute?.('class') || '',
+                  parentClassName: parentClasses.join(' '),
+                  contextText: node.getAttribute?.('data-testid') || node.getAttribute?.('aria-label') || '',
+                  width: node.naturalWidth || node.width || Math.round(rect.width || 0),
+                  height: node.naturalHeight || node.height || Math.round(rect.height || 0),
+                });
+              };
+              const pushSrcset = (srcset, node) => {
+                if (!srcset) return;
+                String(srcset)
+                  .split(',')
+                  .map((item) => item.trim().split(/\s+/)[0])
+                  .filter(Boolean)
+                  .forEach((url) => pushCandidate(url, node));
+              };
+              const pushBackgroundUrl = (node) => {
+                if (!node) return;
+                const style = window.getComputedStyle(node);
+                const raw = style && style.backgroundImage;
+                const match = raw && raw.match(/url\(["']?([^"')]+)["']?\)/i);
+                if (match) pushCandidate(match[1], node);
+              };
 
-              const source = card.querySelector('source[srcset]');
-              if (source) {
-                const srcset = source.getAttribute('srcset');
-                if (srcset) {
-                  candidates.push(srcset.split(',')[0].trim().split(' ')[0]);
-                }
-              }
+              card.querySelectorAll('picture source, source').forEach((source) => {
+                pushSrcset(source.getAttribute('srcset'), source);
+                pushSrcset(source.getAttribute('data-srcset'), source);
+              });
 
-              return candidates.find((url) =>
-                typeof url === 'string' &&
-                url.startsWith('http') &&
-                !url.startsWith('data:image') &&
-                !url.toLowerCase().includes('base64') &&
-                !url.toLowerCase().includes('svg') &&
-                !['undefined', 'null', 'noimage'].includes(url.trim().toLowerCase().replace(/\s+/g, ''))
-              ) || null;
+              card.querySelectorAll('img').forEach((img) => {
+                pushCandidate(img.currentSrc, img);
+                pushCandidate(img.src, img);
+                pushCandidate(img.getAttribute('src'), img);
+                pushCandidate(img.getAttribute('data-src'), img);
+                pushCandidate(img.getAttribute('data-original-src'), img);
+                pushCandidate(img.getAttribute('data-original'), img);
+                pushCandidate(img.getAttribute('data-lazy-src'), img);
+                pushCandidate(img.getAttribute('data-lazy'), img);
+                pushCandidate(img.getAttribute('data-lazy-img'), img);
+                pushCandidate(img.getAttribute('data-defer-src'), img);
+                pushCandidate(img.getAttribute('data-image'), img);
+                pushCandidate(img.getAttribute('data-image-src'), img);
+                pushCandidate(img.getAttribute('data-src-large'), img);
+                pushCandidate(img.getAttribute('data-thumb'), img);
+                pushCandidate(img.getAttribute('data-img'), img);
+                pushCandidate(img.getAttribute('data-url'), img);
+                pushSrcset(img.getAttribute('srcset'), img);
+                pushSrcset(img.getAttribute('data-srcset'), img);
+              });
+
+              pushBackgroundUrl(card);
+              card.querySelectorAll('[style*="background"]').forEach(pushBackgroundUrl);
+
+              const candidates = pickProductImageCandidates(images, productTitle);
+              return {
+                primary: candidates[0] || '',
+                fallback: candidates[1] || '',
+                candidates,
+                status: candidates[0] ? 'ok' : 'missing',
+                sourceType: candidates[0] ? 'card_candidate' : 'placeholder',
+              };
             }
 
             const seen = new Set();
@@ -10989,7 +11506,8 @@ class RollbackEngine:
                 const text = card.innerText || '';
                 const priceRaw = priceOf(text);
                 if (!priceRaw) continue;
-                const anchor = card.querySelector('a[href*="tokopedia.com/"]');
+                const anchor = Array.from(card.querySelectorAll('a[href*="tokopedia.com/"]'))
+                  .find(item => isProductUrl(item.href));
                 const lines = linesOf(text);
                 const selectorTitle =
                   card.querySelector('[data-testid="spnSRPProdName"]') ||
@@ -10997,7 +11515,6 @@ class RollbackEngine:
                   card.querySelector('.prd_link-product-name');
                 const priceIndex = lines.findIndex(line => line.includes(priceRaw));
                 const imageNode = card.querySelector('img');
-                const imageUrl = getImageFromCard(card);
                 const title =
                   (selectorTitle && selectorTitle.textContent.trim()) ||
                   (priceIndex > 0 ? lines[priceIndex - 1] : '') ||
@@ -11005,6 +11522,8 @@ class RollbackEngine:
                   (imageNode ? imageNode.getAttribute('alt') : '') ||
                   lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                   '';
+                const imageData = getImageFromCard(card, title);
+                const imageUrl = imageData.primary || '';
                 const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
                 const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
                 const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
@@ -11017,7 +11536,14 @@ class RollbackEngine:
                   rating: ratingMatch ? ratingMatch[1] : '',
                   sold: soldMatch ? soldMatch[0] : '',
                   url: cleanUrl(anchor ? anchor.href : ''),
+                  image_url: imageUrl || '',
                   image: imageUrl || '',
+                  thumbnail: imageUrl || '',
+                  primary_image: imageUrl || '',
+                  fallback_image: imageData.fallback || '',
+                  image_candidates: (imageData.candidates || []).slice(0, 8),
+                  image_source_type: imageData.sourceType,
+                  image_status: imageData.status,
                   source_engine: 'rollback',
                 });
               }
@@ -11047,7 +11573,8 @@ class RollbackEngine:
                 lines.find(line => !line.startsWith('Rp') && line.length > 4) ||
                 'Produk Tokopedia';
               const afterPrice = priceIndex >= 0 ? lines.slice(priceIndex + 1) : lines;
-              const imageUrl = getImageFromCard(card);
+              const imageData = getImageFromCard(card, title);
+              const imageUrl = imageData.primary || '';
               const soldMatch = text.match(/(\d+(?:[.,]\d+)?\s*(?:rb|jt)?\+?)\s*(?:terjual|sold)/i);
               const ratingMatch = text.match(/\b([4-5](?:[.,]\d)?)\b/);
               pushProduct({
@@ -11059,7 +11586,14 @@ class RollbackEngine:
                 rating: ratingMatch ? ratingMatch[1] : '',
                 sold: soldMatch ? soldMatch[0] : '',
                 url: cleanUrl(href),
+                image_url: imageUrl || '',
                 image: imageUrl || '',
+                thumbnail: imageUrl || '',
+                primary_image: imageUrl || '',
+                fallback_image: imageData.fallback || '',
+                image_candidates: (imageData.candidates || []).slice(0, 8),
+                image_source_type: imageData.sourceType,
+                image_status: imageData.status,
                 source_engine: 'rollback',
               });
             }
@@ -11977,7 +12511,7 @@ async def fetch_result(search_id: str):
 @router.get("/api/image-proxy")
 async def image_proxy(url: str = Query(..., min_length=8)):
     image_url = normalize_image_url(url)
-    if not image_url:
+    if not image_url or not image_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid image URL")
 
     headers = {
@@ -16798,6 +17332,8 @@ if __name__ == "__main__":
 
 /* ─── HELPER FUNCTIONS ─── */
 
+const RULE_VALIDATION_LABEL = "Terverifikasi aturan";
+
 function formatPrice(value) {
   if (!value) return 'Harga tidak tersedia';
   const num = Number(value);
@@ -16857,8 +17393,7 @@ function formatCompactSoldCount(value) {
   const raw = String(value || '').trim();
 
   if (!count && raw) {
-    const cleaned = raw.replace(/\s+/g, ' ').replace(/terjual\s+terjual/ig, 'terjual');
-    return /terjual/i.test(cleaned) ? cleaned : `${cleaned} terjual`;
+    return normalizeSoldText(raw);
   }
 
   if (!count) return '';
@@ -16866,6 +17401,14 @@ function formatCompactSoldCount(value) {
   if (count >= 1000) return `${formatOneDecimal(count / 1000)}rb terjual`;
   if (count >= 100) return `${count}+ terjual`;
   return `${count} terjual`;
+}
+
+function normalizeSoldText(value) {
+  if (!value) return "";
+  let text = String(value).trim().replace(/\s+/g, " ");
+  text = text.replace(/\s*terjual\s*terjual/gi, " terjual").trim();
+  if (!/terjual/i.test(text)) text += " terjual";
+  return text;
 }
 
 function hasRealAiSource(product) {
@@ -16899,28 +17442,41 @@ function formatSoldCount(sold) {
   return formatCompactSoldCount(sold);
 }
 
-function formatAiConfidence(product) {
-  if (isRulesFallback(product)) return 'Rules: diterima';
-
-  const raw = product?.ai_confidence ?? 
-              product?.confidence ?? 
-              product?.combined_score ?? 
-              product?.semantic_score ??
-              product?.relevance_score ?? 
-              product?.confidenceScore ??
-              null;
-
-  if (raw == null || raw === '') return '';
+function formatDecisionLabel(product, globalAiStatus = null) {
+  const raw = product?.ai_confidence ?? product?.ai_model_confidence ?? null;
 
   const numeric = Number(raw);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return hasRealAiSource(product) ? '' : 'Rules: diterima';
+  const appState = window.app?.state || {};
+  const status = globalAiStatus || appState.aiStatus || appState.metadata?.ai_status || {};
+  const source = String(product?.decision_source || product?.ai_source || '').toLowerCase();
+  const aiActuallyUsed =
+    product?.ai_checked === true ||
+    product?.ai_used === true ||
+    source === "ai" ||
+    source === "ai_orchestrator" ||
+    source === "classifier" ||
+    source === "llm";
+  const aiEnabled =
+    product?.classifier_enabled === true ||
+    product?.ai_checked === true ||
+    product?.ai_used === true ||
+    status === "ok" ||
+    status === "available" ||
+    status?.enabled === true ||
+    status?.classifier === true ||
+    status?.available === true ||
+    status?.ok === true;
+
+  if (aiEnabled && aiActuallyUsed && Number.isFinite(numeric) && numeric > 0) {
+    const percent = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
+    return `Keyakinan AI: ${Math.max(0, Math.min(100, percent))}%`;
   }
 
-  if (!hasRealAiSource(product)) return 'Rules: diterima';
+  return RULE_VALIDATION_LABEL;
+}
 
-  const pct = numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric);
-  return `Keyakinan AI: ${pct}%`;
+function formatAiConfidence(product) {
+  return formatDecisionLabel(product);
 }
 
 function formatRatingMeta(product) {
@@ -16963,28 +17519,556 @@ function isProductOverbudget(product) {
   return price > maxBudget;
 }
 
-function getProductImage(product) {
-  const candidates = [
-    product?.image_url, product?.image, product?.thumbnail, product?.thumb,
-    product?.img, product?.photo, Array.isArray(product?.images) ? product.images[0] : null,
-    product?.media?.image, product?.media?.thumbnail, product?.media?.url
-  ];
-  for (const val of candidates) {
-    if (!val) continue;
-    let url = String(val).trim();
-    if (!url) continue;
-    if (/^data:image\//i.test(url)) return url;
-    if (url.startsWith("//")) url = `https:${url}`;
-    if (/^https?:\/\//i.test(url)) return url;
+function normalizeProductImageCandidate(value) {
+  if (!value) return "";
+  let url = "";
+  if (typeof value === "object") {
+    url = String(
+      value.url ||
+      value.image_url ||
+      value.imageUrl ||
+      value.image ||
+      value.thumbnail_url ||
+      value.thumbnailUrl ||
+      value.thumbnail ||
+      value.src ||
+      ""
+    ).trim();
+  } else {
+    url = String(value).trim();
   }
-  return '';
+
+  if (!url) return "";
+  const compact = url.toLowerCase().replace(/\s+/g, "");
+  if (["undefined", "null", "noimage", "no-image", "blank"].includes(compact)) return "";
+  if (compact.includes("svg+xml") || compact.includes(".svg")) return "";
+  if (url.startsWith("//")) url = `https:${url}`;
+  if (/^https?:\/\//i.test(url) || /^data:image\//i.test(url)) return url;
+  return "";
 }
 
-function getCategoryProducts(category, limit) {
+function isPromotionalImage(url = "", alt = "", className = "", parentClassName = "", contextText = "") {
+  const text = `${url} ${alt} ${className} ${parentClassName} ${contextText}`.toLowerCase();
+  const badKeywords = [
+    "promo",
+    "promo guncang",
+    "banner",
+    "campaign",
+    "ads",
+    "iklan",
+    "guncang",
+    "cashback",
+    "voucher",
+    "flash",
+    "sale",
+    "bebas ongkir",
+    "bebas-ongkir",
+    "free ongkir",
+    "free-ongkir",
+    "tokopedia.com/promo",
+    "/promo/",
+    "/campaign/",
+    "assets/promo",
+    "assets/campaign",
+    "placeholder",
+    "no-image",
+    "noimage",
+    "blank",
+    "sprite",
+    "/icon",
+    "icons/",
+    "icon-",
+    "shop-logo",
+    "store-logo",
+    "avatar",
+    "badge",
+    "6.6",
+    "7.7",
+    "8.8",
+    "9.9",
+    "10.10",
+    "11.11",
+    "12.12"
+  ];
+
+  return badKeywords.some((keyword) => text.includes(keyword));
+}
+
+function isBadProductImage(url = "", alt = "", className = "", parentClassName = "", contextText = "") {
+  return isPromotionalImage(url, alt, className, parentClassName, contextText);
+}
+
+function shouldRejectImage(url = "", meta = {}) {
+  const normalized = normalizeProductImageCandidate(url);
+  if (!normalized) return true;
+  return isBadProductImage(
+    normalized,
+    meta.alt || "",
+    meta.className || "",
+    meta.parentClassName || "",
+    meta.contextText || ""
+  );
+}
+
+function scoreProductImageCandidate(img, productTitle = "") {
+  const url = normalizeProductImageCandidate(img?.src || img?.url || img);
+  const alt = String(img?.alt || "");
+  const className = String(img?.className || "");
+  const parentClassName = String(img?.parentClassName || "");
+  const contextText = String(img?.contextText || "");
+
+  if (!url) return -999;
+  if (isBadProductImage(url, alt, className, parentClassName, contextText)) return -999;
+
+  let score = 2;
+  const width = Number(img?.width || img?.naturalWidth || 0);
+  const height = Number(img?.height || img?.naturalHeight || 0);
+  const ratio = width && height ? width / height : 1;
+
+  if (width > 0 && width < 72) return -999;
+  if (height > 0 && height < 72) return -999;
+  if (width >= 180 && height > 0 && ratio > 2.15) return -999;
+  if (height >= 180 && width > 0 && ratio < 0.35) return -999;
+
+  if (width >= 120) score += 10;
+  if (height >= 120) score += 10;
+  if (width >= 250 || height >= 250) score += 8;
+
+  if (ratio >= 0.6 && ratio <= 1.8) score += 10;
+
+  const loweredUrl = url.toLowerCase();
+  if (
+    loweredUrl.includes("images.tokopedia.net") ||
+    loweredUrl.includes("tokopedia-static.net") ||
+    loweredUrl.includes("p16-images") ||
+    loweredUrl.includes("p19-images")
+  ) score += 15;
+  if (loweredUrl.includes("cache") || loweredUrl.includes("product") || loweredUrl.includes("prd")) score += 8;
+
+  const contextLower = `${className} ${parentClassName} ${contextText}`.toLowerCase();
+  if (contextLower.includes("product") || contextLower.includes("prd") || contextLower.includes("master-product-card")) score += 8;
+  if (contextLower.includes("image") || contextLower.includes("thumbnail")) score += 4;
+
+  const titleWords = String(productTitle)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length >= 4)
+    .slice(0, 6);
+  const altLower = alt.toLowerCase();
+  const matchedWords = titleWords.filter((word) => altLower.includes(word)).length;
+  score += matchedWords * 8;
+
+  return score;
+}
+
+function isUsableProductImage(img, productTitle = "") {
+  return scoreProductImageCandidate(img, productTitle) > 0;
+}
+
+function pickProductImageCandidates(images, productTitle = "") {
+  const ranked = [...(images || [])]
+    .map((img) => {
+      const src = normalizeProductImageCandidate(img?.src || img?.url || img);
+      return {
+        src,
+        score: scoreProductImageCandidate(img, productTitle)
+      };
+    })
+    .filter((img) => img.src && img.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const seen = new Set();
+  const result = [];
+  ranked.forEach((img) => {
+    const key = img.src.split("#")[0];
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(img.src);
+  });
+  return result;
+}
+
+function pickBestProductImage(images, productTitle = "") {
+  return pickProductImageCandidates(images, productTitle)[0] || "";
+}
+
+function collectProductImageCandidates(product) {
+  const title = product?.title || product?.name || "Gambar produk";
+  const candidates = [];
+  const push = (value, meta = {}) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => push(item, meta));
+      return;
+    }
+
+    if (typeof value === "object") {
+      const src = normalizeProductImageCandidate(value);
+      if (src) {
+        candidates.push({
+          src,
+          alt: value.alt || value.title || title,
+          className: value.className || value.class || value.type || meta.className || "",
+          parentClassName: value.parentClassName || meta.parentClassName || "",
+          contextText: value.contextText || value.source || meta.contextText || "",
+          width: value.width || value.naturalWidth || meta.width || 0,
+          height: value.height || value.naturalHeight || meta.height || 0,
+        });
+      }
+      ["images", "media", "pictures", "image_candidates"].forEach((key) => {
+        if (Array.isArray(value[key])) push(value[key], meta);
+      });
+      return;
+    }
+
+    const src = normalizeProductImageCandidate(value);
+    if (!src) return;
+    candidates.push({
+      src,
+      alt: title,
+      className: meta.className || "",
+      parentClassName: meta.parentClassName || "",
+      contextText: meta.contextText || "",
+      width: meta.width || 0,
+      height: meta.height || 0,
+    });
+  };
+
+  push(product?.primary_image, { className: "primary_image", contextText: "product primary" });
+  push(product?.image_url, { className: "image_url", contextText: "product image" });
+  push(product?.imageUrl, { className: "imageUrl", contextText: "product image" });
+  push(product?.image, { className: "image", contextText: "product image" });
+  push(product?.fallback_image, { className: "fallback_image", contextText: "product fallback" });
+  push(product?.detail_image, { className: "detail_image", contextText: "product detail" });
+  push(product?.hero_image, { className: "hero_image", contextText: "product detail" });
+  push(product?.main_image, { className: "main_image", contextText: "product main" });
+  push(product?.thumbnail_url, { className: "thumbnail_url", contextText: "product thumbnail" });
+  push(product?.thumbnailUrl, { className: "thumbnailUrl", contextText: "product thumbnail" });
+  push(product?.thumbnail, { className: "thumbnail", contextText: "product thumbnail" });
+  push(product?.thumb, { className: "thumb", contextText: "product thumbnail" });
+  push(product?.img, { className: "img", contextText: "product image" });
+  push(product?.picture, { className: "picture", contextText: "product image" });
+  push(product?.photo, { className: "photo", contextText: "product image" });
+  push(product?.product_image, { className: "product_image", contextText: "product image" });
+  push(product?.original_image_url, { className: "original_image_url", contextText: "product image" });
+  push(product?.media_url, { className: "media_url", contextText: "product media" });
+  push(product?.image_candidates, { className: "image_candidates", contextText: "product candidates" });
+  push(product?.images, { className: "images", contextText: "product images" });
+  push(product?.media, { className: "media", contextText: "product media" });
+  push(product?.pictures, { className: "pictures", contextText: "product pictures" });
+
+  return candidates;
+}
+
+function getProductImageCandidateUrls(product) {
+  return pickProductImageCandidates(collectProductImageCandidates(product), product?.title || product?.name || "");
+}
+
+function getFallbackImage(product, failedUrls = []) {
+  const failed = new Set((failedUrls || []).map((url) => normalizeProductImageCandidate(url)).filter(Boolean));
+  return getProductImageCandidateUrls(product).find((url) => !failed.has(normalizeProductImageCandidate(url))) || "";
+}
+
+function getProductImageUrl(product) {
+  return getProductImageCandidateUrls(product)[0] || "";
+}
+
+/*
+function pickBestProductImage_legacy(images, productTitle = "") {
+  return [...(images || [])]
+    .map((img) => ({
+      src: normalizeProductImageCandidate(img?.src || img?.url || img),
+      score: scoreProductImageCandidate(img, productTitle)
+    }))
+    .filter((img) => img.src && img.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.src || "";
+}
+}
+*/
+
+function getProductImage(product) {
+  return getProductImageUrl(product);
+}
+
+function canProxyImageUrl(url) {
+  return /^https?:\/\//i.test(String(url || ""));
+}
+
+function renderImagePlaceholderHtml(message = "Gambar tidak tersedia") {
+  return `
+    <div class="product-image-placeholder" aria-hidden="true">
+      <strong>${escapeHtml(message)}</strong>
+      <span>Produk tetap bisa dibuka lewat detail.</span>
+    </div>
+  `;
+}
+
+function renderProductImage(product, options = {}) {
+  const imageUrls = getProductImageCandidateUrls(product);
+  const imageUrl = imageUrls[0] || "";
+  const alternateImages = imageUrls.slice(1, 8);
+  const className = options.className || "product-image";
+  const title = product?.title || product?.name || "Gambar produk";
+
+  if (!imageUrl) {
+    return renderImagePlaceholderHtml("Gambar tidak tersedia");
+  }
+
+  return `
+    <img
+      class="${escapeHtml(className)}"
+      src="${escapeHtml(imageUrl)}"
+      data-original-src="${escapeHtml(imageUrl)}"
+      data-image-candidates="${escapeHtml(JSON.stringify(alternateImages))}"
+      alt="${escapeHtml(title)}"
+      loading="lazy"
+      decoding="async"
+      referrerpolicy="no-referrer"
+      onerror="handleImageError(this)"
+    />
+    <div class="product-image-placeholder is-hidden" aria-hidden="true">
+      <strong>Gambar tidak tersedia</strong>
+      <span>Produk tetap bisa dibuka lewat detail.</span>
+    </div>
+  `;
+}
+
+function normalizeCategoryNumber(value) {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeRating(value) {
+  const rating = normalizeCategoryNumber(value);
+  if (rating <= 0) return 0;
+  return Math.min(rating, 5) / 5;
+}
+
+function normalizeCount(value) {
+  return Math.max(0, parseCountValue(value));
+}
+
+function normalizeConfidence(product) {
+  const raw = product?.confidenceScore
+    ?? product?.confidence
+    ?? product?.ai_confidence
+    ?? product?.combined_score
+    ?? product?.semantic_score
+    ?? product?.relevance_score
+    ?? 0;
+  const numeric = normalizeCategoryNumber(raw);
+  if (numeric <= 0) return 0;
+  return Math.min(numeric > 1 ? numeric / 100 : numeric, 1);
+}
+
+function parseCompactCount(value) {
+  return parseCountValue(value);
+}
+
+function isRelevantProduct(product, query = window.app?.state?.query || "") {
+  if (!product) return false;
+  const title = String(product.title || product.name || '').trim();
+  const titleLower = title.toLowerCase();
+  const queryLower = String(query || "").toLowerCase();
+  if (!title) return false;
+  if (product.ai_decision === false || product.is_relevant === false || product.relevant === false) return false;
+
+  const label = String(product.ai_label || product.relevance_label || product.label || '').toLowerCase();
+  if (label.includes('tidak_relevan') || label.includes('irrelevant')) return false;
+  if (/\blaptop\b|\bnotebook\b/.test(queryLower)) {
+    const hasLaptopSignal = /\blaptop\b|\bnotebook\b|\bloq\b|\blegion\b|\btuf\b|\bnitro\b|\bthin\b|\brog\b|\bideapad\b|\bvivobook\b/i.test(titleLower);
+    const separateParts = /\bvga\b|\bgpu\b|\bgraphics card\b|\bkartu grafis\b|\brtx\s?\d{3,4}\b|\bgtx\s?\d{3,4}\b/.test(titleLower)
+      && !hasLaptopSignal;
+    const accessory = /\btas\b|\bcase\b|\bcharger\b|\badaptor\b|\bcooling pad\b|\bstand\b|\bkeyboard\b|\bmouse\b|\bsticker\b/.test(titleLower);
+    if (!hasLaptopSignal || separateParts || accessory) return false;
+  }
+  return true;
+}
+
+function getBestProducts(products, query = window.app?.state?.query || "") {
+  return [...(products || [])]
+    .filter((product) => isRelevantProduct(product, query))
+    .sort((a, b) => getBestScore(b, query) - getBestScore(a, query));
+}
+
+function getBestScore(product, query = window.app?.state?.query || "") {
+  const rating = Number(String(product?.rating || 0).replace(",", ".")) || 0;
+  const sold = parseCompactCount(product?.sold_count || product?.soldCount || product?.sold || product?.sold_text);
+  const reviews = parseCompactCount(product?.review_count || product?.rating_count || product?.reviewCount || product?.ratingCount || product?.review_text);
+  const confidenceRaw = isAiUsedForProduct(product)
+    ? Number(product?.ai_confidence ?? product?.confidence ?? product?.combined_score ?? product?.confidenceScore ?? 0)
+    : 0;
+  const confidence = confidenceRaw > 1 ? confidenceRaw / 100 : confidenceRaw;
+  const budgetBonus = product?.budget_status === "in_budget" || product?.budget_decision === "in_budget" ? 10 : 0;
+  const imageBonus = getProductImageUrl(product) ? 3 : 0;
+  const title = String(product?.title || product?.name || "").toLowerCase();
+  const queryWords = String(query || "").toLowerCase().split(/\s+/).filter((word) => word.length >= 3);
+  const queryBonus = queryWords.filter((word) => title.includes(word)).length * 4;
+
+  return (
+    rating * 30 +
+    Math.log10(sold + 1) * 18 +
+    Math.log10(reviews + 1) * 15 +
+    confidence * 25 +
+    budgetBonus +
+    imageBonus +
+    queryBonus
+  );
+}
+
+function isAiUsedForProduct(product) {
+  const source = String(product?.decision_source || product?.ai_source || "").toLowerCase();
+  return (
+    product?.ai_checked === true ||
+    product?.ai_used === true ||
+    source === "ai" ||
+    source === "ai_orchestrator" ||
+    source === "classifier" ||
+    source === "llm"
+  );
+}
+
+function humanJoin(parts) {
+  const clean = [...new Set((parts || []).filter(Boolean))];
+  if (clean.length <= 1) return clean[0] || "";
+  if (clean.length === 2) return `${clean[0]} dan ${clean[1]}`;
+  return `${clean.slice(0, -1).join(", ")}, dan ${clean[clean.length - 1]}`;
+}
+
+function getReasonStats(product, context = {}) {
+  const rating = Number(String(product?.rating || 0).replace(",", ".")) || 0;
+  const sold = parseCompactCount(product?.sold_count || product?.soldCount || product?.sold || product?.sold_text);
+  const reviews = parseCompactCount(product?.review_count || product?.rating_count || product?.reviewCount || product?.ratingCount || product?.review_text);
+  const confidenceRaw = Number(product?.ai_confidence ?? product?.confidence ?? 0);
+  const confidence = confidenceRaw > 1 ? confidenceRaw : confidenceRaw * 100;
+  const budgetStatus = product?.budget_status || product?.budget_decision;
+  const price = getProductPriceNumber(product);
+  const title = String(product?.title || product?.name || "").toLowerCase();
+  const queryWords = String(context.query || "").toLowerCase().split(/\s+/).filter((word) => word.length >= 3);
+  const queryMatched = queryWords.length > 0 && queryWords.some((word) => title.includes(word));
+  const ratingText = formatRatingValue(rating);
+  const soldText = formatCompactSoldCount(sold).replace(/\s*terjual$/i, "");
+  const reviewText = formatCompactReviewCount(reviews);
+
+  return {
+    rating,
+    ratingText,
+    sold,
+    soldText,
+    reviews,
+    reviewText,
+    confidence,
+    price,
+    inBudget: budgetStatus === "in_budget" || budgetStatus === "inside_budget",
+    trustedSeller: Boolean(product?.is_official || product?.is_mall || product?.is_power_merchant),
+    queryMatched,
+    aiUsed: isAiUsedForProduct(product),
+  };
+}
+
+function getBestReason(product, context = {}) {
+  const stats = getReasonStats(product, context);
+  const parts = [];
+
+  if (stats.rating >= 4.8 && stats.ratingText) parts.push(`rating ${stats.ratingText}`);
+  else if (stats.rating >= 4.5) parts.push("rating bagus");
+
+  if (stats.sold >= 1000 && stats.soldText) parts.push(`${stats.soldText} terjual`);
+  else if (stats.sold >= 100) parts.push("penjualan kuat");
+  else if (stats.reviews >= 100 && stats.reviewText) parts.push(`${stats.reviewText} ulasan`);
+
+  if (stats.inBudget) parts.push("harga masih masuk budget");
+  else if (stats.price > 0) parts.push("harga masih kompetitif");
+
+  if (stats.trustedSeller && parts.length < 3) parts.push("toko lebih terpercaya");
+  if (stats.aiUsed && stats.confidence >= 85 && parts.length < 3) parts.push(`AI yakin ${Math.round(stats.confidence)}%`);
+  if (stats.queryMatched && parts.length < 3) parts.push("cocok dengan pencarian");
+
+  if (parts.length >= 2) return `Dipilih karena ${humanJoin(parts.slice(0, 3))}.`;
+  if (parts.length === 1) return `Dipilih karena ${parts[0]} dan relevansinya paling masuk akal.`;
+  return "Dipilih karena performa paling seimbang dari sisi rating, penjualan, dan harga.";
+}
+
+function getCheapestReason(product, context = {}) {
+  const stats = getReasonStats(product, context);
+  const supports = [];
+
+  if (stats.rating >= 4.6 && stats.ratingText) supports.push(`rating ${stats.ratingText}`);
+  if (stats.sold >= 100 && stats.soldText) supports.push(`${stats.soldText} terjual`);
+  if (stats.inBudget) supports.push("masih masuk budget");
+
+  if (supports.length >= 2) {
+    return `Dipilih karena lebih hemat dibanding kandidat lain, dengan ${humanJoin(supports.slice(0, 2))}.`;
+  }
+  if (supports.length === 1) {
+    return `Dipilih karena harga lebih rendah, tetapi masih punya ${supports[0]}.`;
+  }
+  if (stats.queryMatched) {
+    return "Dipilih karena harga paling hemat di antara kandidat yang masih cocok dengan pencarian.";
+  }
+  return "Dipilih karena harga paling rendah di antara kandidat yang masih relevan.";
+}
+
+function getTrustedReason(product, context = {}) {
+  const stats = getReasonStats(product, context);
+  const parts = [];
+
+  if (stats.sold >= 1000 && stats.soldText) parts.push(`${stats.soldText} terjual`);
+  else if (stats.sold >= 100) parts.push("penjualan stabil");
+
+  if (stats.reviews >= 500 && stats.reviewText) parts.push(`${stats.reviewText} ulasan`);
+  else if (stats.reviews >= 50) parts.push("ulasan meyakinkan");
+
+  if (stats.rating >= 4.7 && stats.ratingText) parts.push(`rating ${stats.ratingText}`);
+  if (stats.trustedSeller) parts.push("indikator toko lebih terpercaya");
+
+  if (parts.length >= 2) return `Dipilih karena ${humanJoin(parts.slice(0, 3))}.`;
+  if (parts.length === 1) return `Dipilih karena ${parts[0]} dan reputasinya lebih meyakinkan.`;
+  return "Dipilih karena masih relevan, meski data reputasi tokonya lebih terbatas.";
+}
+
+function getCategoryReason(product, mode, context = {}) {
+  const normalizedMode = normalizeRecommendationMode(mode) || "all";
+  if (normalizedMode === "terbaik") return getBestReason(product, context);
+  if (normalizedMode === "termurah") return getCheapestReason(product, context);
+  if (normalizedMode === "trusted") return getTrustedReason(product, context);
+  return "";
+}
+
+function getCheapestProducts(products, query = window.app?.state?.query || "") {
+  return [...(products || [])]
+    .filter((product) => isRelevantProduct(product, query))
+    .filter(product => getProductPriceNumber(product) > 0)
+    .sort((a, b) => getProductPriceNumber(a) - getProductPriceNumber(b));
+}
+
+function getTrustedProducts(products, query = window.app?.state?.query || "") {
+  return [...(products || [])]
+    .filter((product) => isRelevantProduct(product, query))
+    .sort((a, b) => {
+      const trustA =
+        normalizeCount(a.sold_count || a.soldCount || a.sold || a.sold_text) * 0.04 +
+        normalizeCount(a.review_count || a.rating_count || a.reviewCount || a.ratingCount) * 0.05 +
+        normalizeRating(a.rating) * 25 +
+        normalizeConfidence(a) * 20 +
+        (a.is_official || a.is_mall || a.is_power_merchant ? 20 : 0);
+
+      const trustB =
+        normalizeCount(b.sold_count || b.soldCount || b.sold || b.sold_text) * 0.04 +
+        normalizeCount(b.review_count || b.rating_count || b.reviewCount || b.ratingCount) * 0.05 +
+        normalizeRating(b.rating) * 25 +
+        normalizeConfidence(b) * 20 +
+        (b.is_official || b.is_mall || b.is_power_merchant ? 20 : 0);
+
+      return trustB - trustA;
+    });
+}
+
+function getCategoryProducts(category) {
   if (!window.app || !window.app.buildRecommendationBuckets) return [];
+  const normalizedMode = normalizeRecommendationMode(category) || "all";
   const buckets = window.app.buildRecommendationBuckets();
-  const products = buckets[category] || [];
-  return limit ? products.slice(0, limit) : products;
+  return buckets[normalizedMode] || [];
 }
 
 /* ─── ANIMATION & TRANSFORM ─── */
@@ -17186,11 +18270,50 @@ function handleImageError(img) {
     placeholder.classList.remove("is-hidden");
   } else {
     const fallbackPlaceholder = document.createElement("div");
-    fallbackPlaceholder.className = "image-placeholder";
     fallbackPlaceholder.className = "product-image-placeholder";
-    fallbackPlaceholder.textContent = "TIDAK ADA GAMBAR";
+    fallbackPlaceholder.innerHTML = "<strong>Gambar tidak tersedia</strong><span>Produk tetap bisa dibuka lewat detail.</span>";
     img.replaceWith(fallbackPlaceholder);
   }
+}
+
+function readImageCandidateDataset(img) {
+  try {
+    const parsed = JSON.parse(img?.dataset?.imageCandidates || "[]");
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function markImageCandidateFailed(img, url) {
+  if (!img || !url) return;
+  const failed = new Set((img.dataset.failedImages || "").split("\n").filter(Boolean));
+  failed.add(normalizeProductImageCandidate(url) || String(url));
+  img.dataset.failedImages = Array.from(failed).join("\n");
+}
+
+function tryNextImageCandidate(img) {
+  if (!img) return false;
+  const failed = new Set((img.dataset.failedImages || "").split("\n").filter(Boolean));
+  const current = normalizeProductImageCandidate(img.currentSrc || img.src || "");
+  if (current) failed.add(current);
+
+  const next = readImageCandidateDataset(img).find((candidate) => {
+    const normalized = normalizeProductImageCandidate(candidate);
+    return normalized && !failed.has(normalized) && !shouldRejectImage(normalized);
+  });
+
+  if (!next) {
+    img.dataset.failedImages = Array.from(failed).join("\n");
+    return false;
+  }
+
+  img.dataset.failedImages = Array.from(failed).join("\n");
+  img.dataset.originalSrc = next;
+  delete img.dataset.proxyTried;
+  img.src = next;
+  img.classList.remove("is-hidden");
+  return true;
 }
 
 
@@ -17208,6 +18331,7 @@ let activeModalProduct = null;
 let modalTransitionRunning = false;
 let feedbackSubmitting = false;
 const reviewedProductIds = new Set();
+const rejectedProductIds = new Set();
 const hoverTimers = new WeakMap();
 const activeHoverTimerIds = new Set();
 const activeHoverCards = new Set();
@@ -17271,7 +18395,21 @@ function normalizeRecommendationMode(mode) {
 }
 
 function getProductReviewId(product) {
-  return String(product?.id || product?.url || product?.product_url || product?.title || "");
+  return String(product?.id || product?.url || product?.product_url || product?.title || "").trim();
+}
+
+function getProductUrlId(product) {
+  return String(product?.url || product?.product_url || "").trim();
+}
+
+function productIdentityMatches(a, b) {
+  const aId = getProductReviewId(a);
+  const bId = getProductReviewId(b);
+  if (aId && bId && aId === bId) return true;
+
+  const aUrl = getProductUrlId(a);
+  const bUrl = getProductUrlId(b);
+  return Boolean(aUrl && bUrl && aUrl === bUrl);
 }
 
 function normalizeFeedbackResult(value) {
@@ -17281,9 +18419,53 @@ function normalizeFeedbackResult(value) {
   return "negative";
 }
 
+function getFeedbackStateList(key) {
+  const state = window.app?.state;
+  if (!state) return [];
+  if (!Array.isArray(state[key])) state[key] = [];
+  return state[key];
+}
+
+function findFeedbackStateIndex(list, product) {
+  return list.findIndex(item => productIdentityMatches(item, product));
+}
+
+function findFeedbackStateProduct(key, product) {
+  const list = getFeedbackStateList(key);
+  const index = findFeedbackStateIndex(list, product);
+  return index >= 0 ? list[index] : null;
+}
+
+function removeFeedbackStateProduct(key, product) {
+  const list = getFeedbackStateList(key);
+  const index = findFeedbackStateIndex(list, product);
+  if (index >= 0) list.splice(index, 1);
+}
+
+function upsertFeedbackStateProduct(key, product, feedbackData) {
+  const list = getFeedbackStateList(key);
+  const payload = { ...(product || {}), ...feedbackData };
+  const index = findFeedbackStateIndex(list, payload);
+  if (index >= 0) {
+    list[index] = { ...list[index], ...payload };
+  } else {
+    list.push(payload);
+  }
+}
+
 function isProductReviewed(product) {
+  if (!product) return false;
+  return Boolean(findFeedbackStateProduct("reviewedProducts", product));
+}
+
+function isProductRejected(product) {
+  if (!product) return false;
   const id = getProductReviewId(product);
-  return Boolean(id && (reviewState.checkedById.has(id) || reviewedProductIds.has(id)));
+  return Boolean(findFeedbackStateProduct("rejectedProducts", product) || (id && rejectedProductIds.has(id)));
+}
+
+function isProductFeedbackHandled(product) {
+  return isProductReviewed(product) || isProductRejected(product);
 }
 
 function invalidateRecommendationCache() {
@@ -17296,6 +18478,11 @@ function resetReviewState() {
   reviewState.checkedOrder.length = 0;
   reviewState.activeMode = "all";
   reviewedProductIds.clear();
+  rejectedProductIds.clear();
+  if (window.app?.state) {
+    window.app.state.reviewedProducts = [];
+    window.app.state.rejectedProducts = [];
+  }
   invalidateRecommendationCache();
 }
 
@@ -17303,35 +18490,54 @@ function markProductAsReviewed(product, result, extra = {}) {
   const id = getProductReviewId(product);
   if (!id) return "";
   const normalizedResult = normalizeFeedbackResult(result);
+  const reviewedAt = new Date().toISOString();
+  const sourceMode = activeRecommendationMode || "all";
 
   if (!reviewState.checkedById.has(id)) {
     reviewState.checkedOrder.push(id);
   }
 
-  reviewedProductIds.add(id);
   reviewState.checkedById.set(id, {
     id,
     product,
     result: normalizedResult,
     reasons: extra.reasons || [],
     note: extra.note || "",
-    reviewedAt: Date.now(),
-    sourceMode: activeRecommendationMode || "all"
+    reviewedAt,
+    sourceMode
   });
+
+  if (normalizedResult === "positive") {
+    reviewedProductIds.add(id);
+    rejectedProductIds.delete(id);
+    removeFeedbackStateProduct("rejectedProducts", product);
+    upsertFeedbackStateProduct("reviewedProducts", product, {
+      feedback: "benar",
+      reviewedAt,
+      sourceCategory: sourceMode,
+      reasons: extra.reasons || [],
+      note: extra.note || ""
+    });
+  } else {
+    rejectedProductIds.add(id);
+    reviewedProductIds.delete(id);
+    removeFeedbackStateProduct("reviewedProducts", product);
+    upsertFeedbackStateProduct("rejectedProducts", product, {
+      feedback: "salah",
+      rejectedAt: reviewedAt,
+      sourceCategory: sourceMode,
+      reasons: extra.reasons || [],
+      note: extra.note || ""
+    });
+  }
 
   invalidateRecommendationCache();
   return id;
 }
 
 function getActiveRecommendationProducts(mode) {
-  const reviewedIds = new Set([
-    ...reviewState.checkedById.keys(),
-    ...reviewedProductIds
-  ]);
-
   return getRecommendationProducts(mode).filter(product => {
-    const id = getProductReviewId(product);
-    return !id || !reviewedIds.has(id);
+    return !isProductFeedbackHandled(product);
   });
 }
 
@@ -17341,7 +18547,9 @@ function getCheckedProductsForMode(mode) {
     .map(id => reviewState.checkedById.get(id))
     .filter(Boolean);
 
-  if (normalizedMode === "all") return records;
+  if (normalizedMode === "all") {
+    return records;
+  }
 
   const modeProductIds = new Set(
     getRecommendationProducts(normalizedMode).map(product => getProductReviewId(product))
@@ -17390,10 +18598,9 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
     ? window.app.normalizeProduct(product)
     : { ...(product || {}) };
   const id = getProductReviewId(item);
-  const imageUrl = resolveProductImage(item);
+  const imageUrl = getProductImageUrl(item);
   const title = item.title || "Produk Tokopedia";
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
-  const isCategoryMode = normalizedMode !== "all";
 
   // Format rating + sold
   const ratingMeta = formatRatingMeta(item);
@@ -17402,32 +18609,28 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
   const priceStr = formatProductPrice(item);
 
   // Format keyakinan AI
-  const aiStr = formatAiConfidence(item);
+  const aiStr = formatDecisionLabel(item);
+  const categoryReason = getCategoryReason(item, normalizedMode, { query: window.app?.state?.query || "" });
 
   // Overbudget badge
   const isOverbudget = isProductOverbudget(item);
   const overbudgetBadge = isOverbudget
     ? `<span class="rec-card-badge is-overbudget">Overbudget</span>`
     : '';
-  const checkedPill = isCategoryMode
+  
+  // SUDAH DICEK hanya muncul setelah user klik Benar atau Salah.
+  const checkedPill = isProductFeedbackHandled(item)
     ? '<span class="rec-checked-pill">Sudah dicek</span>'
     : '';
 
-  // Gambar atau placeholder
-  const imageHtml = imageUrl
-    ? `<img class="recommendation-product-image" src="${escapeHtml(imageUrl)}" data-original-src="${escapeHtml(imageUrl)}" alt="${escapeHtml(title)}" loading="lazy" decoding="async" />`
-    : "";
-  const placeholderHtml = imageUrl
-    ? `<div class="product-image-placeholder is-hidden" aria-hidden="true"></div>`
-    : `<div class="product-image-placeholder" aria-hidden="true"><span>Gambar tidak tersedia</span></div>`;
+  const imageHtml = renderProductImage(item, { className: "recommendation-product-image" });
 
   // TIDAK ADA tombol Benar/Salah/Buka di card — card seluruhnya clickable buka modal
   return `
-    <article class="recommendation-product-card${isCategoryMode ? ' is-checked-category-card' : ''}" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="${escapeHtml(title)}">
+    <article class="recommendation-product-card" data-product-card data-product-id="${escapeHtml(id)}" data-id="${escapeHtml(id)}" role="button" tabindex="0" aria-label="${escapeHtml(title)}">
       ${checkedPill}
       <div class="recommendation-product-image-wrap${imageUrl ? "" : " is-image-missing"}">
         ${imageHtml}
-        ${placeholderHtml}
       </div>
       <div class="recommendation-product-card-details">
         ${overbudgetBadge}
@@ -17435,24 +18638,38 @@ function renderRecommendationProductCard(product, mode = activeRecommendationMod
         <div class="recommendation-product-price">${escapeHtml(priceStr)}</div>
         ${ratingMeta ? `<div class="recommendation-product-rating-row"><span class="rec-rating">${escapeHtml(ratingMeta)}</span></div>` : ''}
         ${aiStr ? `<div class="rec-ai-confidence">${escapeHtml(aiStr)}</div>` : ''}
+        ${categoryReason ? `<p class="category-reason">${escapeHtml(categoryReason)}</p>` : ''}
       </div>
     </article>
   `;
 }
 
 function setupProductImageErrorHandlers(scope = document) {
-  scope.querySelectorAll(".recommendation-product-image").forEach(img => {
+  scope.querySelectorAll(".recommendation-product-image, .product-image, .checked-product-image, .product-detail-image, .product-modal-image").forEach(img => {
     if (img.dataset.errorHandlerBound === "true") return;
     img.dataset.errorHandlerBound = "true";
 
     img.onerror = () => {
-      const originalSrc = img.dataset.originalSrc || img.src;
-      if (originalSrc && window.app && typeof window.app.proxyImageUrl === "function" && !img.dataset.proxyTried) {
+      const currentSrc = img.currentSrc || img.src || img.dataset.originalSrc || "";
+      markImageCandidateFailed(img, currentSrc);
+      if (tryNextImageCandidate(img)) return;
+
+      const originalSrc = img.dataset.originalSrc || currentSrc;
+      if (canProxyImageUrl(originalSrc) && window.app && typeof window.app.proxyImageUrl === "function" && !img.dataset.proxyTried) {
         img.dataset.proxyTried = "1";
         img.src = window.app.proxyImageUrl(originalSrc);
         return;
       }
 
+      const wrapper = img.closest(".recommendation-product-image-wrap, .product-image-wrap");
+      const placeholder = wrapper?.querySelector(".product-image-placeholder");
+      if (placeholder) {
+        const strong = placeholder.querySelector("strong");
+        const span = placeholder.querySelector("span");
+        if (strong) strong.textContent = "Gambar tidak tersedia";
+        if (span) span.textContent = "Produk tetap bisa dibuka lewat detail.";
+        placeholder.classList.remove("is-hidden");
+      }
       handleImageError(img);
     };
   });
@@ -17470,17 +18687,9 @@ function renderRecommendationContent(mode) {
     limitBar.classList.toggle('hidden', normalizedMode === 'all');
   }
 
-  // Ambil category_limit dari inline input atau hidden input
-  const inlineInput = document.getElementById('category_limit_inline');
-  const hiddenInput = document.getElementById('category_limit');
-  const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
-  const categoryLimit = Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 100));
+  const categoryLimit = getCategoryLimit();
 
-  const categoryProducts = getRecommendationProducts(normalizedMode);
-  const activeProducts = getActiveRecommendationProducts(normalizedMode);
-  const products = activeProducts.length || !categoryProducts.length
-    ? activeProducts
-    : categoryProducts;
+  const categoryProducts = getCategoryProducts(normalizedMode);
   const isAllMode = normalizedMode === 'all';
 
   let displayProducts;
@@ -17488,25 +18697,25 @@ function renderRecommendationContent(mode) {
 
   if (isAllMode) {
     // Semua Barang: tampilkan semua, tidak dibatasi category_limit
-    displayProducts = products;
+    displayProducts = categoryProducts;
   } else {
     // Kategori lain: tampilkan maksimal categoryLimit, tapi tidak dipaksa penuh
-    const actualCount = products.length;
-    displayProducts = products.slice(0, categoryLimit);
+    const actualCount = categoryProducts.length;
+    displayProducts = categoryProducts.slice(0, categoryLimit);
 
     if (actualCount === 0) {
       // Tidak ada produk sama sekali
       shortageMsg = '';
     } else if (actualCount < categoryLimit) {
       // Data valid kurang dari yang diminta
-      shortageMsg = `Kategori ini hanya punya ${actualCount} produk yang cocok dari ${categoryLimit} yang diminta.`;
+      shortageMsg = `Anda meminta ${categoryLimit} produk, tetapi kategori ini hanya memiliki ${actualCount} produk yang cocok.`;
     }
     // Kalau actualCount >= categoryLimit: tidak perlu pesan, tampilkan categoryLimit item
   }
 
   let html = '';
   if (displayProducts.length === 0) {
-    html = '<div class="recommendation-empty">Belum ada produk yang cocok untuk kategori ini.</div>';
+    html = '<div class="recommendation-empty">Belum ada produk valid untuk kategori ini.</div>';
   } else {
     html = displayProducts.map(product => renderRecommendationProductCard(product, normalizedMode)).join('');
     if (shortageMsg) {
@@ -17757,6 +18966,22 @@ function getRecommendationProducts(mode) {
   return getCachedRecommendationProducts(mode);
 }
 
+function getCategoryLimit() {
+  const inlineInput = document.getElementById('category_limit_inline');
+  const hiddenInput = document.getElementById('category_limit');
+  const rawLimit = inlineInput?.value || hiddenInput?.value || '12';
+  return Math.max(1, Math.min(parseInt(rawLimit, 10) || 12, 50));
+}
+
+function syncCategoryLimitInputs() {
+  const inlineInput = document.getElementById('category_limit_inline');
+  const hiddenInput = document.getElementById('category_limit');
+  const limit = getCategoryLimit();
+  if (inlineInput) inlineInput.value = String(limit);
+  if (hiddenInput) hiddenInput.value = String(limit);
+  return limit;
+}
+
 function cssEscapeValue(value) {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return CSS.escape(String(value));
@@ -17909,26 +19134,33 @@ function createCheckedProductCard(record) {
   layout.className = "checked-product-layout";
 
   // Gambar produk
-  const imageUrl = resolveProductImage(product);
+  const imageUrls = getProductImageCandidateUrls(product);
+  const imageUrl = imageUrls[0] || "";
   const imgWrap = document.createElement("div");
   imgWrap.className = "checked-product-image-wrap";
   if (imageUrl) {
     const img = document.createElement("img");
     img.className = "checked-product-image";
     img.src = imageUrl;
+    img.dataset.originalSrc = imageUrl;
+    img.dataset.imageCandidates = JSON.stringify(imageUrls.slice(1, 8));
     img.alt = product.title || "Gambar produk";
     img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
     img.onerror = () => {
-      if (!img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+      markImageCandidateFailed(img, img.currentSrc || img.src || imageUrl);
+      if (tryNextImageCandidate(img)) return;
+      const currentSrc = img.dataset.originalSrc || imageUrl;
+      if (canProxyImageUrl(currentSrc) && !img.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
         img.dataset.proxyTried = "1";
-        img.src = window.app.proxyImageUrl(imageUrl);
+        img.src = window.app.proxyImageUrl(currentSrc);
         return;
       }
-      imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Tidak ada gambar</div>';
+      imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Gambar tidak tersedia</div>';
     };
     imgWrap.appendChild(img);
   } else {
-    imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Tidak ada gambar</div>';
+    imgWrap.innerHTML = '<div class="checked-product-img-placeholder">Gambar tidak tersedia</div>';
   }
 
   // Info produk
@@ -18001,7 +19233,9 @@ function renderCheckedProductsBox(mode) {
   if (!box || !grid) return;
   const normalizedMode = normalizeRecommendationMode(mode) || "all";
 
-  if (normalizedMode !== "all") {
+  const records = getCheckedProductsForMode("all");
+
+  if (normalizedMode !== "all" || records.length === 0) {
     box.classList.add("hidden");
     grid.innerHTML = "";
     if (count) count.textContent = "0 produk";
@@ -18010,22 +19244,11 @@ function renderCheckedProductsBox(mode) {
 
   box.classList.remove("hidden");
 
-  // Hanya tampilkan produk yang diklik "Benar" (positive)
-  const allRecords = getCheckedProductsForMode("all");
-  const records = allRecords.filter(r => r.result === 'positive');
-
   if (count) count.textContent = `${records.length} produk`;
 
   grid.innerHTML = "";
 
-  if (!records.length) {
-    const empty = document.createElement("div");
-    empty.className = "checked-products-empty";
-    empty.textContent = "Belum ada produk yang ditandai Benar.";
-    grid.appendChild(empty);
-  } else {
-    records.forEach(record => grid.appendChild(createCheckedProductCard(record)));
-  }
+  records.forEach(record => grid.appendChild(createCheckedProductCard(record)));
 
   if (checkedLayout && typeof checkedLayout.refresh === "function") {
     requestAnimationFrame(() => checkedLayout.refresh());
@@ -18147,31 +19370,7 @@ function showRecommendationDialogWithAnimation() {
 }
 
 function resolveProductImage(product) {
-  const candidates = [
-    product?.image_url,
-    product?.image,
-    product?.thumbnail,
-    product?.thumb,
-    product?.img,
-    product?.photo,
-    Array.isArray(product?.images) ? product.images[0] : null,
-    product?.media?.image,
-    product?.media?.thumbnail,
-    product?.media?.url
-  ];
-
-  for (const value of candidates) {
-    if (!value) continue;
-
-    let url = String(value).trim();
-
-    if (!url) continue;
-    if (/^data:image\//i.test(url)) return url;
-    if (url.startsWith("//")) url = `https:${url}`;
-    if (/^https?:\/\//i.test(url)) return url;
-  }
-
-  return "";
+  return getProductImageUrl(product);
 }
 
 function escapeHtml(str) {
@@ -18209,7 +19408,7 @@ function setText(selector, value) {
 }
 
 function fillRecommendationModal(product) {
-  const imageUrl = resolveProductImage(product);
+  const imageUrl = getProductImageUrl(product);
 
   const imgWrap = document.querySelector(".recommendation-modal-image-wrap");
 
@@ -18222,23 +19421,29 @@ function fillRecommendationModal(product) {
           alt="Gambar produk"
           loading="lazy"
           decoding="async"
+          referrerpolicy="no-referrer"
         />
       `;
 
       const newImg = imgWrap.querySelector("img");
       newImg.addEventListener("error", () => {
+        if (canProxyImageUrl(imageUrl) && !newImg.dataset.proxyTried && window.app && typeof window.app.proxyImageUrl === "function") {
+          newImg.dataset.proxyTried = "1";
+          newImg.src = window.app.proxyImageUrl(imageUrl);
+          return;
+        }
         imgWrap.innerHTML = `
           <div class="image-placeholder">
-            <strong>Tidak ada gambar</strong>
-            <span>Gambar tidak tersedia</span>
+            <strong>Gambar tidak tersedia</strong>
+            <span>Produk tetap bisa dibuka lewat detail.</span>
           </div>
         `;
       }, { once: true });
     } else {
       imgWrap.innerHTML = `
         <div class="image-placeholder">
-          <strong>Tidak ada gambar</strong>
-          <span>Gambar tidak tersedia</span>
+          <strong>Gambar tidak tersedia</strong>
+          <span>Produk tetap bisa dibuka lewat detail.</span>
         </div>
       `;
     }
@@ -18250,7 +19455,7 @@ function fillRecommendationModal(product) {
   setText(".recommendation-modal-price", formatProductPrice(product));
   setText(".recommendation-modal-rating", `⭐ ${product?.rating || "-"}`);
   setText(".recommendation-modal-sold", `🛍️ ${product?.sold || product?.sold_text || "0 terjual"}`);
-  setText(".recommendation-modal-confidence", `🧠 Keyakinan AI: ${product?.confidenceScore ?? product?.confidence ?? product?.ai_confidence ?? product?.relevance_score ?? "-"}`);
+  setText(".recommendation-modal-confidence", formatDecisionLabel(product));
 
   const openBtn = document.querySelector("#recommendation-product-dialog .open-product-btn");
   if (openBtn) {
@@ -18294,7 +19499,7 @@ function getNextModalProduct() {
 
   for (let i = activeModalIndex + 1; i < activeModalProducts.length; i++) {
     const candidate = activeModalProducts[i];
-    if (!isProductReviewed(candidate)) {
+    if (!isProductFeedbackHandled(candidate)) {
       activeModalIndex = i;
       return candidate;
     }
@@ -18577,9 +19782,6 @@ async function handleGridFeedback(productId, type, card, extra = {}) {
       reasons: extra.reasons || [],
       note: extra.note || ""
     });
-
-    // Tandai sebagai reviewed
-    reviewedProductIds.add(String(productId));
 
     // Cari product object dari state
     const product = (window.__MARKETSPY_PRODUCTS__ || []).find(p => getProductReviewId(p) === String(productId));
@@ -18911,17 +20113,6 @@ if (!window.__MARKETSPY_REC_FEEDBACK_BOUND__) {
     if (checkedCard) {
       const openBtn = event.target.closest(".checked-action-btn.is-open");
       if (openBtn) return; // biarkan link buka produk jalan normal
-
-      const productId = checkedCard.dataset.productId;
-      if (productId) {
-        const record = reviewState.checkedById.get(productId);
-        if (record?.product) {
-          const queue = Array.from(reviewState.checkedById.values())
-            .filter(r => r.result === 'positive')
-            .map(r => r.product);
-          openProductDetailModal(record.product, queue);
-        }
-      }
       return;
     }
   });
@@ -18944,6 +20135,7 @@ if (!window.__MARKETSPY_CATEGORY_LIMIT_BOUND__) {
     const applyBtn = event.target.closest("#category-limit-apply");
     if (!applyBtn) return;
     event.preventDefault();
+    syncCategoryLimitInputs();
     renderRecommendationContent(activeRecommendationMode);
   });
 
@@ -18951,6 +20143,7 @@ if (!window.__MARKETSPY_CATEGORY_LIMIT_BOUND__) {
   document.addEventListener("keydown", event => {
     if (event.key === "Enter" && event.target.id === "category_limit_inline") {
       event.preventDefault();
+      syncCategoryLimitInputs();
       renderRecommendationContent(activeRecommendationMode);
     }
   });
@@ -19207,6 +20400,8 @@ class ScraperApp {
   constructor() {
     this.state = {
       products: [],
+      reviewedProducts: [],
+      rejectedProducts: [],
       query: null,
       searchId: null,
       pollTimer: null,
@@ -19545,7 +20740,7 @@ class ScraperApp {
     const scraperMessage = this.$('ai-scraper-message');
 
     if (scraperBadge) {
-      scraperBadge.textContent = status?.ok ? 'AI Aktif' : 'Rules saja';
+      scraperBadge.textContent = status?.ok ? 'AI Aktif' : 'Aturan aktif';
       scraperBadge.className = `ai-scraper-badge ${status?.ok ? 'is-ready' : 'is-fallback'}`;
     }
     if (scraperMessage) {
@@ -19557,12 +20752,12 @@ class ScraperApp {
     if (!badge || !message || !classifier || !semantic || !json || !install) return;
 
     const capabilities = status?.capabilities || {};
-    badge.textContent = status?.ok ? 'Siap' : 'Rules saja';
+    badge.textContent = status?.ok ? 'Siap' : 'Aturan aktif';
     badge.className = `ai-status-badge ${status?.ok ? 'is-ready' : 'is-missing'}`;
     message.textContent = status?.ok
       ? (status.message || 'AI Orchestrator siap')
       : 'Model AI belum terinstall. Jalankan: ollama pull gemma3:4b';
-    classifier.textContent = status?.classifier || 'Rules saja';
+    classifier.textContent = status?.classifier || 'Aturan aktif';
     semantic.textContent = capabilities.semantic ? 'nomic-embed-text terpasang' : 'nomic-embed-text belum ada';
     json.textContent = capabilities.json_repair ? 'phi4-mini terpasang' : 'phi4-mini belum ada';
 
@@ -19843,621 +21038,7 @@ class ScraperApp {
   }
 
   renderProgress(progress) {
-    this.state.lastProgress = progress;
-    if (progress.started_at_epoch_ms) {
-      this.state.progressStartedAtMs = Number(progress.started_at_epoch_ms);
-      if (!this.state.elapsedTimer && !progress.done) this.startElapsedTimer();
-    }
-    this.updateEtaDeadline(progress);
-
-    const pct = Math.max(0, Math.min(100, Number(progress.progress_percent ?? progress.percent ?? 0)));
-    const pctEl = this.$('progress-pct');
-    if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
-    const barEl = this.$('progress-bar');
-    if (barEl) barEl.style.width = `${pct}%`;
-    const stage = progress.stage || progress.phase;
-    const phase = progress.phase || stage;
-    const stageLabelEl = this.$('progress-stage-label');
-    if (stageLabelEl) stageLabelEl.textContent = this.stageLabel(stage);
-    const msgEl = this.$('progress-message');
-    if (msgEl) msgEl.textContent = progress.statusText || progress.status_text || progress.message || '';
-    
-    const elapsedEl = this.$('elapsedText');
-    const etaEl = this.$('etaText');
-    if (elapsedEl && this.state.progressStartedAtMs) {
-      const seconds = Math.floor((Date.now() - Number(this.state.progressStartedAtMs)) / 1000);
-      this.state.localElapsedSeconds = Math.max(0, seconds);
-      elapsedEl.textContent = this.formatDuration(this.state.localElapsedSeconds);
-    } else if (elapsedEl) {
-      elapsedEl.textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '00:00';
-    }
-    if (etaEl) {
-      etaEl.textContent = this.etaDisplayText();
-    }
-
-    const foundEl = this.$('pm-found');
-    if (foundEl) foundEl.textContent = progress.foundCount ?? progress.found ?? 0;
-    const validEl = this.$('pm-valid');
-    if (validEl) validEl.textContent = progress.valid ?? 0;
-    const targetEl = this.$('pm-target');
-    if (targetEl) targetEl.textContent = progress.targetCount ?? progress.target ?? '-';
-    
-    if (this.state.progressStartedAtMs) {
-      this.renderLiveTimers();
-    } else {
-      const pmElapsedEl = this.$('pm-elapsed');
-      if (pmElapsedEl) pmElapsedEl.textContent = progress.elapsed_seconds != null ? this.formatDuration(progress.elapsed_seconds) : '-';
-      const pmEtaEl = this.$('pm-eta');
-      if (pmEtaEl) pmEtaEl.textContent = this.etaDisplayText();
-    }
-    const engineEl = this.$('pm-engine');
-    if (engineEl) engineEl.textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
-    const attemptEl = this.$('pm-attempt');
-    if (attemptEl) attemptEl.textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
-    this.updateStagePipeline(phase, pct);
-    this.renderProgressLogs(progress.logs || []);
-
-    updateProgressStage(progress);
-    syncTopStatusFromProgress(progress);
-  }
-
-  renderProgressLogs(logs) {
-    const el = this.$('progress-log');
-    if (!el) return;
-    const visible = [...(logs || [])].slice(-8).reverse();
-    if (!visible.length) {
-      el.innerHTML = '<div class="progress-log-empty">Menunggu aktivitas...</div>';
-      return;
-    }
-    el.innerHTML = '';
-    visible.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'progress-log-row';
-      const stage = document.createElement('span');
-      stage.className = 'progress-log-stage';
-      stage.textContent = this.stageLabel(item.stage || 'preparing');
-      const message = document.createElement('span');
-      message.className = 'progress-log-message';
-      message.textContent = item.message || '';
-      row.append(stage, message);
-      el.appendChild(row);
-    });
-  }
-
-  stageLabel(stage) {
-    const labels = {
-      idle: 'Menunggu',
-      preparing: 'Menyiapkan',
-      scraping: 'Mengambil data',
-      completed: 'Selesai',
-      blocked: 'Diblokir',
-      queued: 'Menunggu',
-      initializing: 'Inisialisasi',
-      engine_selecting: 'Memilih engine',
-      launching_browser: 'Membuka browser',
-      opening_page: 'Membuka halaman',
-      scrolling: 'Menggulir',
-      extracting: 'Mengambil data',
-      puppeteer_starting: 'Puppeteer mulai',
-      puppeteer_opening: 'Puppeteer membuka',
-      puppeteer_query: 'Query Puppeteer',
-      puppeteer_retry: 'Puppeteer ulang',
-      switching_to_rollback: 'Pindah ke Selenium',
-      rollback_browser_starting: 'Selenium mulai',
-      rollback_opening: 'Selenium membuka',
-      rollback_extracting: 'Selenium mengambil data',
-      compare_filtering: 'Filter perbandingan',
-      deduplicating: 'Dedup',
-      budget_filtering: 'Filter budget',
-      ai_filtering: 'AI Orchestrator',
-      ranking: 'Ranking',
-      recommendation_building: 'Rekomendasi',
-      finalizing: 'Finalisasi',
-      done: 'Selesai',
-      error: 'Error',
-      failed: 'Gagal',
-      cancelled: 'Dibatalkan',
-    };
-    return labels[stage] || stage || 'Memproses';
-  }
-
-  updateStagePipeline(currentStage, pct) {
-    const stages = ['init', 'opening', 'scrolling', 'extracting', 'filtering', 'ai_validation', 'finalizing'];
-    stages.forEach((name, i) => {
-      const el = this.$(`stage-${name}`);
-      if (!el) return;
-      el.classList.remove('active', 'done');
-      const threshold = i * (100 / stages.length);
-      const next = (i + 1) * (100 / stages.length);
-      if (pct >= 100 || pct >= next) el.classList.add('done');
-      else if (pct >= threshold) el.classList.add('active');
-    });
-  }
-
-  showResults(data) {
-    this.setStatus('Selesai', 'status-done');
-    this.show('results-panel');
-    this.state.comparison = data.comparison || [];
-    this.state.selectedEngine = data.selected_engine || null;
-    this.state.products = (data.data || []).map((product) => this.normalizeProduct(product));
-    window.__MARKETSPY_PRODUCTS__ = this.state.products;
-    this.state.recommendations = data.recommendations || {};
-    this.state.metadata = data.result_metadata || {};
-    this.state.budgetInfo = data.budget_info || null;
-    this.state.engineMode = data.engine_mode || 'auto';
-    this.state.metadata.engine_mode = this.state.engineMode;
-    this.state.sortMode = data.sort_mode || this.state.metadata.sort_mode || this.state.sortMode || 'terbaik';
-    this.state.recommendationsOpen = true;
-    this.state.recommendationMode = 'all';
-    this.state.hasUserSelectedRecommendation = false;
-    // Tandai sudah auto-expanded agar observer tidak trigger expand lagi
-    this.state.autoExpandedOnce = true;
-    activeRecommendationMode = 'all';
-    activeModalMode = null;
-    activeModalProducts = [];
-    activeModalIndex = 0;
-    activeModalProduct = null;
-    resetReviewState();
-
-    this.applySortMode(this.state.sortMode, false);
-    this.state.recommendationSourceProducts = [...this.state.products];
-    invalidateRecommendationCache();
-    this.renderResultSummary(data);
-    this.renderResultTimers();
-    this.renderBudgetBar(data.budget_info);
-    this.renderComparison(data);
-    this.renderResultWarning(data);
-    this.renderRecommendations();
-    this.updateResultCount();
-    this.renderProducts();
-
-    // Langsung expand stage tanpa animasi height agar tidak ada gap
-    const stage = this.$('recommendation-stage');
-    if (stage) {
-      stage.classList.add('is-auto-expanded');
-      // Hapus inline height kalau ada sisa dari animasi sebelumnya
-      stage.style.height = '';
-      stage.style.overflow = '';
-    }
-
-    console.log('[LAYOUT] scraping finished');
-    console.log('[LAYOUT] render recommendations initial');
-    console.log('[LAYOUT] active category', activeRecommendationMode);
-    const stageHeight = stage?.offsetHeight || 0;
-    const panelHeight = this.$('recommendations-panel')?.offsetHeight || 0;
-    console.log('[LAYOUT] recommendation container height', { stageHeight, panelHeight });
-
-    this.observeRecommendationStage();
-    this.animateResultsEntrance();
-  }
-
-  normalizeProduct(product) {
-    const item = { ...(product || {}) };
-    const priceNumber = Number(item.priceNumber ?? item.price_value ?? item.price_val ?? 0) || 0;
-    const confidenceScore = Number(item.confidenceScore ?? item.confidence ?? item.relevance_score ?? item.ai_confidence ?? 0) || 0;
-    const imageUrl = this.resolveProductImage(item);
-    return {
-      ...item,
-      id: String(item.id || item.url || item.product_url || item.title || ''),
-      title: item.title || 'Produk Tokopedia',
-      price: item.price || item.price_raw || item.price_text || (priceNumber ? this.formatRupiah(priceNumber) : ''),
-      priceNumber,
-      price_value: priceNumber,
-      image_url: imageUrl,
-      image: imageUrl || '',
-      has_image: Boolean(imageUrl),
-      storeName: item.storeName || item.shop_name || item.shop || item.store || '',
-      rating: item.rating || 0,
-      soldCount: Number(item.soldCount ?? item.sold_count ?? 0) || 0,
-      sold_count: Number(item.sold_count ?? item.soldCount ?? 0) || 0,
-      url: item.url || item.product_url || '#',
-      source: item.source || item.source_engine || 'tokopedia',
-      confidenceScore,
-      relevanceReason: item.relevanceReason || item.ai_reason || item.reason || item.ai_explanation || '',
-    };
-  }
-
-  renderResultWarning(data) {
-    const box = this.$('r-warning');
-    if (!box) return;
-    const meta = data.result_metadata || this.state.metadata || {};
-    const requested = Number(meta.requested_count ?? data.requested_count ?? data.target_count ?? 0);
-    const displayed = this.state.products.length || Number(meta.displayed_count ?? data.displayed_count ?? 0);
-    const shortage = requested > displayed && displayed > 0
-      ? `Diminta ${requested}, tersedia ${displayed} produk sesuai budget.`
-      : '';
-    const warning = String(data.ai_warning || meta.ai_warning || data.limited_reason || meta.limited_reason || shortage || '').trim();
-    if (!warning) {
-      box.classList.add('hidden');
-      box.textContent = '';
-      return;
-    }
-    box.textContent = warning;
-    box.classList.remove('hidden');
-  }
-
-  renderBudgetBar(budgetInfo) {
-    const bar = this.$('r-budget-bar');
-    const text = this.$('r-budget-text');
-    this.state.budgetInfo = budgetInfo || null;
-    if (!budgetInfo || !bar || !text) {
-      bar?.classList.add('hidden');
-      return;
-    }
-    text.textContent = `Budget ${this.formatRp(budgetInfo.budget)} | Range ${this.formatRp(budgetInfo.min)} - ${this.formatRp(budgetInfo.max)} | Tolerance ${budgetInfo.tolerance}%`;
-    bar.classList.remove('hidden');
-  }
-
-  renderComparison(data) {
-    const panel = this.$('comparison-panel');
-    const grid = this.$('comparison-grid');
-    if (!panel || !grid) return;
-
-    const engine_mode = data.engine_mode || this.state.engineMode || this.state.metadata.engine_mode || 'auto';
-    const runs = data.engine_runs || this.state.comparison;
-    
-    if (engine_mode !== 'compare_both' || !runs || !runs.length) {
-      panel.classList.add('hidden');
-      grid.innerHTML = '';
-      return;
-    }
-
-    panel.classList.remove('hidden');
-    grid.innerHTML = '';
-
-    for (const item of runs) {
-      const card = document.createElement('div');
-      const isSelected = item.engine === this.state.selectedEngine;
-      card.className = `compare-card ${isSelected ? 'compare-selected' : ''}`;
-
-      const pageOpened = item.opened_real_page;
-      const pageStatus = pageOpened === false
-        ? `<span class="compare-fail">Halaman asli: tidak - ${this.esc(item.error_type || 'tidak diketahui')}</span>`
-        : pageOpened === true
-          ? '<span class="compare-ok">Halaman asli: ya</span>'
-          : '<span class="compare-warn">Halaman asli: tidak diketahui</span>';
-
-      const debugFiles = (item.debug_files || []).filter(Boolean);
-      const debugHtml = debugFiles.length
-        ? `<div class="debug-files">${debugFiles.map(f => `<code>${this.esc(f)}</code>`).join('')}</div>`
-        : '';
-
-      card.innerHTML = `
-        <strong class="compare-engine">${this.esc(item.engine)}</strong>
-        ${pageStatus}
-        <div class="compare-stats">
-          <span>Scrape mentah: <b>${item.raw_scraped ?? item.raw_count ?? 0}</b></span>
-          <span>Budget lolos: <b>${item.budget_valid_count ?? 0}</b></span>
-          <span>Semantik dicek: <b>${item.result_metadata?.semantic_checked ?? 0}</b></span>
-          <span>AI dicek: <b>${item.result_metadata?.classifier_checked ?? item.result_metadata?.ai_checked ?? 0}</b></span>
-          <span>AI diterima: <b>${item.ai_accepted_count ?? item.result_metadata?.ai_accepted_count ?? 0}</b></span>
-          <span>Durasi: ${item.duration_seconds ?? item.duration ?? 0}s</span>
-          <span>Status: ${item.ok ? 'OK' : 'Gagal'}</span>
-        </div>
-        ${item.error ? `<div class="compare-error">${this.esc(item.error)}</div>` : ''}
-        ${debugFiles.length ? `<div class="compare-debug">Debug: ${debugHtml}</div>` : ''}
-        ${item.products && item.products.length
-          ? `<button class="btn btn-ghost compare-use-btn" data-engine="${this.esc(item.engine)}">Gunakan Hasil ${this.esc(item.engine)}</button>`
-          : ''}
-      `;
-
-      card.querySelector('.compare-use-btn')?.addEventListener('click', () => {
-        this.selectComparisonEngine(item.engine);
-      });
-      grid.appendChild(card);
-    }
-  }
-
-  selectComparisonEngine(engine) {
-    const item = this.state.comparison.find((e) => e.engine === engine);
-    if (!item) return;
-    this.state.selectedEngine = engine;
-    this.state.products = (item.data || item.products || []).map((product) => this.normalizeProduct(product));
-    window.__MARKETSPY_PRODUCTS__ = this.state.products;
-    this.state.recommendations = item.recommendations || {};
-    this.state.metadata = item.result_metadata || {};
-    this.state.budgetInfo = item.budget_info || null;
-    this.state.recommendationsOpen = true;
-    this.state.recommendationMode = 'all';
-    activeRecommendationMode = 'all';
-    activeModalMode = null;
-    activeModalProducts = [];
-    activeModalIndex = 0;
-    activeModalProduct = null;
-    resetReviewState();
-    this.state.recommendationSourceProducts = [...this.state.products];
-    invalidateRecommendationCache();
-    this.renderComparison({ engine_mode: this.state.engineMode, engine_runs: this.state.comparison });
-    this.renderRecommendations();
-    this.renderResultSummary(item);
-    this.renderResultTimers();
-    this.renderResultWarning({
-      limited_reason: this.state.metadata.limited_reason,
-      ai_warning: item.ai_warning || '',
-      result_metadata: this.state.metadata,
-    });
-    this.updateResultCount();
-    this.renderProducts();
-    this.observeRecommendationStage();
-    this.animateResultsEntrance();
-  }
-
-  renderResultSummary(data) {
-    const meta = data.result_metadata || this.state.metadata || {};
-    const requested = Number(meta.requested_count ?? data.requested_count ?? data.target_count ?? 0);
-    const productCount = Array.isArray(data.data || data.products) ? (data.data || data.products).length : this.state.products.length;
-    const displayed = productCount;
-
-    // Update header count
-    this.setText('r-count', displayed || this.state.products.length || 0);
-    this.setText('r-target', requested || '-');
-
-    // Update hidden stat IDs (masih dipakai internal)
-    const raw = Number(meta.raw_scraped_count ?? meta.raw_scraped ?? data.raw_count ?? 0);
-    const deduped = Number(meta.deduped_count ?? data.deduped_count ?? 0);
-    const budget = Number(meta.budget_valid_count ?? data.budget_valid_count ?? data.budget_count ?? 0);
-    const semanticChecked = Number(meta.semantic_checked ?? meta.semantic_checked_count ?? 0);
-    const aiChecked = Number(meta.classifier_checked ?? meta.ai_checked ?? data.ai_checked ?? 0);
-    const aiAccepted = Number(meta.ai_accepted ?? meta.ai_accepted_count ?? data.ai_accepted_count ?? 0);
-    const aiCallsAttempted = Number(meta.ai_calls_attempted ?? 0);
-    const aiCallsSucceeded = Number(meta.ai_calls_succeeded ?? 0);
-
-    this.setText('rs-requested', requested || 0);
-    this.setText('rs-raw', raw || 0);
-    this.setText('rs-deduped', deduped || 0);
-    this.setText('rs-budget', budget || 0);
-    this.setText('rs-semantic', semanticChecked || 0);
-    this.setText('rs-ai-checked', aiChecked || 0);
-    this.setText('rs-ai', aiAccepted || 0);
-    this.setText('rs-ai-calls', `${aiCallsSucceeded || 0}/${aiCallsAttempted || 0}`);
-    this.setText('rs-displayed', displayed || this.state.products.length || 0);
-
-    const status = this.$('result-status-badge');
-    if (status) {
-      status.textContent = displayed >= requested ? 'Selesai' : 'Sebagian';
-      status.className = `status-badge ${displayed >= requested ? 'status-done' : 'status-running'}`;
-    }
-  }
-
-  renderRecommendations() {
-    const panel = this.$('recommendations-panel');
-    if (!panel) return;
-
-    if (!this.state.products.length) {
-      panel.classList.add('hidden');
-      return;
-    }
-
-    panel.classList.remove('hidden');
-    const activeMode = normalizeRecommendationMode(this.state.recommendationMode) || 'all';
-    activeRecommendationMode = activeMode;
-    reviewState.activeMode = activeMode;
-    
-    // Set active mode on stage
-    const stage = document.querySelector('.recommendation-stage');
-    if (stage) {
-      stage.dataset.activeMode = activeMode;
-    }
-
-    this.updateRecommendationButtons(activeMode);
-    updateRecommendationTitle(activeMode);
-    updateRecommendationLogo(activeMode);
-
-    this.updateRecommendationPanels(activeMode);
-
-    renderRecommendationContent(activeMode);
-    renderCheckedProductsBox(activeMode);
-    setupAdaptiveScrollBehavior();
-  }
-
-  buildRecommendationBuckets() {
-    const list = [
-      ...(this.state.recommendationSourceProducts?.length
-        ? this.state.recommendationSourceProducts
-        : this.state.products)
-    ];
-
-    const number = (value) => {
-      const parsed = Number(String(value ?? 0).replace(',', '.'));
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    const price = (p) => {
-      const value = number(p.priceNumber ?? p.price_value ?? p.price);
-      return value > 0 ? value : Number.MAX_SAFE_INTEGER;
-    };
-    const rating = (p) => number(p.rating);
-    const confidence = (p) => number(p.confidenceScore ?? p.confidence ?? p.relevance_score ?? p.ai_confidence);
-    const sold = (p) => number(p.soldCount ?? p.sold_count);
-    const reviewCount = (p) => number(p.review_count ?? p.reviewCount ?? 0);
-
-    // Skor trust gabungan untuk Most Trusted
-    const trustScore = (p) => {
-      const shopStr = String(p.storeName || p.shop_name || p.shop || '').toLowerCase();
-      const shopBoost = /(official|mall|power merchant|pro)/.test(shopStr) ? 0.3 : 0;
-      const ratingNorm = rating(p) / 5;
-      const soldNorm = Math.min(sold(p), 10000) / 10000;
-      const reviewNorm = Math.min(reviewCount(p), 5000) / 5000;
-      const confNorm = confidence(p) > 1 ? confidence(p) / 100 : confidence(p);
-      return shopBoost + ratingNorm * 0.3 + soldNorm * 0.25 + reviewNorm * 0.2 + confNorm * 0.25;
-    };
-
-    // Skor terbaik gabungan
-    const bestScore = (p) => {
-      const ratingNorm = rating(p) / 5;
-      const reviewNorm = Math.min(reviewCount(p), 5000) / 5000;
-      const soldNorm = Math.min(sold(p), 10000) / 10000;
-      const confNorm = confidence(p) > 1 ? confidence(p) / 100 : confidence(p);
-      return ratingNorm * 0.35 + reviewNorm * 0.25 + soldNorm * 0.2 + confNorm * 0.2;
-    };
-
-    // Filter produk yang punya harga valid untuk Termurah
-    const withValidPrice = list.filter(p => price(p) < Number.MAX_SAFE_INTEGER);
-
-    // Filter produk yang punya rating untuk Terbaik (minimal ada rating)
-    const withRating = list.filter(p => rating(p) > 0);
-
-    // Filter produk yang punya sold/review untuk Most Trusted
-    const withTrustSignal = list.filter(p => sold(p) > 0 || reviewCount(p) > 0 || rating(p) > 0);
-
-    return {
-      // Semua Barang: semua produk, urutan asli (sudah di-sort backend)
-      all: [...list],
-
-      // Terbaik: produk dengan rating, diurutkan skor terbaik
-      terbaik: (withRating.length > 0 ? withRating : list)
-        .slice()
-        .sort((a, b) => bestScore(b) - bestScore(a)),
-
-      // Termurah: produk dengan harga valid, diurutkan harga terendah
-      termurah: (withValidPrice.length > 0 ? withValidPrice : list)
-        .slice()
-        .sort((a, b) => price(a) - price(b) || rating(b) - rating(a)),
-
-      // Most Trusted: produk dengan sinyal kepercayaan, diurutkan trust score
-      trusted: (withTrustSignal.length > 0 ? withTrustSignal : list)
-        .slice()
-        .sort((a, b) => trustScore(b) - trustScore(a)),
-    };
-  }
-
-  createRecommendationMiniCard(product) {
-    const item = this.normalizeProduct(product);
-    const card = document.createElement('div');
-    card.className = 'recommendation-product-card';
-    const id = getProductReviewId(item);
-    card.dataset.productId = id;
-    card.dataset.id = id;
-
-    const imgWrap = document.createElement('div');
-    imgWrap.className = 'recommendation-product-image-wrap';
-
-    const imageUrl = this.resolveProductImage(item);
-    
-    if (!imageUrl) {
-      const placeholder = document.createElement("div");
-      placeholder.className = "image-placeholder";
-      placeholder.textContent = "Tidak ada gambar";
-      imgWrap.classList.add("is-image-missing");
-      imgWrap.appendChild(placeholder);
-    } else {
-      const img = document.createElement('img');
-      img.className = 'recommendation-product-image';
-      img.src = imageUrl;
-      img.alt = item.title || 'Gambar produk';
-      img.loading = 'lazy';
-      img.onerror = () => {
-        if (imageUrl && !img.dataset.proxyTried) {
-          img.dataset.proxyTried = '1';
-          img.src = this.proxyImageUrl(imageUrl);
-          return;
-        }
-        handleImageError(img);
-      };
-      imgWrap.appendChild(img);
-    }
-
-    const details = document.createElement('div');
-    details.className = 'recommendation-product-card-details';
-    
-    const h4 = document.createElement('h4');
-    h4.className = 'recommendation-product-title';
-    h4.textContent = item.title || 'Produk Tokopedia';
-    
-    const strong = document.createElement('div');
-    strong.className = 'recommendation-product-price';
-    strong.textContent = item.price || '';
-    
-    const span = document.createElement('div');
-    span.className = 'recommendation-product-meta';
-    const ratingNum = Number(item.rating) || 0;
-    const reviewCount = Number(item.review_count || item.reviewCount || 0);
-    const ratingStr = ratingNum > 0 ? formatRating(ratingNum, reviewCount) : '';
-    const soldRaw = item.sold || item.sold_text || item.soldCount || item.sold_count || '';
-    const soldStr = soldRaw ? formatSoldCount(soldRaw) : '';
-    span.textContent = [ratingStr, soldStr].filter(Boolean).join(' · ');
-
-    details.append(h4, strong, span);
-    card.append(imgWrap, details);
-
-    return card;
-  }
-
-  toggleRecommendations() {
-    this.state.recommendationsOpen = true;
-    this.renderRecommendations();
-    this.expandRecommendationStage(true);
-  }
-
-  animateRecommendationProductsEnter(scopeOptions = {}) {
-    const profile = getRecommendationMotionProfile();
-    animateRecommendationCardsEnter(profile);
-  }
-
-  animateRecommendationProductsExit() {
-    const profile = getRecommendationMotionProfile();
-    return animateRecommendationCardsExit(null, profile);
-  }
-
-  async selectRecommendation(nextMode, triggerEl = null) {
-    await selectRecommendationMode(nextMode, triggerEl);
-  }
-
-  updateRecommendationButtons(nextMode) {
-    updateRecommendationButtons(nextMode);
-  }
-
-  updateRecommendationPanels(nextMode) {}
-  renderSidePanelContent(panel, modeKey) {}
-  animateSidePanels() {}
-
-  updateRecommendationContent(nextMode) {
-    const mode = normalizeRecommendationMode(nextMode) || 'all';
-    renderRecommendationContent(mode);
-    renderCheckedProductsBox(mode);
-
-    setupAdaptiveScrollBehavior();
-  }
-
-  animateRecommendationStage() {
-    if (!this.canAnimate()) return;
-    // Animasi hanya pada cards, bukan pada container panel
-    // translateY pada active-panel menyebabkan gap visual sementara
-    const profile = getRecommendationMotionProfile();
-    this.animateRecommendationProductsEnter(profile);
-  }
-
-  observeRecommendationStage() {
-    if (this.recommendationObserver) this.recommendationObserver.disconnect();
-    const panel = this.$('recommendations-panel');
-    if (!panel || !('IntersectionObserver' in window)) return;
-    this.recommendationObserver = new IntersectionObserver((entries) => {
-      const entry = entries[0];
-      if (
-        entry?.isIntersecting
-        && entry.intersectionRatio >= 0.45
-        && !this.state.hasUserSelectedRecommendation
-        && !this.state.autoExpandedOnce
-      ) {
-        this.state.autoExpandedOnce = true;
-        this.expandRecommendationStage(false);
-      }
-    }, { threshold: [0, 0.45, 0.7] });
-    this.recommendationObserver.observe(panel);
-  }
-
-  expandRecommendationStage(fromUser) {
-    const stage = this.$('recommendation-stage');
-    if (!stage) return;
-    if (fromUser) this.state.hasUserSelectedRecommendation = true;
-
-    // Langsung tambah class tanpa animasi height — height animasi adalah penyebab gap
-    stage.classList.add('is-auto-expanded');
-    // Pastikan tidak ada inline height yang tersisa
-    stage.style.height = '';
-    stage.style.overflow = '';
-
-    // Animasi cards saja, bukan height container
-   
+    this.st
 
 /* FILE TRUNCATED BECAUSE TOO LARGE */
 
@@ -25016,6 +25597,14 @@ body.modal-open {
   font-weight: 700;
 }
 
+.category-reason {
+  margin: 4px 0 0;
+  color: #93c5fd;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 700;
+}
+
 /* Overbudget badge */
 .rec-card-badge.is-overbudget,
 .product-badge.is-overbudget {
@@ -25066,23 +25655,6 @@ body.modal-open {
   color: #94a3b8;
   text-align: center;
   font-weight: 700;
-}
-
-/* ============================================================
-   CATEGORY CARD STYLING — GREEN BORDER + PILL
-   ============================================================ */
-
-.recommendation-product-card.is-checked-category-card {
-  border-color: rgba(16, 185, 129, 0.42) !important;
-  border-width: 2px;
-}
-
-.recommendation-product-card.is-checked-category-card:hover,
-.recommendation-product-card.is-checked-category-card:focus-within {
-  border-color: rgba(16, 185, 129, 0.68) !important;
-  box-shadow:
-    0 24px 64px rgba(15, 23, 42, 0.36),
-    0 0 0 2px rgba(52, 211, 153, 0.24) inset;
 }
 
 .rec-checked-pill {
@@ -25486,12 +26058,15 @@ body.modal-open {
    CATEGORY LIMIT BAR
    ============================================================ */
 
-.category-limit-bar {
+.category-limit-bar,
+.category-limit-control {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
-  flex-wrap: nowrap;
+  gap: 14px;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 100%;
   padding: 10px 14px;
   margin: 14px 0 0;
   border-radius: 12px;
@@ -25512,7 +26087,7 @@ body.modal-open {
 }
 
 .category-limit-input {
-  width: 80px !important;
+  width: 96px !important;
   max-width: 120px !important;
   min-width: 76px !important;
   min-height: 32px;
@@ -25551,6 +26126,12 @@ body.modal-open {
   flex: 0 0 auto;
 }
 
+.category-limit-bar span,
+.category-limit-control span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .category-limit-apply {
   flex: 0 0 auto !important;
   white-space: nowrap;
@@ -25564,6 +26145,62 @@ body.modal-open {
   padding: 5px 12px;
   font-size: 11px;
   font-weight: 700;
+}
+
+/* ============================================================
+   PRODUCT IMAGE FALLBACK FIX
+   ============================================================ */
+
+.product-image-wrap {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 22px 22px 0 0;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.product-image {
+  width: 100%;
+  height: 220px;
+  display: block;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
+.product-image-placeholder::before {
+  content: none !important;
+}
+
+.product-image-placeholder,
+.image-placeholder,
+.product-detail-image-placeholder {
+  min-height: 220px;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+  color: #94a3b8;
+  background:
+    radial-gradient(circle at center, rgba(59, 130, 246, 0.12), transparent 45%),
+    rgba(15, 23, 42, 0.9);
+}
+
+.recommendation-product-image-wrap .product-image-placeholder,
+.recommendation-product-image-wrap .image-placeholder {
+  min-height: 100%;
+}
+
+.product-image-placeholder strong,
+.image-placeholder strong,
+.product-detail-image-placeholder strong {
+  font-size: 16px;
+  color: #94a3b8;
+}
+
+.product-image-placeholder span,
+.image-placeholder span,
+.product-detail-image-placeholder span {
+  font-size: 13px;
+  color: #64748b;
 }
 
 /* ============================================================

@@ -1,27 +1,25 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MarketSpy AI</title>
-  <meta name="description" content="MarketSpy AI - Mencari barang bagus sesuai budget dengan teknologi scraping dan AI lokal.">
+  <meta name="description"
+    content="MarketSpy AI - Mencari barang bagus sesuai budget dengan teknologi scraping dan AI lokal.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
   <div class="app">
     <header class="header">
       <div class="header-inner">
         <div class="logo">
           <span class="logo-icon" title="MarketSpy AI">
-            <img
-              src="pngegg.png"
-              alt="MarketSpy AI"
-              width="32"
-              height="32"
-              style="object-fit:contain;image-rendering:auto;display:block;"
-            />
+            <img src="pngegg.png" alt="MarketSpy AI" width="32" height="32"
+              style="object-fit:contain;image-rendering:auto;display:block;" />
           </span>
           <div>
             <h1>MarketSpy AI</h1>
@@ -111,6 +109,10 @@
               <span>ETA</span>
               <strong id="etaText">Menghitung...</strong>
             </div>
+            <div class="progress-time-pill" id="progressEnginePill" style="display: none;">
+              <span>Engine Aktif</span>
+              <strong id="progressEngineText">-</strong>
+            </div>
           </div>
         </div>
       </section>
@@ -133,7 +135,8 @@
           <div class="results-title-block">
             <h2 class="panel-title">Hasil Scraping</h2>
             <div class="results-meta">
-              <span class="results-count">Menampilkan <strong id="r-count">0</strong> dari <strong id="r-target">0</strong> produk diminta</span>
+              <span class="results-count">Menampilkan <strong id="r-count">0</strong> dari <strong
+                  id="r-target">0</strong> produk diminta</span>
             </div>
           </div>
           <div class="result-header-tools">
@@ -208,13 +211,16 @@
             <!-- Input jumlah per kategori — hanya muncul untuk non-all mode -->
             <div class="category-limit-bar hidden" id="category-limit-bar">
               <label for="category_limit_inline" class="category-limit-label">Tampilkan</label>
-              <input type="number" id="category_limit_inline" class="category-limit-input" value="12" min="1" max="50" placeholder="12">
+              <input type="number" id="category_limit_inline" class="category-limit-input" value="12" min="1" max="50"
+                placeholder="12">
               <span class="category-limit-suffix">produk di kategori ini</span>
-              <button type="button" class="category-limit-apply btn btn-ghost btn-sm" id="category-limit-apply">Terapkan</button>
+              <button type="button" class="category-limit-apply btn btn-ghost btn-sm"
+                id="category-limit-apply">Terapkan</button>
             </div>
 
             <div class="recommendation-active-panel">
-              <div class="recommendation-product-grid" id="recommendation-product-grid" data-layout-grid="active-products"></div>
+              <div class="recommendation-product-grid" id="recommendation-product-grid"
+                data-layout-grid="active-products"></div>
 
               <!-- Hasil Review Sudah Dicek -->
               <section class="checked-products-box" data-layout-grid="checked-products">
@@ -252,31 +258,43 @@
 
       <div id="productDetailContent" class="product-detail-content">
         <div id="productDetailInfoPanel" class="product-detail-info-panel">
-          <p class="product-detail-kicker">DETAIL REKOMENDASI</p>
-          <h2 id="product-detail-title" class="product-detail-title"></h2>
-          <p class="product-detail-subtitle"></p>
-          <p class="product-detail-price"></p>
-          <div class="product-detail-meta"></div>
+          <!-- Elemen detail original disembunyikan agar panel kanan hanya menampilkan form feedback sesuai Gambar A -->
+          <div style="display: none !important;">
+            <p class="product-detail-kicker">DETAIL REKOMENDASI</p>
+            <h2 id="product-detail-title" class="product-detail-title"></h2>
+            <p class="product-detail-subtitle"></p>
+            <p class="product-detail-price"></p>
+            <div class="product-detail-meta"></div>
+          </div>
 
-          <section class="product-feedback-panel">
-            <h3>Apakah produk ini sesuai?</h3>
+          <div class="restored-feedback-container">
+            <!-- Teks Instruksi di bagian paling atas (dari Gambar B) -->
+            <p class="feedback-instruction">Pilih satu atau lebih alasan agar AI bisa belajar.</p>
+
+            <!-- Teks Pertanyaan Utama (dari Gambar A) -->
+            <h3 class="feedback-question">Apakah produk ini sesuai?</h3>
+
+            <!-- Tombol Tindakan -->
             <div class="product-feedback-actions">
               <button type="button" class="feedback-btn feedback-yes" data-feedback-answer="benar">Benar</button>
               <button type="button" class="feedback-btn feedback-no" data-feedback-answer="salah">Salah</button>
               <a class="feedback-btn feedback-open" target="_blank" rel="noopener noreferrer">Buka Produk</a>
             </div>
 
-            <div class="feedback-reason-panel detail-feedback-reason-panel" data-detail-feedback-reason-panel hidden>
-              <h3>Kenapa produk ini salah?</h3>
-              <p>Pilih satu atau lebih alasan agar AI bisa belajar.</p>
+            <!-- Sub-Judul dan Kotak Alasan (selalu ditampilkan untuk meniru Gambar A) -->
+            <div class="feedback-reason-panel detail-feedback-reason-panel" data-detail-feedback-reason-panel>
+              <h3 class="feedback-reason-title-text">Kenapa produk ini salah?</h3>
               <div class="feedback-reason-grid" data-detail-feedback-reason-grid></div>
-              <textarea class="feedback-note" data-detail-feedback-note placeholder="Tambahkan catatan jika perlu..."></textarea>
+
+              <!-- Catatan tambahan dan tombol simpan dipertahankan di bagian bawah agar tetap fungsional -->
+              <textarea class="feedback-note" data-detail-feedback-note
+                placeholder="Tambahkan catatan jika perlu..."></textarea>
               <div class="feedback-save-row">
                 <button type="button" class="btn-ghost" data-detail-feedback-cancel>Batal</button>
                 <button type="button" class="btn-primary" data-detail-feedback-save>Simpan Feedback</button>
               </div>
             </div>
-          </section>
+          </div>
         </div>
       </div>
     </article>
@@ -285,4 +303,5 @@
   <script src="vendor/anime.min.js"></script>
   <script src="app.js" defer></script>
 </body>
+
 </html>

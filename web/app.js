@@ -3761,6 +3761,24 @@ class ScraperApp {
     }
     const engineEl = this.$('pm-engine');
     if (engineEl) engineEl.textContent = `${progress.engine_mode || 'auto'} / ${progress.active_engine || 'none'}`;
+
+    const progressEnginePill = this.$('progressEnginePill');
+    const progressEngineText = this.$('progressEngineText');
+    if (progressEnginePill && progressEngineText) {
+      const activeEngine = progress.active_engine || progress.engine || '';
+      if (activeEngine && activeEngine !== 'none' && activeEngine !== 'unknown') {
+        progressEnginePill.style.display = '';
+        let engineLabel = activeEngine;
+        if (activeEngine.toLowerCase() === 'puppeteer') {
+          engineLabel = '⚡ Puppeteer';
+        } else if (activeEngine.toLowerCase() === 'selenium' || activeEngine.toLowerCase() === 'rollback') {
+          engineLabel = '⚠️ Selenium';
+        }
+        progressEngineText.textContent = engineLabel;
+      } else {
+        progressEnginePill.style.display = 'none';
+      }
+    }
     const attemptEl = this.$('pm-attempt');
     if (attemptEl) attemptEl.textContent = `${progress.attempt || 1}/${progress.max_attempts || 1}`;
     this.updateStagePipeline(phase, pct);
@@ -5642,8 +5660,7 @@ if (!window.__pasarIntaiProductModalEventsBound) {
       event.preventDefault();
       if (isReviewTransitioning) return;
 
-      const panel = document.querySelector("[data-detail-feedback-reason-panel]");
-      if (panel) panel.hidden = true;
+      resetDetailFeedbackPanel();
       return;
     }
 
