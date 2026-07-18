@@ -1,26 +1,26 @@
 {
-  "query": "parfum teh",
-  "search_id": "c14dffa1-3eba-413b-a88d-21496ecb8447",
-  "requested": 10,
-  "scraped_raw": 572,
-  "after_dedupe": 192,
-  "valid_product_candidates": 191,
-  "invalid_non_product_removed": 1,
-  "budget_valid": 6,
-  "candidate_pool_count": 10,
-  "target_display": 10,
+  "query": "laptop gaming",
+  "search_id": "651b0282-c9ab-4fc7-8d53-062ee373fa0b",
+  "requested": 30,
+  "scraped_raw": 570,
+  "after_dedupe": 349,
+  "valid_product_candidates": 346,
+  "invalid_non_product_removed": 3,
+  "budget_valid": 11,
+  "candidate_pool_count": 30,
+  "target_display": 30,
   "overfetch_attempted": true,
-  "overfetch_attempts": 3,
-  "overfetch_rounds": 3,
-  "overfetch_initial_valid_pool": 3,
-  "overfetch_final_valid_pool": 6,
+  "overfetch_attempts": 2,
+  "overfetch_rounds": 2,
+  "overfetch_initial_valid_pool": 1,
+  "overfetch_final_valid_pool": 11,
   "overfetch_max_raw": 500,
   "overfetch_exhausted": true,
   "overfetch_stop_reason": "raw_limit_reached",
-  "raw_after_overfetch": 572,
+  "raw_after_overfetch": 570,
   "strict_budget_mode": true,
   "target_first_mode": true,
-  "target_first_added": 4,
+  "target_first_added": 19,
   "query_constraints": {
     "gpu_model": null,
     "cpu_model": null,
@@ -28,62 +28,199 @@
     "storage": null,
     "ram": null,
     "phone_model": null,
-    "category": null
+    "category": "laptop"
   },
-  "feedback_examples_loaded": 2,
-  "learned_patterns_loaded": 0,
-  "query_scoped_patterns": 0,
+  "feedback_examples_loaded": 12,
+  "learned_patterns_loaded": 172,
+  "query_scoped_patterns": 111,
   "constraint_scoped_patterns": 0,
-  "intent_scoped_patterns": 0,
+  "intent_scoped_patterns": 61,
   "global_patterns": 0,
   "constraint_mismatch_products": 0,
-  "learning_adjusted_products": 0,
-  "learned_positive_matches": 0,
-  "learned_negative_matches": 0,
-  "accepted_before_fallback": 0,
-  "fallback_candidates_count": 10,
-  "weak_fallback_candidates_count": 0,
-  "fallback_added": 10,
-  "final_displayed": 10,
-  "rejected_as_obvious_junk_count": 0,
-  "rejected_as_obvious_junk_count_before_rescue": 0,
+  "learning_adjusted_products": 30,
+  "learned_positive_matches": 30,
+  "learned_negative_matches": 7,
+  "accepted_before_fallback": 27,
+  "fallback_candidates_count": 1,
+  "weak_fallback_candidates_count": 1,
+  "fallback_added": 1,
+  "final_displayed": 28,
+  "rejected_as_obvious_junk_count": 2,
+  "rejected_as_obvious_junk_count_before_rescue": 2,
   "rescued_false_obvious_junk": 0,
-  "fallback_candidates_count_after_rescue": 10,
-  "rejected_reasons_histogram": {},
-  "semantic_checked": 0,
-  "classifier_checked": 0,
-  "ai_checked": 0,
-  "ai_calls_attempted": 0,
-  "ai_calls_succeeded": 0,
+  "fallback_candidates_count_after_rescue": 1,
+  "rejected_reasons_histogram": {
+    "obvious_junk": 2
+  },
+  "semantic_checked": 30,
+  "classifier_checked": 1,
+  "ai_checked": 1,
+  "ai_calls_attempted": 1,
+  "ai_calls_succeeded": 1,
   "ai_timeouts": 0,
   "ai_failures": 0,
   "ai_batch_size": 3,
-  "prompt_tokens_estimated": 0,
+  "prompt_tokens_estimated": 484,
   "prompt_truncated_by_app": false,
   "ctx": 4096,
   "ai_accepted": 0,
   "ai_confirmed": 0,
   "ai_rescued": 0,
-  "ai_rejected": 0,
-  "ai_skip_reason": "No supported classifier installed",
+  "ai_rejected": 1,
+  "ai_skip_reason": null,
   "decision_histogram": {
-    "rules": 10
+    "rules": 28
   },
-  "sample_rejected": [],
+  "sample_rejected": [
+    {
+      "id": "b02e1617ea050fcb",
+      "title": "Laptop Windows 10 Baru 12GB RAM 2TB SSD - Ideal untuk Pekerjaan Efisien, Belajar & Main Game Lancar",
+      "price_value": 3860000,
+      "url": "https://www.tokopedia.com/dreamspace--hb/laptop-windows-10-baru-12gb-ram-2tb-ssd-ideal-untuk-pekerjaan-efisien-belajar-main-game-lancar-1735625990516344718-1735626333424093070",
+      "decision_source": "rules",
+      "reason": "Rejected by clear intent mismatch (sparepart does not match main_product)",
+      "rule_score": 0.23,
+      "semantic_score": 0.831,
+      "base_combined_score": 0.707,
+      "constraint_penalty": 0.0,
+      "combined_score": 1.0,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": "2tb ssd",
+        "ram": "12gb ram",
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.4,
+      "learned_matches": [
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 7,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        }
+      ]
+    },
+    {
+      "id": "7ff28a0f6b0e5d5a",
+      "title": "LAPTOP GAMING HP AMD A9-9420 / 1TB / 4GB DDR4 / AMD REDEON FREE TAS",
+      "price_value": 3560000,
+      "url": "https://www.tokopedia.com/alvinluo-shop/laptop-gaming-hp-amd-a9-9420-1tb-4gb-ddr4-amd-redeon-free-tas-4gb-500gb",
+      "decision_source": "rules",
+      "reason": "Rejected by clear intent mismatch (accessory does not match main_product)",
+      "rule_score": 0.23,
+      "semantic_score": 0.872,
+      "base_combined_score": 0.741,
+      "constraint_penalty": 0.0,
+      "combined_score": 1.0,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": "hp",
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.4,
+      "learned_matches": [
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 14,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 3,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 7,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        }
+      ]
+    }
+  ],
   "sample_rescued": [],
   "sample_fallback": [
     {
-      "id": "59812ba1774a6264",
-      "title": "BASICCLUB (DAPAT 4) GOURMAND & TEA SERIES 70% PURE OIL BPOM SPECIAL EDITION NETTO 35ML",
-      "price_value": 93000,
-      "url": "https://www.tokopedia.com/hmstoreidn/basicclub-dapat-4-gourmand-tea-series-70-pure-oil-bpom-special-edition-netto-35ml-1734023045682464375",
+      "id": "853f4a9bd8b15461",
+      "title": "Hp Pavillion Gaming 15\u200e \u200e \u200e",
+      "price_value": 6036000,
+      "url": "https://www.tokopedia.com/pjcomputershop/hp-pavillion-gaming-15-1733124466721850852",
       "decision_source": "rules",
       "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.225,
-      "semantic_score": null,
-      "base_combined_score": 0.225,
+      "rule_score": 0.462,
+      "semantic_score": 0.808,
+      "base_combined_score": 0.687,
       "constraint_penalty": 0.0,
-      "combined_score": 0.225,
+      "combined_score": 1.0,
       "query_constraints": {
         "gpu_model": null,
         "cpu_model": null,
@@ -91,33 +228,50 @@
         "storage": null,
         "ram": null,
         "phone_model": null,
-        "category": null
+        "category": "laptop"
       },
       "product_constraints": {
         "gpu_model": null,
         "cpu_model": null,
-        "brand": null,
+        "brand": "hp",
         "storage": null,
         "ram": null,
         "phone_model": null,
         "category": null
       },
       "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
+      "learned_adjustment": 0.4,
+      "learned_matches": [
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 14,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        }
+      ]
     },
     {
-      "id": "245bc441a7fa574c",
-      "title": "DIGNISCENT Eau de Parfume - JASMINE BLOOM | Perfume Unisex Wangi Tahan Lama Aroma Jasmine Tea Fresh Murah",
-      "price_value": 91987,
-      "url": "https://www.tokopedia.com/digniscent-shop/digniscent-eau-de-parfume-jasmine-bloom-perfume-unisex-wangi-tahan-lama-aroma-jasmine-tea-fresh-murah-1730465376733070396",
+      "id": "853f4a9bd8b15461",
+      "title": "Hp Pavillion Gaming 15\u200e \u200e \u200e",
+      "price_value": 6036000,
+      "url": "https://www.tokopedia.com/pjcomputershop/hp-pavillion-gaming-15-1733124466721850852",
       "decision_source": "rules",
       "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.229,
-      "semantic_score": null,
-      "base_combined_score": 0.229,
+      "rule_score": 0.462,
+      "semantic_score": 0.808,
+      "base_combined_score": 0.687,
       "constraint_penalty": 0.0,
-      "combined_score": 0.229,
+      "combined_score": 1.0,
       "query_constraints": {
         "gpu_model": null,
         "cpu_model": null,
@@ -125,294 +279,176 @@
         "storage": null,
         "ram": null,
         "phone_model": null,
-        "category": null
+        "category": "laptop"
       },
       "product_constraints": {
         "gpu_model": null,
         "cpu_model": null,
-        "brand": null,
+        "brand": "hp",
         "storage": null,
         "ram": null,
         "phone_model": null,
         "category": null
       },
       "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "8b5d8aa0113421c5",
-      "title": "EXCLUSIVE TONI CU Bebliss Eau De Parfume Paket 13 Botol Parfume Teh jumbo Dreamy oily Bundling platinum series Bundling romantic series Eau De perfume TONI001",
-      "price_value": 102001,
-      "url": "https://www.tokopedia.com/bebliss-indonesia/exclusive-toni-cu-bebliss-eau-de-parfume-paket-13-botol-parfume-teh-jumbo-dreamy-oily-bundling-platinum-series-bundling-romantic-series-eau-de-perfume-toni001-1732411068739389103",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.479,
-      "semantic_score": null,
-      "base_combined_score": 0.479,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.479,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "9110c2c3324252e8",
-      "title": "Eloi Coco - Temptation Moisturizing Body Mist 250ml",
-      "price_value": 74900,
-      "url": "https://www.tokopedia.com/eloicoco/eloi-coco-temptation-moisturizing-body-mist-250ml-1729435963415628116",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.216,
-      "semantic_score": null,
-      "base_combined_score": 0.216,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.216,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "3cc5145e886ec0dd",
-      "title": "NEW! WHISPER OF BORNEO NUSANTARA SERIES EXTRAIT DE PARFUM FOR UNISEX - PERFUME WANITA & PRIA ROYAL FRAGRANCE WANGI TAHAN LAMA",
-      "price_value": 127000,
-      "url": "https://www.tokopedia.com/royalfragrance/new-whisper-of-borneo-nusantara-series-extrait-de-parfum-for-unisex-perfume-wanita-pria-royal-fragrance-wangi-tahan-lama-1733232924016280869",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.485,
-      "semantic_score": null,
-      "base_combined_score": 0.485,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.485,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "4add3b273fa0c4ed",
-      "title": "Mine Perfumery Tatami - 30 ml Extrait De Perfume | Parfum Jepang Wangi Teh Alam",
-      "price_value": 74000,
-      "url": "https://www.tokopedia.com/mine-perfumery-official/mine-perfumery-tatami-30-ml-eau-de-perfume-parfum-jepang-wangi-teh-alam-1733093046632940852",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.678,
-      "semantic_score": null,
-      "base_combined_score": 0.678,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.678,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "2665bc341b388c9d",
-      "title": "[PROMO 7.7] CARESO EDP 50ml | Parfum Unisex Wangi Tahan Lama",
-      "price_value": 90000,
-      "url": "https://www.tokopedia.com/careso/careso-eau-de-parfum-50ml-1731627312052012537",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.504,
-      "semantic_score": null,
-      "base_combined_score": 0.504,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.504,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "906c2bfb0345492c",
-      "title": "Heaven Scent SBY - Goddess of Heaven 50ml Parfum Wanita",
-      "price_value": 99999,
-      "url": "https://www.tokopedia.com/heavenscentid/heaven-scent-sby-goddess-of-heaven-50ml-parfum-ramadan-wanita-1731167448494671288",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.501,
-      "semantic_score": null,
-      "base_combined_score": 0.501,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.501,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "3ea9219d73dae07e",
-      "title": "Crusita - Tea Collection Extrait De Parfum 15ML",
-      "price_value": 74000,
-      "url": "https://www.tokopedia.com/crusita-official/crusita-tea-collection-extrait-de-parfum-15ml-1735910632108360757-1735910628754490421",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.501,
-      "semantic_score": null,
-      "base_combined_score": 0.501,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.501,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
-    },
-    {
-      "id": "dba4741c54353e67",
-      "title": "[PROMO 7.7] CARESO Clean EDP 50ml | Parfum Unisex Wangi Tahan Lama",
-      "price_value": 83000,
-      "url": "https://www.tokopedia.com/careso/careso-clean-best-seller-edp-50ml-1729657775780234745",
-      "decision_source": "rules",
-      "reason": "Included by fallback expansion to satisfy requested count",
-      "rule_score": 0.5,
-      "semantic_score": null,
-      "base_combined_score": 0.5,
-      "constraint_penalty": 0.0,
-      "combined_score": 0.5,
-      "query_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "product_constraints": {
-        "gpu_model": null,
-        "cpu_model": null,
-        "brand": null,
-        "storage": null,
-        "ram": null,
-        "phone_model": null,
-        "category": null
-      },
-      "constraint_mismatch_reasons": [],
-      "learned_adjustment": 0.0,
-      "learned_matches": []
+      "learned_adjustment": 0.4,
+      "learned_matches": [
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 14,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        }
+      ]
     }
   ],
-  "not_displayed_product_reasons": [],
-  "why_remaining_products_were_not_displayed": "target met"
+  "not_displayed_product_reasons": [
+    {
+      "id": "b02e1617ea050fcb",
+      "title": "Laptop Windows 10 Baru 12GB RAM 2TB SSD - Ideal untuk Pekerjaan Efisien, Belajar & Main Game Lancar",
+      "price_value": 3860000,
+      "url": "https://www.tokopedia.com/dreamspace--hb/laptop-windows-10-baru-12gb-ram-2tb-ssd-ideal-untuk-pekerjaan-efisien-belajar-main-game-lancar-1735625990516344718-1735626333424093070",
+      "decision_source": "rules",
+      "reason": "Rejected by clear intent mismatch (sparepart does not match main_product)",
+      "rule_score": 0.23,
+      "semantic_score": 0.831,
+      "base_combined_score": 0.707,
+      "constraint_penalty": 0.0,
+      "combined_score": 1.0,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": "2tb ssd",
+        "ram": "12gb ram",
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.4,
+      "learned_matches": [
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 7,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "obvious_junk"
+    },
+    {
+      "id": "7ff28a0f6b0e5d5a",
+      "title": "LAPTOP GAMING HP AMD A9-9420 / 1TB / 4GB DDR4 / AMD REDEON FREE TAS",
+      "price_value": 3560000,
+      "url": "https://www.tokopedia.com/alvinluo-shop/laptop-gaming-hp-amd-a9-9420-1tb-4gb-ddr4-amd-redeon-free-tas-4gb-500gb",
+      "decision_source": "rules",
+      "reason": "Rejected by clear intent mismatch (accessory does not match main_product)",
+      "rule_score": 0.23,
+      "semantic_score": 0.872,
+      "base_combined_score": 0.741,
+      "constraint_penalty": 0.0,
+      "combined_score": 1.0,
+      "query_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": null,
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "product_constraints": {
+        "gpu_model": null,
+        "cpu_model": null,
+        "brand": "hp",
+        "storage": null,
+        "ram": null,
+        "phone_model": null,
+        "category": "laptop"
+      },
+      "constraint_mismatch_reasons": [],
+      "learned_adjustment": 0.4,
+      "learned_matches": [
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 14,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 3,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 7,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "gaming",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        },
+        {
+          "pattern": "laptop",
+          "scope": "exact_query",
+          "weight": 0.2,
+          "reason": "positive",
+          "support_count": 2,
+          "pattern_type": "boost"
+        }
+      ],
+      "not_displayed_reason": "obvious_junk"
+    }
+  ],
+  "why_remaining_products_were_not_displayed": "fallback pool exhausted after excluding invalid/duplicate/obvious junk products; missing=2"
 }
